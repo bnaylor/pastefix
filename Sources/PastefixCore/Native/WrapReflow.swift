@@ -15,7 +15,7 @@ public struct WrapReflow: Transformer {
         Self.reflow(input.text, width: width)
     }
 
-    static func reflow(_ text: String, width: Int) -> String {
+    private static func reflow(_ text: String, width: Int) -> String {
         let paragraphs = text.components(separatedBy: "\n\n")
         let wrapped = paragraphs.map { reflowParagraph($0, width: width) }
         return wrapped.joined(separator: "\n\n")
