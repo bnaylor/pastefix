@@ -22,38 +22,70 @@ public final class Debouncer: @unchecked Sendable {
     }
 }
 
+/// Retained by the FSEventStream as its context info pointer.
+/// Holds the debouncer and onChange closure so that if ScriptWatcher is
+/// released while the stream is still live, the callback can never touch
+/// a freed object — the stream keeps this box alive until invalidation.
+private final class WatcherContext: @unchecked Sendable {
+    let debouncer: Debouncer
+    let onChange: @Sendable () -> Void
+
+    init(debounce: TimeInterval, onChange: @escaping @Sendable () -> Void) {
+        self.debouncer = Debouncer(delay: debounce, queue: .main)
+        self.onChange = onChange
+    }
+}
+
 public final class ScriptWatcher: @unchecked Sendable {
     private let directory: URL
+    private let debounce: TimeInterval
     private let onChange: @Sendable () -> Void
-    private let debouncer: Debouncer
     private var stream: FSEventStreamRef?
 
     public init(directory: URL, debounce: TimeInterval = 0.3, onChange: @escaping @Sendable () -> Void) {
         self.directory = directory
+        self.debounce = debounce
         self.onChange = onChange
-        self.debouncer = Debouncer(delay: debounce, queue: .main)
     }
 
     deinit { stop() }
 
     public func start() {
         guard stream == nil else { return }
+
+        // The stream retains the context box via passRetained (+1).
+        // The release callback balances that +1 when the stream is torn down.
+        let context = WatcherContext(debounce: debounce, onChange: onChange)
+        let rawContext = Unmanaged.passRetained(context).toOpaque()
+
         let callback: FSEventStreamCallback = { _, info, _, _, _, _ in
             guard let info else { return }
-            let watcher = Unmanaged<ScriptWatcher>.fromOpaque(info).takeUnretainedValue()
-            watcher.debouncer.schedule { watcher.onChange() }
+            // takeUnretainedValue: the stream still holds the +1; we don't own it here.
+            let ctx = Unmanaged<WatcherContext>.fromOpaque(info).takeUnretainedValue()
+            ctx.debouncer.schedule { ctx.onChange() }
         }
-        var context = FSEventStreamContext(
+
+        var ctx = FSEventStreamContext(
             version: 0,
-            info: Unmanaged.passUnretained(self).toOpaque(),
-            retain: nil, release: nil, copyDescription: nil
+            info: rawContext,
+            retain: nil,
+            release: { rawPtr in
+                // Called by FSEvents when the stream is released; balances passRetained.
+                Unmanaged<WatcherContext>.fromOpaque(rawPtr!).release()
+            },
+            copyDescription: nil
         )
+
         let paths = [directory.path] as CFArray
         guard let stream = FSEventStreamCreate(
-            kCFAllocatorDefault, callback, &context, paths,
+            kCFAllocatorDefault, callback, &ctx, paths,
             FSEventStreamEventId(kFSEventStreamEventIdSinceNow),
             0.2, FSEventStreamCreateFlags(kFSEventStreamCreateFlagFileEvents)
-        ) else { return }
+        ) else {
+            // FSEventStreamCreate won't call release if it returns nil, so balance manually.
+            Unmanaged<WatcherContext>.fromOpaque(rawContext).release()
+            return
+        }
         self.stream = stream
         FSEventStreamSetDispatchQueue(stream, DispatchQueue.main)
         FSEventStreamStart(stream)
@@ -63,6 +95,7 @@ public final class ScriptWatcher: @unchecked Sendable {
         guard let stream else { return }
         FSEventStreamStop(stream)
         FSEventStreamInvalidate(stream)
+        // FSEventStreamRelease triggers the context release callback, freeing the box.
         FSEventStreamRelease(stream)
         self.stream = nil
     }
