@@ -44,7 +44,7 @@ tr '[:lower:]' '[:upper:]'
 - **Output:** transformed text on stdout
 - **Error handling:** non-zero exit code signals an error; stderr is captured and surfaced in the error
 - **Environment:** minimal (`PATH`, `HOME` only); runs in the script directory; the shebang is honored by the kernel
-- **Timeout:** configured per registry (default 3 seconds); on timeout, the process is terminated (the shell process is killed; contrast with JavaScript, which cannot be interrupted and is abandoned best-effort)
+- **Timeout:** configured per registry (default 3 seconds); on timeout, the shell process is sent SIGTERM, then SIGKILL after a 0.5 s grace period — a hard upper bound that fires even if the script traps SIGTERM. Contrast with JavaScript, which cannot be interrupted and is abandoned best-effort.
 
 ### JavaScript Contract
 
@@ -61,7 +61,7 @@ function transform(text) {
 - **Output:** the return value must be a string
 - **Error handling:** exceptions or non-string returns are caught and surfaced as script errors
 - **Context:** JavaScript runs in a fresh JSContext per invocation; no globals or state persist between calls
-- **Timeout caveat:** JavaScriptCore cannot be interrupted. If a JS script runs past the timeout, the best-effort strategy is to abandon the continuation and let the thread finish on process exit. Shell scripts, by contrast, are killed cleanly via SIGTERM.
+- **Timeout caveat:** JavaScriptCore cannot be interrupted. If a JS script runs past the timeout, the best-effort strategy is to abandon the continuation and let the thread finish on process exit. Shell scripts, by contrast, receive SIGTERM followed by SIGKILL after a short grace period, enforcing a hard upper bound on wall-clock duration.
 
 ## Script Metadata
 

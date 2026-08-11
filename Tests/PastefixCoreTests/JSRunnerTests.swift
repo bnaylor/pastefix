@@ -10,15 +10,20 @@ import Foundation
     }
 
     @Test func missingTransformThrows() async throws {
-        await #expect(throws: TransformError.self) {
+        await #expect(throws: TransformError.scriptFailed("no transform(text) function defined")) {
             try await JSRunner.run(source: "var x = 1;", input: "hi", timeout: 5)
         }
     }
 
     @Test func jsExceptionThrows() async throws {
         let src = "function transform(t){ throw new Error('nope'); }"
-        await #expect(throws: TransformError.self) {
-            try await JSRunner.run(source: src, input: "hi", timeout: 5)
+        do {
+            _ = try await JSRunner.run(source: src, input: "hi", timeout: 5)
+            Issue.record("Expected TransformError.scriptFailed but run() succeeded")
+        } catch let err as TransformError {
+            if case .scriptFailed = err { /* pass */ } else {
+                Issue.record("Expected .scriptFailed, got \(err)")
+            }
         }
     }
 

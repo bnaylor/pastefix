@@ -42,6 +42,17 @@ import Foundation
         }
     }
 
+    @Test func sigtermTrappingScriptStillTimesOut() async throws {
+        let url = try fixture("trap.sh")
+        let start = Date()
+        await #expect(throws: TransformError.timeout) {
+            try await ShellRunner.run(scriptURL: url, input: "x", timeout: 1)
+        }
+        let elapsed = Date().timeIntervalSince(start)
+        // Must resolve well before the 30-second sleep — SIGKILL escalation enforces this.
+        #expect(elapsed < 5, "Elapsed \(elapsed)s — SIGKILL did not fire in time")
+    }
+
     @Test func shellTransformerUsesMetadataName() {
         let url = URL(fileURLWithPath: "/tmp/foo.sh")
         let t = ShellTransformer(url: url, metadata: ScriptMetadata(name: "Shout"), timeout: 3)

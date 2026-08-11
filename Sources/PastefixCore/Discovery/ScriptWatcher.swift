@@ -41,6 +41,7 @@ public final class ScriptWatcher: @unchecked Sendable {
     private let debounce: TimeInterval
     private let onChange: @Sendable () -> Void
     private var stream: FSEventStreamRef?
+    private let lock = NSLock()
 
     public init(directory: URL, debounce: TimeInterval = 0.3, onChange: @escaping @Sendable () -> Void) {
         self.directory = directory
@@ -51,7 +52,9 @@ public final class ScriptWatcher: @unchecked Sendable {
     deinit { stop() }
 
     public func start() {
-        guard stream == nil else { return }
+        lock.lock()
+        guard stream == nil else { lock.unlock(); return }
+        lock.unlock()
 
         // The stream retains the context box via passRetained (+1).
         // The release callback balances that +1 when the stream is torn down.
@@ -77,7 +80,7 @@ public final class ScriptWatcher: @unchecked Sendable {
         )
 
         let paths = [directory.path] as CFArray
-        guard let stream = FSEventStreamCreate(
+        guard let newStream = FSEventStreamCreate(
             kCFAllocatorDefault, callback, &ctx, paths,
             FSEventStreamEventId(kFSEventStreamEventIdSinceNow),
             0.2, FSEventStreamCreateFlags(kFSEventStreamCreateFlagFileEvents)
@@ -86,17 +89,33 @@ public final class ScriptWatcher: @unchecked Sendable {
             Unmanaged<WatcherContext>.fromOpaque(rawContext).release()
             return
         }
-        self.stream = stream
-        FSEventStreamSetDispatchQueue(stream, DispatchQueue.main)
-        FSEventStreamStart(stream)
+
+        FSEventStreamSetDispatchQueue(newStream, DispatchQueue.main)
+        FSEventStreamStart(newStream)
+
+        lock.lock()
+        // Re-check under lock: if another thread raced start() and won, tear down ours.
+        if stream == nil {
+            stream = newStream
+            lock.unlock()
+        } else {
+            lock.unlock()
+            FSEventStreamStop(newStream)
+            FSEventStreamInvalidate(newStream)
+            FSEventStreamRelease(newStream)
+        }
     }
 
     public func stop() {
-        guard let stream else { return }
-        FSEventStreamStop(stream)
-        FSEventStreamInvalidate(stream)
+        lock.lock()
+        let captured = stream
+        stream = nil
+        lock.unlock()
+
+        guard let captured else { return }
+        FSEventStreamStop(captured)
+        FSEventStreamInvalidate(captured)
         // FSEventStreamRelease triggers the context release callback, freeing the box.
-        FSEventStreamRelease(stream)
-        self.stream = nil
+        FSEventStreamRelease(captured)
     }
 }

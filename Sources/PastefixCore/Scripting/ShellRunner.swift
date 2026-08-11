@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 
 public enum ShellRunner {
     public static func run(scriptURL: URL, input: String, timeout: TimeInterval) async throws -> String {
@@ -14,7 +15,16 @@ public enum ShellRunner {
         process.standardOutput = stdoutPipe
         process.standardError = stderrPipe
 
+        // Put the child in its own process group so that signals can target the
+        // entire group (shell + any grandchild subprocesses like `sleep`).
+        // Without this, killing only the shell leaves grandchildren holding the
+        // pipe write ends open, and readToEnd never sees EOF.
+        process.qualityOfService = .userInitiated
         try process.run()
+        let pid = process.processIdentifier
+        // Move the child into its own process group (pgid == pid).
+        // Ignore EPERM if the child already exec'd and set its own group.
+        setpgid(pid, pid)
 
         // Feed stdin on a background thread so a child that never reads stdin
         // (or fills stderr before consuming stdin) cannot block the caller.
@@ -24,10 +34,22 @@ public enum ShellRunner {
             try? stdinPipe.fileHandleForWriting.close()
         }
 
-        // Watchdog: terminate on timeout.
+        // Watchdog: send SIGTERM to the process group on timeout; escalate to
+        // SIGKILL after a 0.5 s grace period so scripts trapping SIGTERM cannot
+        // hang the caller indefinitely.  Signalling the group also reaps any
+        // grandchild processes (e.g. `sleep`) that hold the pipe write ends,
+        // ensuring readToEnd sees EOF promptly.
+        // Use DispatchQueue (not Task) for escalation so the SIGKILL fires on
+        // a real OS thread even while waitUntilExit() blocks a cooperative thread.
         let watchdog = Task {
             try await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
-            if process.isRunning { process.terminate() }
+            guard process.isRunning else { return }
+            kill(-pid, SIGTERM)                             // SIGTERM → whole group
+            DispatchQueue.global().asyncAfter(deadline: .now() + 0.5) {
+                if process.isRunning {
+                    kill(-pid, SIGKILL)                    // SIGKILL → whole group
+                }
+            }
         }
 
         // Drain BOTH pipes concurrently before waitUntilExit to prevent deadlock.
@@ -48,7 +70,8 @@ public enum ShellRunner {
             throw TransformError.timeout
         }
         if process.terminationStatus != 0 {
-            let stderr = String(data: errBytes, encoding: .utf8) ?? ""
+            let rawStderr = String(data: errBytes, encoding: .utf8) ?? ""
+            let stderr = Self.truncatedTail(rawStderr, limit: 8 * 1024)
             throw TransformError.nonZeroExit(code: process.terminationStatus, stderr: stderr)
         }
         return String(data: outBytes, encoding: .utf8) ?? ""
@@ -61,5 +84,14 @@ public enum ShellRunner {
                 continuation.resume(returning: data)
             }
         }
+    }
+
+    /// Returns the last `limit` UTF-8 bytes of `s`, prefixed with a truncation marker when trimmed.
+    static func truncatedTail(_ s: String, limit: Int) -> String {
+        let encoded = Array(s.utf8)
+        guard encoded.count > limit else { return s }
+        let tail = encoded.suffix(limit)
+        let marker = "…(truncated)…\n"
+        return marker + (String(bytes: tail, encoding: .utf8) ?? String(tail.map { Character(Unicode.Scalar($0)) }))
     }
 }
