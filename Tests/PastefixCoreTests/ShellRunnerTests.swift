@@ -27,6 +27,21 @@ import Foundation
         }
     }
 
+    @Test func largeStderrDoesNotDeadlock() async throws {
+        let url = try fixture("bigerr.sh")
+        // bigerr.sh writes ~320 KB to stderr (5000 * 65-byte lines), far exceeding
+        // the ~64 KB pipe buffer. Sequential pipe draining would deadlock here;
+        // concurrent draining must return promptly with nonZeroExit, not timeout.
+        do {
+            _ = try await ShellRunner.run(scriptURL: url, input: "", timeout: 10)
+            Issue.record("Expected nonZeroExit(code:3) but run() returned successfully")
+        } catch TransformError.nonZeroExit(let code, _) {
+            #expect(code == 3)
+        } catch TransformError.timeout {
+            Issue.record("Got .timeout — pipe drain deadlocked or watchdog fired (the deadlock bug is not fixed)")
+        }
+    }
+
     @Test func shellTransformerUsesMetadataName() {
         let url = URL(fileURLWithPath: "/tmp/foo.sh")
         let t = ShellTransformer(url: url, metadata: ScriptMetadata(name: "Shout"), timeout: 3)
