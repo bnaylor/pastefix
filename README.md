@@ -44,7 +44,7 @@ tr '[:lower:]' '[:upper:]'
 - **Output:** transformed text on stdout
 - **Error handling:** non-zero exit code signals an error; stderr is captured and surfaced in the error
 - **Environment:** minimal (`PATH`, `HOME` only); runs in the script directory; the shebang is honored by the kernel
-- **Timeout:** configured per registry (default 3 seconds); on timeout, the process is terminated cleanly (SIGTERM)
+- **Timeout:** configured per registry (default 3 seconds); on timeout, the process is terminated (the shell process is killed; contrast with JavaScript, which cannot be interrupted and is abandoned best-effort)
 
 ### JavaScript Contract
 
@@ -78,7 +78,7 @@ Magic comments in the first 30 lines define script behavior. Recognized keys are
 /* pastefix: name = My JS Transform, order = 600 */
 ```
 
-- **Comment syntax:** lines are tolerant of comment markers (`#`, `//`, `*`, `/*`); the parser strips leading whitespace and common comment characters
+- **Comment syntax:** lines are tolerant of comment markers (`#`, `//`, `*`, `/*`); the parser strips leading whitespace and any run of the individual characters space, tab, `#`, `/`, `*`
 - **Keys:** `name` (display name), `enabled` (true/false; default true), `order` (integer execution order; default 1000 for scripts)
 - **Built-in order:** Rich→Plain (10), Transliterate (20), Wrap (30), Whitespace (40); user scripts at order 1000+ appear after built-ins unless explicitly reordered
 - **Malformed lines:** ignored silently
@@ -104,7 +104,6 @@ The `TransformerRegistry` loads all enabled transforms in priority order:
 ```swift
 let config = RegistryConfig(
     scriptsDirectory: URL(fileURLWithPath: NSHomeDirectory() + "/.config/pastefix/scripts"),
-    wrapWidth: 80,
     timeout: 5
 )
 let registry = TransformerRegistry(config: config)
@@ -128,14 +127,12 @@ The suite includes 35 tests covering all transforms, shell and JavaScript execut
 
 ## Example Scripts
 
-### Shell: Word Frequency
+### Shell: Uppercase Transform
 
 ```bash
 #!/bin/bash
-# pastefix: name = Word Frequency, order = 900
-# List words sorted by frequency
-
-tr ' ' '\n' | sort | uniq -c | sort -rn
+# pastefix: name = Shout
+tr '[:lower:]' '[:upper:]'
 ```
 
 ### JavaScript: JSON Pretty-Print
