@@ -16,8 +16,9 @@ import Testing
 
     @Test func dropsNonASCIIRemnants() async throws {
         // Dingbats and CJK have no ASCII equivalent → removed entirely.
+        // Input has 3 spaces (after "hi", after ❤, after "日本"), all preserved as ASCII passes through.
         let out = try await subject.apply(.init(text: "hi \u{2764} 日本 bye"))
-        #expect(out == "hi  bye")
+        #expect(out == "hi   bye")
     }
 
     @Test func passesPlainASCIIThrough() async throws {

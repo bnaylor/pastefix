@@ -29,8 +29,6 @@ public struct Transliterate: Transformer {
         let stripped = s.applyingTransform(.stripDiacritics, reverse: false) ?? s
         // Drop anything still outside ASCII (dingbats, CJK, emoji).
         let scalars = stripped.unicodeScalars.filter { $0.isASCII }
-        let result = String(String.UnicodeScalarView(scalars))
-        // Collapse 3+ spaces to 2.
-        return result.replacingOccurrences(of: " {3,}", with: "  ", options: .regularExpression)
+        return String(String.UnicodeScalarView(scalars))
     }
 }
