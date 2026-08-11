@@ -21,18 +21,19 @@ public enum JSRunner {
         guard let context = JSContext() else {
             return .failure(TransformError.scriptFailed("could not create JSContext"))
         }
-        var thrown: String?
-        context.exceptionHandler = { _, exception in
-            thrown = exception?.toString() ?? "unknown JS exception"
-        }
         context.evaluateScript(source)
-        if let thrown { return .failure(TransformError.scriptFailed(thrown)) }
+        if let exception = context.exception {
+            return .failure(TransformError.scriptFailed(exception.toString()))
+        }
 
         guard let fn = context.objectForKeyedSubscript("transform"), !fn.isUndefined else {
             return .failure(TransformError.scriptFailed("no transform(text) function defined"))
         }
+        context.exception = nil
         let value = fn.call(withArguments: [input])
-        if let thrown { return .failure(TransformError.scriptFailed(thrown)) }
+        if let exception = context.exception {
+            return .failure(TransformError.scriptFailed(exception.toString()))
+        }
         guard let value, value.isString else {
             return .failure(TransformError.scriptFailed("transform() did not return a string"))
         }
