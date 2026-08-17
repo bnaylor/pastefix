@@ -5,7 +5,8 @@ let package = Package(
     name: "PastefixCore",
     platforms: [.macOS(.v14)],
     products: [
-        .library(name: "PastefixCore", targets: ["PastefixCore"])
+        .library(name: "PastefixCore", targets: ["PastefixCore"]),
+        .library(name: "PastefixAppCore", targets: ["PastefixAppCore"]),
     ],
     targets: [
         .target(name: "PastefixCore"),
@@ -13,6 +14,8 @@ let package = Package(
             name: "PastefixCoreTests",
             dependencies: ["PastefixCore"],
             resources: [.copy("Fixtures")]
-        )
+        ),
+        .target(name: "PastefixAppCore", dependencies: ["PastefixCore"]),
+        .testTarget(name: "PastefixAppCoreTests", dependencies: ["PastefixAppCore"]),
     ]
 )

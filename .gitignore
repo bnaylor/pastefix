@@ -7,3 +7,7 @@
 
 # Agent scratch: SDD ledgers, worktrees, review packages
 .superpowers/
+
+# Xcode per-user state (keep project.pbxproj and shared schemes)
+xcuserdata/
+*.xcuserstate
