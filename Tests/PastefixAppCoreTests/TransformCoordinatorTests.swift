@@ -59,4 +59,36 @@ private struct FakeTransformer: Transformer {
         #expect(TransformCoordinator.isEnabled(rich, for: doc("x", rich: true)) == true)
         #expect(TransformCoordinator.isEnabled(plain, for: doc("x", rich: false)) == true)
     }
+
+    @Test func errorMessageRichInputUnavailable() async {
+        let t = FakeTransformer(id: "f", name: "F", requiresRichInput: false) { _ in
+            throw TransformError.richInputUnavailable
+        }
+        let (_, outcome) = await TransformCoordinator.apply(t, to: doc("hi"))
+        #expect(outcome == .failed("No rich text available to convert."))
+    }
+
+    @Test func errorMessageScriptFailed() async {
+        let t = FakeTransformer(id: "f", name: "F", requiresRichInput: false) { _ in
+            throw TransformError.scriptFailed("Something went wrong")
+        }
+        let (_, outcome) = await TransformCoordinator.apply(t, to: doc("hi"))
+        #expect(outcome == .failed("Script error: Something went wrong"))
+    }
+
+    @Test func errorMessageNonZeroExitWithStderr() async {
+        let t = FakeTransformer(id: "f", name: "F", requiresRichInput: false) { _ in
+            throw TransformError.nonZeroExit(code: 42, stderr: "error output")
+        }
+        let (_, outcome) = await TransformCoordinator.apply(t, to: doc("hi"))
+        #expect(outcome == .failed("Script failed (exit 42): error output"))
+    }
+
+    @Test func errorMessageNonZeroExitEmptyStderr() async {
+        let t = FakeTransformer(id: "f", name: "F", requiresRichInput: false) { _ in
+            throw TransformError.nonZeroExit(code: 1, stderr: "")
+        }
+        let (_, outcome) = await TransformCoordinator.apply(t, to: doc("hi"))
+        #expect(outcome == .failed("Script failed (exit 1)."))
+    }
 }

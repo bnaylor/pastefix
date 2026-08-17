@@ -31,6 +31,11 @@ public enum TransformCoordinator {
         }
     }
 
+    /// Maps a `TransformError` to a human-readable message.
+    ///
+    /// This method is intentionally internal. Error messages reach the UI through the
+    /// `.failed(String)` case of `TransformOutcome` returned by `apply(_:to:)`, not by
+    /// calling this method directly.
     static func message(for error: TransformError) -> String {
         switch error {
         case .richInputUnavailable: return "No rich text available to convert."
