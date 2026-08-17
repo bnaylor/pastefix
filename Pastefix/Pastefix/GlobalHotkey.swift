@@ -28,7 +28,12 @@ final class GlobalHotkey {
             { _, event, userData in
                 guard let userData else { return noErr }
                 let hotkey = Unmanaged<GlobalHotkey>.fromOpaque(userData).takeUnretainedValue()
-                DispatchQueue.main.async { hotkey.onFire() }
+                // Retain across the async hop so onFire can never run on a freed instance;
+                // takeRetainedValue() in the block balances this passRetained.
+                let retained = Unmanaged.passRetained(hotkey)
+                DispatchQueue.main.async {
+                    retained.takeRetainedValue().onFire()
+                }
                 return noErr
             },
             1, &eventType, selfPtr, &handlerRef
