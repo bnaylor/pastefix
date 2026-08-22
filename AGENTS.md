@@ -6,25 +6,42 @@ Guidance for AI coding agents (Claude Code, Codex, Gemini CLI, etc.) working in 
 
 Pastefix v2 is a macOS clipboard utility: a menu-bar app with a global hotkey that summons an editable panel, applies text transforms (clean up for IRC/chat, reflow, rich→plain, user scripts), and writes the result back to the clipboard. It is the modern Swift rewrite of a 2007 Objective-C app.
 
-Today the repo contains exactly one shipped component:
+The repo has three components:
 
-- **`PastefixCore`** — the transform *engine*, a standalone, dependency-free Swift 6 package (macOS 14+). No UI. It defines a unified `Transformer` protocol over three engines (native Swift, shell, JavaScript), a registry that discovers user scripts, and an FSEvents watcher.
+- **`PastefixCore`** — the transform *engine*, a standalone, dependency-free Swift 6 SwiftPM package (macOS 14+). No UI. It defines a unified `Transformer` protocol over three engines (native Swift, shell, JavaScript), a registry that discovers user scripts, and an FSEvents watcher.
+- **`PastefixAppCore`** — the app's *pure model* layer, a second SwiftPM library target (depends on `PastefixCore`). Holds the testable logic that must NOT live in the Xcode target: `ClipboardSnapshot`, `PasteDocument` (undo/redo history), `TransformCoordinator` (bridges engine → document). Unit-tested via `swift test`.
+- **`Pastefix`** — the macOS menu-bar app, an **Xcode** target (SwiftUI `MenuBarExtra` + AppKit glue) that links both packages. Global hotkey (Carbon ⌘⇧C) → floating `NSPanel` editor + transform palette → Save writes back to the pasteboard. Built via `xcodebuild`, verified manually.
 
-The **app layer** (menu-bar shell, `NSPanel`, editor, undo/document model, Settings, KeyboardShortcuts + Sparkle) is designed in the spec but **not yet built** — it is a separate forthcoming plan. Do not add app-layer code or invariants to the engine until that plan exists.
+**Testability rule:** pure logic belongs in `PastefixAppCore` (fast, headless `swift test`), NOT the Xcode target. The Xcode target is system glue only (hotkey, pasteboard, panel, SwiftUI views) and is not unit-tested. If you find yourself wanting to unit-test something in `Pastefix/`, it belongs in `PastefixAppCore`.
 
-The authoritative design lives in `docs/specs/2026-08-11-pastefix-v2-foundation-pipeline.md`. Read it before non-trivial changes.
+**Still forthcoming (Plan 2b, not yet built):** Settings + `UserDefaults`, rebindable hotkey (KeyboardShortcuts), Sparkle auto-update, live script reload via `ScriptWatcher`, auto-hide-on-blur, configurable wrap width. Don't half-stub these into 2a code.
+
+The authoritative design lives in `docs/specs/2026-08-11-pastefix-v2-foundation-pipeline.md`; per-increment plans under `docs/plans/`. Read the relevant one before non-trivial changes.
 
 ## Build, test, run
 
+**Packages (`PastefixCore` + `PastefixAppCore`) — the tested logic:**
+
 ```sh
-swift build                          # build the package
-swift test                           # run the whole suite
+swift build                          # build both library targets
+swift test                           # run the whole suite (engine + app model)
 swift test --filter <SuiteName>      # focused, e.g. --filter ShellRunnerTests
+```
+
+**App (`Pastefix` Xcode target) — build + run:**
+
+```sh
+Pastefix/launch.sh                   # build Debug + launch the menu-bar app
+Pastefix/launch.sh --path            # just print the built .app path
+xcodebuild build -project Pastefix/Pastefix.xcodeproj -scheme Pastefix \
+  -destination 'platform=macOS,arch=arm64' -configuration Debug   # build only
 ```
 
 - Toolchain: Swift 6 (developed on 6.3 / Xcode 26.4), strict concurrency.
 - Tests use the built-in **Swift Testing** framework (`import Testing`, `@Test`, `#expect`) — not XCTest.
 - Fixture scripts under `Tests/PastefixCoreTests/Fixtures/` are executed directly, so they **must be committed executable** (`git ls-files -s` shows mode `100755`).
+- The Xcode project lives at `Pastefix/Pastefix.xcodeproj` and app sources at `Pastefix/Pastefix/` (note the double nesting). Xcode 16 **filesystem-synchronized groups** auto-add new `.swift` files to the target — do NOT hand-edit `project.pbxproj` to add sources. Linking a *package product* or changing a *build setting* is the exception (a human/controller does it in Xcode or a surgical value flip).
+- `xcodebuild -showBuildSettings` reports the **Release** path unless you pass the matching `-configuration Debug`; the product lives in **DerivedData**, not a local `build/`. Use `launch.sh` and stop fighting it.
 
 ## Project layout
 
@@ -47,6 +64,21 @@ Sources/PastefixCore/
 Tests/PastefixCoreTests/
   *Tests.swift                        # one suite per component
   Fixtures/                           # executable fixture scripts (100755)
+Sources/PastefixAppCore/              # app pure model (depends on PastefixCore)
+  ClipboardSnapshot.swift             # plainText + richRTFD (RTFD data, Sendable)
+  PasteDocument.swift                 # origin + history/cursor undo/redo/refresh
+  TransformCoordinator.swift          # apply(transformer, to: document) + isEnabled
+Tests/PastefixAppCoreTests/           # swift-test suites for the model
+Pastefix/                             # the Xcode app
+  Pastefix.xcodeproj                  # ENABLE_APP_SANDBOX = NO (non-sandboxed by design)
+  launch.sh                           # build Debug + open the .app
+  Pastefix/                           # app sources (system glue only, no unit tests)
+    PastefixApp.swift                 # @main MenuBarExtra + NSApplicationDelegateAdaptor
+    AppModel.swift                    # @MainActor ObservableObject: registry+document+clipboard
+    GlobalHotkey.swift                # Carbon RegisterEventHotKey (⌘⇧C)
+    ClipboardBridge.swift             # NSPasteboard <-> ClipboardSnapshot
+    PanelController.swift             # floating NSPanel host
+    PanelView.swift                   # SwiftUI editor + palette + toolbar + error banner
 docs/specs/  docs/plans/  docs/reviews/   # dated design docs (see below)
 ```
 
@@ -62,6 +94,8 @@ These are load-bearing; most were established the hard way (see "Things that hav
 6. **JS contract:** the script defines `function transform(text)`, run in a **fresh `JSContext` per call**; exceptions (read via `context.exception`) or a non-string return are errors. The eval/timeout race is guarded so the continuation resumes **exactly once**. JavaScriptCore cannot be interrupted, so a runaway script is abandoned best-effort on timeout (its thread runs until process exit) — this is documented, not a bug to "fix" by weakening the timeout.
 7. **FSEvents lifetime:** the stream owns a **retained `WatcherContext` box** (via `passRetained`, balanced by the context `release` callback) — never `passUnretained(self)`, which is a use-after-free. `ScriptWatcher.stream` access is `NSLock`-guarded; `deinit` calls `stop()`.
 8. **Transformer identities are stable and typed:** `builtin.<name>`, `shell:<filename>`, `js:<filename>`. Built-ins occupy orders 10/20/30/40; discovered scripts default to 1000; the registry sorts by `(order, name)` and returns only enabled transforms. Missing/unreadable script dirs are tolerated (built-ins still load).
+9. **The app is NON-SANDBOXED (`ENABLE_APP_SANDBOX = NO`).** By design (direct-download, notarized). The sandbox would block reading `~/.config/pastefix/scripts/` and executing shell/JS scripts — i.e. it kills the entire user-scripts pipeline, the heart of the product. Xcode's app template re-enables the sandbox on a whim; if you regenerate or reconfigure the target, re-verify it stays off (`codesign -d --entitlements - <app>` must not show `com.apple.security.app-sandbox`).
+10. **A slow transform must not lose the user's edit.** `AppModel.apply` is gated by `isApplying`: while an async transform (shell/JS, up to 3s) runs, the editor + palette are disabled so nothing mutates the document underneath the in-flight apply, and the result can't overwrite a newer edit. Don't remove the gate without a replacement that closes the same race.
 
 ## Patterns and conventions
 
@@ -73,13 +107,19 @@ These are load-bearing; most were established the hard way (see "Things that hav
 
 ## Things that have bitten us
 
-Preserve these — each was a real defect caught in review during the initial engine build:
+Preserve these — each was a real defect caught in review or manual testing:
 
+*Engine (initial build):*
 - **Single-purpose transforms** (`fb6da56`): `Transliterate` originally collapsed spaces to satisfy a bad test. It must not; whitespace is a separate transform.
 - **Shell pipe deadlock** (`96232ff`): sequential stdout-then-stderr draining hangs on large stderr. Drain concurrently.
 - **Timeout wasn't a hard bound** (`5f4118e`): SIGTERM alone lets a trapping script hang the call; escalate to SIGKILL over the process group.
 - **FSEvents use-after-free** (`d8ad95b`): `passUnretained(self)` in the stream context dangles; use a stream-owned retained box.
 - **JS captured-var exception handler** (`8d65bc8`): reading `context.exception` directly beats a mutable `var` captured into a stored closure.
+
+*App (Plan 2a) — both slipped past a green build and were caught only by manual UX testing, because they fail at runtime, not compile time:*
+- **App Sandbox silently on** (`ed38589`): the Xcode template shipped `ENABLE_APP_SANDBOX = YES`, which built fine but made every user script invisible (can't read `~/.config`) — see invariant 9. Runtime-only failures need a human running the app, not just `xcodebuild`.
+- **Fake rich detection** (`9cb3a60`): `NSPasteboard.readObjects([NSAttributedString])` *synthesizes* an attributed string even from plain text, so "Rich → Plain Text" was always enabled. Gate on `pasteboard.availableType(from: [.rtf, .rtfd, .html]) != nil` before treating the clipboard as rich.
+- **Carbon callback UAF across the async hop** (`0aa45b5`): the `⌘⇧C` handler recovered `self` with `takeUnretainedValue()` then dispatched to the main queue — retain across the hop (`passRetained`/`takeRetainedValue`) so `onFire` can't run on a freed instance.
 
 ## Definition of Done
 
