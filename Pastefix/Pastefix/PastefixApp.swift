@@ -8,7 +8,6 @@ struct PastefixApp: App {
     var body: some Scene {
         MenuBarExtra("Pastefix", systemImage: "doc.on.clipboard") {
             Button("Summon Pastefix") { delegate.summon() }
-                .keyboardShortcut("c", modifiers: [.command, .shift])
             Divider()
             Button("Quit Pastefix") { NSApplication.shared.terminate(nil) }
                 .keyboardShortcut("q", modifiers: .command)

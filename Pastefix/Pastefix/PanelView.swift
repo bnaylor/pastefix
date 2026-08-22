@@ -40,7 +40,6 @@ struct PanelView: View {
                 .keyboardShortcut(.cancelAction)
             Button("Save") { model.save() }
                 .keyboardShortcut("s", modifiers: .command)
-                .keyboardShortcut(.defaultAction)
         }
         .padding(8)
     }
