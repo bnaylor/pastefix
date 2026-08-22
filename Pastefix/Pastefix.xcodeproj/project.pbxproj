@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		44988CDF3032B5AE0042BEFC /* PastefixCore in Frameworks */ = {isa = PBXBuildFile; productRef = 44988CDE3032B5AE0042BEFC /* PastefixCore */; };
+		44988CE4303A4AD40042BEFC /* PastefixAppCore in Frameworks */ = {isa = PBXBuildFile; productRef = 44988CE3303A4AD40042BEFC /* PastefixAppCore */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -28,6 +29,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				44988CDF3032B5AE0042BEFC /* PastefixCore in Frameworks */,
+				44988CE4303A4AD40042BEFC /* PastefixAppCore in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -38,6 +40,7 @@
 			isa = PBXGroup;
 			children = (
 				44988CD13032B43A0042BEFC /* Pastefix */,
+				44988CE2303A4AD40042BEFC /* Frameworks */,
 				44988CD03032B43A0042BEFC /* Products */,
 			);
 			sourceTree = "<group>";
@@ -48,6 +51,13 @@
 				44988CCF3032B43A0042BEFC /* Pastefix.app */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		44988CE2303A4AD40042BEFC /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			name = Frameworks;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -71,6 +81,7 @@
 			name = Pastefix;
 			packageProductDependencies = (
 				44988CDE3032B5AE0042BEFC /* PastefixCore */,
+				44988CE3303A4AD40042BEFC /* PastefixAppCore */,
 			);
 			productName = Pastefix;
 			productReference = 44988CCF3032B43A0042BEFC /* Pastefix.app */;
@@ -350,6 +361,11 @@
 		44988CDE3032B5AE0042BEFC /* PastefixCore */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = PastefixCore;
+		};
+		44988CE3303A4AD40042BEFC /* PastefixAppCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 44988CDD3032B5AE0042BEFC /* XCLocalSwiftPackageReference "../../pastefix" */;
+			productName = PastefixAppCore;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};
