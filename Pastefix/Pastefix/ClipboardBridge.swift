@@ -4,8 +4,14 @@ import PastefixAppCore
 enum ClipboardBridge {
     static func snapshot(from pasteboard: NSPasteboard = .general) -> ClipboardSnapshot {
         let plain = pasteboard.string(forType: .string)
-        let rich = pasteboard.readObjects(forClasses: [NSAttributedString.self], options: nil)?
-            .first as? NSAttributedString
+        let richTypes: [NSPasteboard.PasteboardType] = [.rtf, .rtfd, .html]
+        let rich: NSAttributedString?
+        if pasteboard.availableType(from: richTypes) != nil {
+            rich = pasteboard.readObjects(forClasses: [NSAttributedString.self], options: nil)?
+                .first as? NSAttributedString
+        } else {
+            rich = nil
+        }
         return ClipboardSnapshot(plainText: plain, rich: rich)
     }
 
