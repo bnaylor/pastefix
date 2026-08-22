@@ -19,6 +19,7 @@ struct PanelView: View {
             TextEditor(text: workingBinding)
                 .font(.system(.body, design: .monospaced))
                 .padding(8)
+                .disabled(model.isApplying)
             if let error = model.errorMessage {
                 errorBanner(error)
             }
@@ -66,5 +67,6 @@ struct PanelView: View {
             }
             .padding(8)
         }
+        .disabled(model.isApplying)
     }
 }

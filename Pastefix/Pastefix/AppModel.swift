@@ -8,6 +8,7 @@ import PastefixAppCore
 final class AppModel: ObservableObject {
     @Published private(set) var document: PasteDocument?
     @Published var errorMessage: String?
+    @Published private(set) var isApplying = false
 
     let transformers: [any Transformer]
     var onEndSession: (() -> Void)?
@@ -30,7 +31,8 @@ final class AppModel: ObservableObject {
     }
 
     func apply(_ transformer: any Transformer) {
-        guard let current = document else { return }
+        guard let current = document, !isApplying else { return }
+        isApplying = true
         Task {
             let (updated, outcome) = await TransformCoordinator.apply(transformer, to: current)
             self.document = updated
@@ -38,6 +40,7 @@ final class AppModel: ObservableObject {
             case .applied, .unchanged: self.errorMessage = nil
             case .failed(let message): self.errorMessage = message
             }
+            self.isApplying = false
         }
     }
 
