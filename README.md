@@ -2,7 +2,21 @@
 
 PastefixCore is a macOS clipboard transform engine that unifies native Swift transforms, shell scripts, and JavaScript functions under a single `Transformer` protocol. It powers the transform pipeline of Pastefix v2, a clipboard utility that applies transformations on demand.
 
-> **Note:** This package documents the transform engine. The Pastefix v2 app UI (menu bar, editor integration, settings) is a forthcoming separate layer.
+> **Note:** This package documents the transform engine. The Pastefix v2 app UI is described in the section below.
+
+## The app (Plan 2a)
+
+Pastefix runs as a macOS menu-bar app. A clipboard icon sits in the menu bar; pressing **⌘⇧C** summons a floating panel over whatever app is in the foreground (no Space-switch, no Dock icon).
+
+**Core flow:**
+
+1. **Summon** — ⌘⇧C snapshots the clipboard and opens the editor panel.
+2. **Transform** — a horizontal palette of buttons along the bottom of the panel lists every enabled transformer (built-ins + user scripts). Click one to apply it; the monospaced editor updates instantly. An error banner appears in red if a transformer fails.
+3. **Edit** — the editor is freely editable. Undo/Redo/Refresh controls are in the toolbar.
+4. **Save (⌘S)** — writes the working text back to the clipboard and dismisses the panel.
+5. **Cancel (Esc)** — discards changes and dismisses the panel.
+
+**Forthcoming (Plan 2b):** a Settings UI for configuring transformer options, live script reload via filesystem watching, and auto-update delivery via Sparkle.
 
 ## Overview
 
