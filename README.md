@@ -16,7 +16,17 @@ Pastefix runs as a macOS menu-bar app. A clipboard icon sits in the menu bar; pr
 4. **Save (⌘S)** — writes the working text back to the clipboard and dismisses the panel.
 5. **Cancel (Esc)** — discards changes and dismisses the panel.
 
-**Forthcoming (Plan 2b):** a Settings UI for configuring transformer options, live script reload via filesystem watching, and auto-update delivery via Sparkle.
+## Settings (Plan 2b)
+
+Pastefix includes a Settings window (⌘, or "Settings…" in the menu) with three tabs:
+
+- **General:** Configure wrap width (default 400 columns), toggle auto-hide-on-blur (dismisses the panel when focus leaves), and choose a custom folder for user scripts (default `~/.config/pastefix/scripts/`).
+- **Shortcut:** Rebind the global hotkey (default ⌘⇧C) using an interactive keyboard recorder.
+- **Transforms:** Enable/disable individual transforms and drag to reorder them in the palette.
+
+All settings persist via `UserDefaults`. User scripts are watched for changes; editing a script under `~/.config/pastefix/scripts/` updates the palette instantly without relaunch.
+
+**Forthcoming (Plan 2c):** auto-update delivery via Sparkle.
 
 ## Overview
 
