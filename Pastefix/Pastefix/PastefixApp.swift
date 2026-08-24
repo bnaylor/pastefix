@@ -37,6 +37,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let panel = PanelController(rootView: hostingView)
         self.panel = panel
 
+        // Auto-hide the panel when it loses key focus (if enabled in settings and a session is active).
+        panel.onResignKey = { [weak self] in
+            guard let self, self.settings.autoHideOnBlur, self.model.document != nil else { return }
+            self.model.cancel()   // ends session; onEndSession hides the panel
+        }
+
         // When the user saves or cancels, AppModel calls onEndSession → hide panel.
         model.onEndSession = { [weak self] in
             self?.panel?.hide()
