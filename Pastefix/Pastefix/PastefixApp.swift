@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import KeyboardShortcuts
 
 @main
 struct PastefixApp: App {
@@ -18,13 +19,12 @@ struct PastefixApp: App {
 // MARK: - AppDelegate
 
 /// Owns AppKit objects that must outlive SwiftUI scene updates:
-/// the AppModel, GlobalHotkey (Carbon), and PanelController.
+/// the AppModel and PanelController.
 /// Created once by the system before applicationDidFinishLaunching;
 /// its lifetime equals the process lifetime.
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private(set) var model = AppModel()
-    private var hotkey: GlobalHotkey?
     private var panel: PanelController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -38,10 +38,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.panel?.hide()
         }
 
-        // Register the global hotkey (Cmd-Shift-C via Carbon).
-        let hotkey = GlobalHotkey(onFire: { [weak self] in self?.summon() })
-        hotkey.register()
-        self.hotkey = hotkey
+        // Global summon hotkey (default ⌘⇧C, rebindable in Settings).
+        KeyboardShortcuts.onKeyUp(for: .summonPastefix) { [weak self] in
+            self?.summon()
+        }
     }
 
     /// Summons the panel: snapshot clipboard, update model, show panel.
