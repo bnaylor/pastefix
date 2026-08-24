@@ -41,4 +41,14 @@ import Foundation
         s.scriptsDirectoryPath = "/tmp/pfx-scripts"
         #expect(s.scriptsDirectoryURL == URL(fileURLWithPath: "/tmp/pfx-scripts", isDirectory: true))
     }
+
+    @Test func scriptsDirectoryPathPersists() {
+        let d = freshDefaults()
+        let s = SettingsStore(defaults: d)
+        s.scriptsDirectoryPath = "/custom/scripts"
+
+        // A second store over the same defaults sees the persisted path.
+        let s2 = SettingsStore(defaults: d)
+        #expect(s2.scriptsDirectoryPath == "/custom/scripts")
+    }
 }

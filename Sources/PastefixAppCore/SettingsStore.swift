@@ -26,10 +26,10 @@ public final class SettingsStore: ObservableObject {
         URL(fileURLWithPath: scriptsDirectoryPath, isDirectory: true)
     }
 
-    static var defaultScriptsPath: String {
+    static let defaultScriptsPath: String = {
         FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".config/pastefix/scripts", isDirectory: true).path
-    }
+    }()
 
     private enum Key {
         static let wrapWidth = "pastefix.wrapWidth"
@@ -40,7 +40,12 @@ public final class SettingsStore: ObservableObject {
     }
 
     private static func writeJSON<T: Encodable>(_ value: T, to defaults: UserDefaults, key: String) {
-        if let data = try? JSONEncoder().encode(value) { defaults.set(data, forKey: key) }
+        do {
+            let data = try JSONEncoder().encode(value)
+            defaults.set(data, forKey: key)
+        } catch {
+            assertionFailure("SettingsStore: failed to encode \(key): \(error)")
+        }
     }
 
     private static func readJSON<T: Decodable>(_ type: T.Type, from defaults: UserDefaults, key: String) -> T? {
