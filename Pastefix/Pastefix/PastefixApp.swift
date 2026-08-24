@@ -1,6 +1,7 @@
 import SwiftUI
 import AppKit
 import KeyboardShortcuts
+import PastefixAppCore
 
 @main
 struct PastefixApp: App {
@@ -24,7 +25,8 @@ struct PastefixApp: App {
 /// its lifetime equals the process lifetime.
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    private(set) var model = AppModel()
+    private(set) var settings = SettingsStore()
+    private(set) lazy var model = AppModel(settings: settings)
     private var panel: PanelController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
