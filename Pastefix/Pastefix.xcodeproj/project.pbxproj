@@ -9,6 +9,7 @@
 /* Begin PBXBuildFile section */
 		44988CDF3032B5AE0042BEFC /* PastefixCore in Frameworks */ = {isa = PBXBuildFile; productRef = 44988CDE3032B5AE0042BEFC /* PastefixCore */; };
 		44988CE4303A4AD40042BEFC /* PastefixAppCore in Frameworks */ = {isa = PBXBuildFile; productRef = 44988CE3303A4AD40042BEFC /* PastefixAppCore */; };
+		44C9835C303BE8DF00BB563C /* KeyboardShortcuts in Frameworks */ = {isa = PBXBuildFile; productRef = 44C9835B303BE8DF00BB563C /* KeyboardShortcuts */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -30,6 +31,7 @@
 			files = (
 				44988CDF3032B5AE0042BEFC /* PastefixCore in Frameworks */,
 				44988CE4303A4AD40042BEFC /* PastefixAppCore in Frameworks */,
+				44C9835C303BE8DF00BB563C /* KeyboardShortcuts in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -82,6 +84,7 @@
 			packageProductDependencies = (
 				44988CDE3032B5AE0042BEFC /* PastefixCore */,
 				44988CE3303A4AD40042BEFC /* PastefixAppCore */,
+				44C9835B303BE8DF00BB563C /* KeyboardShortcuts */,
 			);
 			productName = Pastefix;
 			productReference = 44988CCF3032B43A0042BEFC /* Pastefix.app */;
@@ -113,6 +116,7 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				44988CDD3032B5AE0042BEFC /* XCLocalSwiftPackageReference "../../pastefix" */,
+				44C9835A303BE8DF00BB563C /* XCRemoteSwiftPackageReference "KeyboardShortcuts" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 44988CD03032B43A0042BEFC /* Products */;
@@ -357,6 +361,17 @@
 		};
 /* End XCLocalSwiftPackageReference section */
 
+/* Begin XCRemoteSwiftPackageReference section */
+		44C9835A303BE8DF00BB563C /* XCRemoteSwiftPackageReference "KeyboardShortcuts" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/sindresorhus/KeyboardShortcuts";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 3.0.1;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
 /* Begin XCSwiftPackageProductDependency section */
 		44988CDE3032B5AE0042BEFC /* PastefixCore */ = {
 			isa = XCSwiftPackageProductDependency;
@@ -366,6 +381,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 44988CDD3032B5AE0042BEFC /* XCLocalSwiftPackageReference "../../pastefix" */;
 			productName = PastefixAppCore;
+		};
+		44C9835B303BE8DF00BB563C /* KeyboardShortcuts */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 44C9835A303BE8DF00BB563C /* XCRemoteSwiftPackageReference "KeyboardShortcuts" */;
+			productName = KeyboardShortcuts;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};
