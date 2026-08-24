@@ -46,19 +46,16 @@ struct SettingsView: View {
         let name: String
     }
 
-    private var transformerRows: [TransformerRow] {
-        model.transformers.map { TransformerRow(id: $0.id, name: $0.name) }
-    }
-
     private var transforms: some View {
-        VStack(alignment: .leading) {
+        let rows = model.transformers.map { TransformerRow(id: $0.id, name: $0.name) }
+        return VStack(alignment: .leading) {
             Text("Enable, disable, and reorder transforms. Drag to reorder.")
                 .font(.caption).foregroundStyle(.secondary)
             List {
-                ForEach(transformerRows) { row in
+                ForEach(rows) { row in
                     Toggle(isOn: enabledBinding(for: row.id)) { Text(row.name) }
                 }
-                .onMove(perform: moveTransforms)
+                .onMove { source, destination in moveTransforms(rows: rows, from: source, to: destination) }
             }
         }
         .padding()
@@ -71,8 +68,8 @@ struct SettingsView: View {
         )
     }
 
-    private func moveTransforms(from source: IndexSet, to destination: Int) {
-        var ids = model.transformers.map(\.id)
+    private func moveTransforms(rows: [TransformerRow], from source: IndexSet, to destination: Int) {
+        var ids = rows.map(\.id)
         ids.move(fromOffsets: source, toOffset: destination)
         var order: [String: Int] = [:]
         for (index, id) in ids.enumerated() { order[id] = index * 10 }
