@@ -30,6 +30,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private(set) lazy var model = AppModel(settings: settings)
     private var panel: PanelController?
     private var scriptWatcher: ScriptWatcher?
+    private var lastSummonAt: Date = .distantPast
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Build the panel once, hosting PanelView against the single AppModel.
@@ -40,6 +41,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Auto-hide the panel when it loses key focus (if enabled in settings and a session is active).
         panel.onResignKey = { [weak self] in
             guard let self, self.settings.autoHideOnBlur, self.model.document != nil else { return }
+            // Ignore the transient resign-key that fires during the summon activation
+            // sequence; only auto-hide on a genuine later blur.
+            guard Date().timeIntervalSince(self.lastSummonAt) > 0.3 else { return }
             self.model.cancel()   // ends session; onEndSession hides the panel
         }
 
@@ -66,6 +70,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// Summons the panel: snapshot clipboard, update model, show panel.
     func summon() {
+        lastSummonAt = Date()
         model.summon()
         panel?.show()
     }
