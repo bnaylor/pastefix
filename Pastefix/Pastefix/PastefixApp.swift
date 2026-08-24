@@ -1,6 +1,7 @@
 import SwiftUI
 import AppKit
 import KeyboardShortcuts
+import PastefixCore
 import PastefixAppCore
 
 @main
@@ -28,6 +29,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private(set) var settings = SettingsStore()
     private(set) lazy var model = AppModel(settings: settings)
     private var panel: PanelController?
+    private var scriptWatcher: ScriptWatcher?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Build the panel once, hosting PanelView against the single AppModel.
@@ -44,6 +46,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         KeyboardShortcuts.onKeyUp(for: .summonPastefix) { [weak self] in
             self?.summon()
         }
+
+        // Live-reload the palette when the user's scripts directory changes.
+        let dir = settings.scriptsDirectoryURL
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let watcher = ScriptWatcher(directory: dir) { [weak self] in
+            // onChange is delivered on the main queue by ScriptWatcher's debouncer.
+            MainActor.assumeIsolated { self?.model.reload() }
+        }
+        watcher.start()
+        self.scriptWatcher = watcher
     }
 
     /// Summons the panel: snapshot clipboard, update model, show panel.
