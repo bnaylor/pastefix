@@ -68,7 +68,7 @@ Sources/PastefixAppCore/              # app pure model (depends on PastefixCore,
   ClipboardSnapshot.swift             # plainText + richRTFD (RTFD data, Sendable)
   PasteDocument.swift                 # origin + history/cursor undo/redo/refresh
   TransformCoordinator.swift          # apply(transformer, to: document) + isEnabled
-  SettingsStore.swift                 # UserDefaults persistence (wrap width, scripts folder, hotkey)
+  SettingsStore.swift                 # UserDefaults persistence (wrap width, auto-hide, scripts folder, per-transform enable/order)
   TransformOverrides.swift            # per-transform enable/disable + drag-reordering
 Tests/PastefixAppCoreTests/           # swift-test suites for the model
 Pastefix/                             # the Xcode app (KeyboardShortcuts dependency only)
@@ -125,7 +125,7 @@ Preserve these — each was a real defect caught in review or manual testing:
 - **Carbon callback UAF across the async hop** (`0aa45b5`) [HISTORICAL]: the `⌘⇧C` handler recovered `self` with `takeUnretainedValue()` then dispatched to the main queue — would corrupt memory if `onFire` ran on a freed instance. Fixed in Plan 2b by replacing Carbon's `GlobalHotkey.swift` with the KeyboardShortcuts package.
 
 *App (Plan 2b):*
-- **Auto-hide summon-activation race** (`<commit>`): if the panel was summoned while auto-hide was active, blur and summon could race, causing the panel to dismiss immediately. Fixed by suppressing auto-hide for 0.3s after summon activation.
+- **Auto-hide summon-activation race** (`c13a3af`): if the panel was summoned while auto-hide was active, blur and summon could race, causing the panel to dismiss immediately. Fixed by suppressing auto-hide for 0.3s after summon activation.
 
 ## Definition of Done
 
