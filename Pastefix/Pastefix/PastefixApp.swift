@@ -11,9 +11,15 @@ struct PastefixApp: App {
     var body: some Scene {
         MenuBarExtra("Pastefix", systemImage: "doc.on.clipboard") {
             Button("Summon Pastefix") { delegate.summon() }
+            SettingsLink { Text("Settings…") }
+                .keyboardShortcut(",", modifiers: .command)
             Divider()
             Button("Quit Pastefix") { NSApplication.shared.terminate(nil) }
                 .keyboardShortcut("q", modifiers: .command)
+        }
+
+        Settings {
+            SettingsView(settings: delegate.settings, model: delegate.model)
         }
     }
 }
