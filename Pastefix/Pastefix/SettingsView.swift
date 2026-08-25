@@ -15,6 +15,9 @@ struct SettingsView: View {
             transforms.tabItem { Label("Transforms", systemImage: "slider.horizontal.3") }
         }
         .frame(width: 460, height: 340)
+        .onAppear {
+            NSApp.activate(ignoringOtherApps: true)
+        }
     }
 
     private var general: some View {
@@ -47,7 +50,7 @@ struct SettingsView: View {
     }
 
     private var transforms: some View {
-        let rows = model.transformers.map { TransformerRow(id: $0.id, name: $0.name) }
+        let rows = model.allTransformers.map { TransformerRow(id: $0.id, name: $0.name) }
         return VStack(alignment: .leading) {
             Text("Enable, disable, and reorder transforms. Drag to reorder.")
                 .font(.caption).foregroundStyle(.secondary)
