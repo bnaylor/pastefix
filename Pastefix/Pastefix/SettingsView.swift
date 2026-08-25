@@ -29,6 +29,10 @@ struct SettingsView: View {
                 HStack {
                     Text(settings.scriptsDirectoryPath).truncationMode(.middle).lineLimit(1)
                     Button("Choose…") { chooseScriptsDir() }
+                    Button("Use Default") {
+                        settings.resetScriptsDirectoryToDefault()
+                        model.reload()
+                    }
                 }
             }
         }
@@ -85,6 +89,7 @@ struct SettingsView: View {
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
         panel.allowsMultipleSelection = false
+        panel.showsHiddenFiles = true
         if panel.runModal() == .OK, let url = panel.url {
             settings.scriptsDirectoryPath = url.path
             model.reload()
