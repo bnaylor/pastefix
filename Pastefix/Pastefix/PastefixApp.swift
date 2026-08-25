@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import Combine
 import KeyboardShortcuts
 import PastefixCore
 import PastefixAppCore
@@ -37,6 +38,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var panel: PanelController?
     private var scriptWatcher: ScriptWatcher?
     private var lastSummonAt: Date = .distantPast
+    private var cancellables = Set<AnyCancellable>()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Build the panel once, hosting PanelView against the single AppModel.
@@ -64,6 +66,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         // Live-reload the palette when the user's scripts directory changes.
+        startWatchingScripts()
+
+        // Re-point the watcher whenever the user picks a new scripts folder.
+        settings.$scriptsDirectoryPath
+            .dropFirst()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                MainActor.assumeIsolated { self?.startWatchingScripts() }
+            }
+            .store(in: &cancellables)
+    }
+
+    private func startWatchingScripts() {
+        scriptWatcher?.stop()
         let dir = settings.scriptsDirectoryURL
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let watcher = ScriptWatcher(directory: dir) { [weak self] in
@@ -71,7 +87,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             MainActor.assumeIsolated { self?.model.reload() }
         }
         watcher.start()
-        self.scriptWatcher = watcher
+        scriptWatcher = watcher
     }
 
     /// Summons the panel: snapshot clipboard, update model, show panel.
