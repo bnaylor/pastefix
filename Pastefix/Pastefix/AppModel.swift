@@ -10,6 +10,7 @@ final class AppModel: ObservableObject {
     @Published var errorMessage: String?
     @Published private(set) var isApplying = false
     @Published private(set) var transformers: [any Transformer] = []
+    @Published private(set) var allTransformers: [any Transformer] = []
 
     let settings: SettingsStore
     var onEndSession: (() -> Void)?
@@ -28,6 +29,9 @@ final class AppModel: ObservableObject {
             wrapWidth: settings.wrapWidth
         )
         let loaded = TransformerRegistry(config: config).load()
+        // Unfiltered (for the Settings list): order applied, nothing removed.
+        allTransformers = TransformOverrides.apply(to: loaded, enabled: [:], order: settings.transformOrder)
+        // Filtered + ordered (for the palette).
         transformers = TransformOverrides.apply(
             to: loaded,
             enabled: settings.transformEnabled,
