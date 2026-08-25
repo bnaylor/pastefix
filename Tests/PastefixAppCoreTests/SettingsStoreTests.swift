@@ -51,4 +51,13 @@ import Foundation
         let s2 = SettingsStore(defaults: d)
         #expect(s2.scriptsDirectoryPath == "/custom/scripts")
     }
+
+    @Test func resetScriptsDirectoryRestoresDefault() {
+        let s = SettingsStore(defaults: freshDefaults())
+        s.scriptsDirectoryPath = "/tmp/custom"
+        #expect(s.scriptsDirectoryPath == "/tmp/custom")
+        s.resetScriptsDirectoryToDefault()
+        #expect(s.scriptsDirectoryPath.hasSuffix("/.config/pastefix/scripts"))
+        #expect(s.scriptsDirectoryPath == SettingsStore.defaultScriptsPath)
+    }
 }

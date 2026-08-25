@@ -26,6 +26,11 @@ public final class SettingsStore: ObservableObject {
         URL(fileURLWithPath: scriptsDirectoryPath, isDirectory: true)
     }
 
+    /// Reset the scripts directory back to the built-in default (~/.config/pastefix/scripts).
+    public func resetScriptsDirectoryToDefault() {
+        scriptsDirectoryPath = Self.defaultScriptsPath
+    }
+
     static let defaultScriptsPath: String = {
         FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".config/pastefix/scripts", isDirectory: true).path
