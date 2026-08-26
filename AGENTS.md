@@ -10,11 +10,11 @@ The repo has three components:
 
 - **`PastefixCore`** — the transform *engine*, a standalone, dependency-free Swift 6 SwiftPM package (macOS 14+). No UI. It defines a unified `Transformer` protocol over three engines (native Swift, shell, JavaScript), a registry that discovers user scripts, and an FSEvents watcher.
 - **`PastefixAppCore`** — the app's *pure model* layer, a second SwiftPM library target (depends on `PastefixCore`). Holds the testable logic that must NOT live in the Xcode target: `ClipboardSnapshot`, `PasteDocument` (undo/redo history), `TransformCoordinator` (bridges engine → document). Unit-tested via `swift test`.
-- **`Pastefix`** — the macOS menu-bar app, an **Xcode** target (SwiftUI `MenuBarExtra` + AppKit glue) that links both packages. Global hotkey (Carbon ⌘⇧C) → floating `NSPanel` editor + transform palette → Save writes back to the pasteboard. Built via `xcodebuild`, verified manually.
+- **`Pastefix`** — the macOS menu-bar app, an **Xcode** target (SwiftUI `MenuBarExtra` + AppKit glue) that links both packages. Global hotkey (rebindable via KeyboardShortcuts, default ⌘⇧C) → floating `NSPanel` editor + transform palette → Save writes back to the pasteboard. Includes a Settings window for configurable wrap width, auto-hide-on-blur, custom scripts folder, hotkey rebinding, and per-transform enable/disable + reordering. Built via `xcodebuild`, verified manually. **Third-party dependency:** KeyboardShortcuts (sindresorhus); both packages remain dependency-free.
 
 **Testability rule:** pure logic belongs in `PastefixAppCore` (fast, headless `swift test`), NOT the Xcode target. The Xcode target is system glue only (hotkey, pasteboard, panel, SwiftUI views) and is not unit-tested. If you find yourself wanting to unit-test something in `Pastefix/`, it belongs in `PastefixAppCore`.
 
-**Still forthcoming (Plan 2b, not yet built):** Settings + `UserDefaults`, rebindable hotkey (KeyboardShortcuts), Sparkle auto-update, live script reload via `ScriptWatcher`, auto-hide-on-blur, configurable wrap width. Don't half-stub these into 2a code.
+**Still forthcoming (Plan 2c):** Sparkle auto-update delivery.
 
 The authoritative design lives in `docs/specs/2026-08-11-pastefix-v2-foundation-pipeline.md`; per-increment plans under `docs/plans/`. Read the relevant one before non-trivial changes.
 
@@ -64,18 +64,21 @@ Sources/PastefixCore/
 Tests/PastefixCoreTests/
   *Tests.swift                        # one suite per component
   Fixtures/                           # executable fixture scripts (100755)
-Sources/PastefixAppCore/              # app pure model (depends on PastefixCore)
+Sources/PastefixAppCore/              # app pure model (depends on PastefixCore, NO third-party deps)
   ClipboardSnapshot.swift             # plainText + richRTFD (RTFD data, Sendable)
   PasteDocument.swift                 # origin + history/cursor undo/redo/refresh
   TransformCoordinator.swift          # apply(transformer, to: document) + isEnabled
+  SettingsStore.swift                 # UserDefaults persistence (wrap width, auto-hide, scripts folder, per-transform enable/order)
+  TransformOverrides.swift            # per-transform enable/disable + drag-reordering
 Tests/PastefixAppCoreTests/           # swift-test suites for the model
-Pastefix/                             # the Xcode app
+Pastefix/                             # the Xcode app (KeyboardShortcuts dependency only)
   Pastefix.xcodeproj                  # ENABLE_APP_SANDBOX = NO (non-sandboxed by design)
   launch.sh                           # build Debug + open the .app
   Pastefix/                           # app sources (system glue only, no unit tests)
     PastefixApp.swift                 # @main MenuBarExtra + NSApplicationDelegateAdaptor
     AppModel.swift                    # @MainActor ObservableObject: registry+document+clipboard
-    GlobalHotkey.swift                # Carbon RegisterEventHotKey (⌘⇧C)
+    HotkeyName.swift                  # KeyboardShortcuts recorder + display helper
+    SettingsView.swift                # SwiftUI Settings window (General/Shortcut/Transforms tabs)
     ClipboardBridge.swift             # NSPasteboard <-> ClipboardSnapshot
     PanelController.swift             # floating NSPanel host
     PanelView.swift                   # SwiftUI editor + palette + toolbar + error banner
@@ -89,7 +92,7 @@ These are load-bearing; most were established the hard way (see "Things that hav
 1. **Transforms are single-purpose and composable.** Each transform does exactly one job. `Transliterate` strips/normalizes non-ASCII and **never touches whitespace** — collapsing spaces is `WhitespaceCleanup`'s job. Do not merge responsibilities to make one transform "smarter."
 2. **A transform never corrupts the working buffer.** Timeout, non-zero shell exit, or a JS exception surface a typed `TransformError`; the caller keeps the prior text. `TransformError` cases (`richInputUnavailable`, `timeout`, `nonZeroExit(code:stderr:)`, `scriptFailed(String)`) are `Equatable` and consumed by tests — don't rename or repurpose them.
 3. **Rich content travels as RTFD `Data?`, not `NSAttributedString`.** `TransformInput` must stay `Sendable` under the `async` protocol; only `RichToPlain` reconstructs the attributed string from `richRTFD`.
-4. **`PastefixCore` has ZERO external dependencies.** KeyboardShortcuts, Sparkle, and anything else belong to the future app target, never the engine. Adding a package dependency to `PastefixCore` is a design change, not a convenience.
+4. **`PastefixCore` and `PastefixAppCore` have ZERO external dependencies.** KeyboardShortcuts (in the app target only) and Sparkle belong to the future, never the engine or model layer. Adding a package dependency to `PastefixCore` or `PastefixAppCore` is a design change, not a convenience.
 5. **Shell contract:** working text on **stdin → stdout**; the script file is executed directly so its shebang is honored; minimal scrubbed env; cwd = the script's directory. Drain stdout **and** stderr **concurrently** (`async let`) before `waitUntilExit()` — sequential draining deadlocks on >64KB stderr. The timeout is a **hard bound**: the child runs in its own process group and gets SIGTERM then SIGKILL after a short grace. `kill(-pid)` always uses the child's own positive PID — it must never be able to become `kill(0)` (caller's group) or `kill(-1)` (broadcast). `.nonZeroExit` stderr is truncated to a bounded tail.
 6. **JS contract:** the script defines `function transform(text)`, run in a **fresh `JSContext` per call**; exceptions (read via `context.exception`) or a non-string return are errors. The eval/timeout race is guarded so the continuation resumes **exactly once**. JavaScriptCore cannot be interrupted, so a runaway script is abandoned best-effort on timeout (its thread runs until process exit) — this is documented, not a bug to "fix" by weakening the timeout.
 7. **FSEvents lifetime:** the stream owns a **retained `WatcherContext` box** (via `passRetained`, balanced by the context `release` callback) — never `passUnretained(self)`, which is a use-after-free. `ScriptWatcher.stream` access is `NSLock`-guarded; `deinit` calls `stop()`.
@@ -119,7 +122,10 @@ Preserve these — each was a real defect caught in review or manual testing:
 *App (Plan 2a) — both slipped past a green build and were caught only by manual UX testing, because they fail at runtime, not compile time:*
 - **App Sandbox silently on** (`ed38589`): the Xcode template shipped `ENABLE_APP_SANDBOX = YES`, which built fine but made every user script invisible (can't read `~/.config`) — see invariant 9. Runtime-only failures need a human running the app, not just `xcodebuild`.
 - **Fake rich detection** (`9cb3a60`): `NSPasteboard.readObjects([NSAttributedString])` *synthesizes* an attributed string even from plain text, so "Rich → Plain Text" was always enabled. Gate on `pasteboard.availableType(from: [.rtf, .rtfd, .html]) != nil` before treating the clipboard as rich.
-- **Carbon callback UAF across the async hop** (`0aa45b5`): the `⌘⇧C` handler recovered `self` with `takeUnretainedValue()` then dispatched to the main queue — retain across the hop (`passRetained`/`takeRetainedValue`) so `onFire` can't run on a freed instance.
+- **Carbon callback UAF across the async hop** (`0aa45b5`) [HISTORICAL]: the `⌘⇧C` handler recovered `self` with `takeUnretainedValue()` then dispatched to the main queue — would corrupt memory if `onFire` ran on a freed instance. Fixed in Plan 2b by replacing Carbon's `GlobalHotkey.swift` with the KeyboardShortcuts package.
+
+*App (Plan 2b):*
+- **Auto-hide summon-activation race** (`c13a3af`): if the panel was summoned while auto-hide was active, blur and summon could race, causing the panel to dismiss immediately. Fixed by suppressing auto-hide for 0.3s after summon activation.
 
 ## Definition of Done
 

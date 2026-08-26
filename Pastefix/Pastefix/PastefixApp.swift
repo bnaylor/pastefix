@@ -1,5 +1,9 @@
 import SwiftUI
 import AppKit
+import Combine
+import KeyboardShortcuts
+import PastefixCore
+import PastefixAppCore
 
 @main
 struct PastefixApp: App {
@@ -8,9 +12,15 @@ struct PastefixApp: App {
     var body: some Scene {
         MenuBarExtra("Pastefix", systemImage: "doc.on.clipboard") {
             Button("Summon Pastefix") { delegate.summon() }
+            SettingsLink { Text("Settings…") }
+                .keyboardShortcut(",", modifiers: .command)
             Divider()
             Button("Quit Pastefix") { NSApplication.shared.terminate(nil) }
                 .keyboardShortcut("q", modifiers: .command)
+        }
+
+        Settings {
+            SettingsView(settings: delegate.settings, model: delegate.model)
         }
     }
 }
@@ -18,14 +28,17 @@ struct PastefixApp: App {
 // MARK: - AppDelegate
 
 /// Owns AppKit objects that must outlive SwiftUI scene updates:
-/// the AppModel, GlobalHotkey (Carbon), and PanelController.
+/// the AppModel and PanelController.
 /// Created once by the system before applicationDidFinishLaunching;
 /// its lifetime equals the process lifetime.
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    private(set) var model = AppModel()
-    private var hotkey: GlobalHotkey?
+    private(set) var settings = SettingsStore()
+    private(set) lazy var model = AppModel(settings: settings)
     private var panel: PanelController?
+    private var scriptWatcher: ScriptWatcher?
+    private var lastSummonAt: Date = .distantPast
+    private var cancellables = Set<AnyCancellable>()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Build the panel once, hosting PanelView against the single AppModel.
@@ -33,19 +46,53 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let panel = PanelController(rootView: hostingView)
         self.panel = panel
 
+        // Auto-hide the panel when it loses key focus (if enabled in settings and a session is active).
+        panel.onResignKey = { [weak self] in
+            guard let self, self.settings.autoHideOnBlur, self.model.document != nil else { return }
+            // Ignore the transient resign-key that fires during the summon activation
+            // sequence; only auto-hide on a genuine later blur.
+            guard Date().timeIntervalSince(self.lastSummonAt) > 0.3 else { return }
+            self.model.cancel()   // ends session; onEndSession hides the panel
+        }
+
         // When the user saves or cancels, AppModel calls onEndSession → hide panel.
         model.onEndSession = { [weak self] in
             self?.panel?.hide()
         }
 
-        // Register the global hotkey (Cmd-Shift-C via Carbon).
-        let hotkey = GlobalHotkey(onFire: { [weak self] in self?.summon() })
-        hotkey.register()
-        self.hotkey = hotkey
+        // Global summon hotkey (default ⌘⇧C, rebindable in Settings).
+        KeyboardShortcuts.onKeyUp(for: .summonPastefix) { [weak self] in
+            self?.summon()
+        }
+
+        // Live-reload the palette when the user's scripts directory changes.
+        startWatchingScripts()
+
+        // Re-point the watcher whenever the user picks a new scripts folder.
+        settings.$scriptsDirectoryPath
+            .dropFirst()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                MainActor.assumeIsolated { self?.startWatchingScripts() }
+            }
+            .store(in: &cancellables)
+    }
+
+    private func startWatchingScripts() {
+        scriptWatcher?.stop()
+        let dir = settings.scriptsDirectoryURL
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let watcher = ScriptWatcher(directory: dir) { [weak self] in
+            // onChange is delivered on the main queue by ScriptWatcher's debouncer.
+            MainActor.assumeIsolated { self?.model.reload() }
+        }
+        watcher.start()
+        scriptWatcher = watcher
     }
 
     /// Summons the panel: snapshot clipboard, update model, show panel.
     func summon() {
+        lastSummonAt = Date()
         model.summon()
         panel?.show()
     }

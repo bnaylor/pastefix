@@ -9,15 +9,34 @@ final class AppModel: ObservableObject {
     @Published private(set) var document: PasteDocument?
     @Published var errorMessage: String?
     @Published private(set) var isApplying = false
+    @Published private(set) var transformers: [any Transformer] = []
+    @Published private(set) var allTransformers: [any Transformer] = []
 
-    let transformers: [any Transformer]
+    let settings: SettingsStore
     var onEndSession: (() -> Void)?
 
-    init() {
-        let scriptsDir = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".config/pastefix/scripts", isDirectory: true)
-        let registry = TransformerRegistry(config: RegistryConfig(scriptsDirectory: scriptsDir))
-        transformers = registry.load()
+    init(settings: SettingsStore) {
+        self.settings = settings
+        reload()
+    }
+
+    /// Rebuild the transformer list from current settings (scripts dir + wrap
+    /// width) and apply the user's enable/reorder overrides. Safe to call any
+    /// time (e.g. on a script-directory change or a settings edit).
+    func reload() {
+        let config = RegistryConfig(
+            scriptsDirectory: settings.scriptsDirectoryURL,
+            wrapWidth: settings.wrapWidth
+        )
+        let loaded = TransformerRegistry(config: config).load()
+        // Unfiltered (for the Settings list): order applied, nothing removed.
+        allTransformers = TransformOverrides.apply(to: loaded, enabled: [:], order: settings.transformOrder)
+        // Filtered + ordered (for the palette).
+        transformers = TransformOverrides.apply(
+            to: loaded,
+            enabled: settings.transformEnabled,
+            order: settings.transformOrder
+        )
     }
 
     func summon() {
