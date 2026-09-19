@@ -17,9 +17,22 @@
 		44988CCF3032B43A0042BEFC /* Pastefix.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Pastefix.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		44C98363303C000000BB563C /* Exceptions for "Pastefix" folder in "Pastefix" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 44988CCE3032B43A0042BEFC /* Pastefix */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		44988CD13032B43A0042BEFC /* Pastefix */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				44C98363303C000000BB563C /* Exceptions for "Pastefix" folder in "Pastefix" target */,
+			);
 			path = Pastefix;
 			sourceTree = "<group>";
 		};
