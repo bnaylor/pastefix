@@ -1,0 +1,31 @@
+
+Redo the whole thing from scratch.
+
+New features:
+
+1. Design: the whole thing is just going to be a framework for feeding text
+   into a modification pipeline, probably Python bindings?  Let the user
+   define their own set of actions to take on text (provide some classic
+   starter ones like strip newlines, word wrap, IRC wrap, iconv, etc.)..
+
+   They can name them, edit the code, and set bindings for these actions.
+
+   Actions should be saved as python(?) scripts in ~/.Pastefix/scripts/.. and
+   discovered automatically.  Edits to them in the app should at least be able
+   to check syntax.
+
+2. Other ideas for converters:
+  - strip html/xml tags out
+  - cos wants to optionally preserve special formatting.  i never worked with that at all..
+
+3. Multi-clipboard support:
+  - undo stack for edits
+  - n stacked pastebuffers each with their own undo stack.  every time you copy, the stack shifts up
+    to some configurable limit.
+  - navigate up and down the stack with keystrokes, edit, paste into document
+
+4. Atext clone.  Optionally toggle accessibility and do text expansion.
+
+5. Redo icon completely at 512px and other variants :/
+https://stackoverflow.com/questions/6337787/how-can-i-set-the-icon-for-a-mac-application-in-xcode
+

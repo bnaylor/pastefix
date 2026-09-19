@@ -37,6 +37,23 @@ xcodebuild build -project Pastefix/Pastefix.xcodeproj -scheme Pastefix \
   -destination 'platform=macOS,arch=arm64' -configuration Debug   # build only
 ```
 
+### Fresh clone on a new machine
+
+Everything needed to build is committed — the shared `Pastefix.xcscheme`, the SPM
+`Package.resolved`, and no `DEVELOPMENT_TEAM` baked into the pbxproj. `git clone`,
+open or `xcodebuild`, and the KeyboardShortcuts dependency resolves on its own.
+Two caveats:
+
+- **Signing:** `CODE_SIGN_STYLE = Automatic` with no team set signs locally for
+  development. Shipping (the notarized direct-download model in the spec, and all
+  of Plan 2c) needs a real Developer ID — an unresolved decision, not a setting to
+  guess at.
+- **Agent tooling:** this file and the plans under `docs/plans/` reference skills
+  (`superpowers:*`, `swift-testing-pro`, `swiftui-pro`, `swift-concurrency-pro`)
+  that may not be installed in every environment. They are conveniences, not
+  requirements — the workflow they encode (TDD, plan-then-execute, verify before
+  claiming done) applies regardless of whether the skills are available.
+
 - Toolchain: Swift 6 (developed on 6.3 / Xcode 26.4), strict concurrency.
 - Tests use the built-in **Swift Testing** framework (`import Testing`, `@Test`, `#expect`) — not XCTest.
 - Fixture scripts under `Tests/PastefixCoreTests/Fixtures/` are executed directly, so they **must be committed executable** (`git ls-files -s` shows mode `100755`).
@@ -124,8 +141,12 @@ Preserve these — each was a real defect caught in review or manual testing:
 - **Fake rich detection** (`9cb3a60`): `NSPasteboard.readObjects([NSAttributedString])` *synthesizes* an attributed string even from plain text, so "Rich → Plain Text" was always enabled. Gate on `pasteboard.availableType(from: [.rtf, .rtfd, .html]) != nil` before treating the clipboard as rich.
 - **Carbon callback UAF across the async hop** (`0aa45b5`) [HISTORICAL]: the `⌘⇧C` handler recovered `self` with `takeUnretainedValue()` then dispatched to the main queue — would corrupt memory if `onFire` ran on a freed instance. Fixed in Plan 2b by replacing Carbon's `GlobalHotkey.swift` with the KeyboardShortcuts package.
 
-*App (Plan 2b):*
+*App (Plan 2b) — every one of these built green and was found only by a human driving the app:*
 - **Auto-hide summon-activation race** (`c13a3af`): if the panel was summoned while auto-hide was active, blur and summon could race, causing the panel to dismiss immediately. Fixed by suppressing auto-hide for 0.3s after summon activation.
+- **Watcher pinned to the old scripts folder** (`59bec2d`): changing the scripts directory in Settings left `ScriptWatcher` watching the *previous* path, so live reload silently stopped working until relaunch. Watcher setup is factored into `startWatchingScripts()` and re-invoked from a Combine sink on `settings.$scriptsDirectoryPath`. **Any setting that feeds a long-lived system resource must re-point that resource on change** — persisting the value is only half the job.
+- **Settings window opened behind everything** (`9ad051b`): an `LSUIElement` agent gets no automatic foreground promotion, so `SettingsLink` opened the window under the active app and looked like a no-op. Needs an explicit `NSApp.activate(ignoringOtherApps: true)`.
+- **Disabling a transform made it unre-enableable** (`25b3511`): the Settings Transforms tab rendered from the same enable-filtered list as the palette, so a disabled transform vanished from the UI that was supposed to toggle it — a one-way door. `AppModel` now exposes `allTransformers` (order-applied, enable-*unfiltered*) for Settings; the palette keeps using the filtered `transformers`. **A control surface must never be filtered by the state it controls.**
+- **Scripts-folder picker couldn't get home** (`3610f31`, with `57c3d6a`): `NSOpenPanel` hides dotfiles, so once a user navigated away from `~/.config/pastefix/scripts` they could not navigate back to a path inside `~/.config`. Fixed with `showsHiddenFiles = true` plus a **Use Default** button backed by `SettingsStore.resetScriptsDirectoryToDefault()`. Any picker defaulting into a dot-directory needs both.
 
 ## Definition of Done
 
@@ -141,6 +162,17 @@ Before opening or updating a PR:
 When you **significantly expand the project** — a new target, subsystem, script engine, Critical Invariant, or user-facing surface — proactively **propose currency updates to this AGENTS.md** (and the README) to the user, ideally in the same change. A stale AGENTS.md is worse than none: agents load it and follow it as fact. Do not let it rot by assuming "we already have one."
 
 ## Specs, plans & reviews layout
+
+**Increment status** — each plan under `docs/plans/` carries a status banner at the top; trust the banner and the git log, not the checkboxes inside it.
+
+| Plan | Scope | Status |
+|---|---|---|
+| Transform Engine | `PastefixCore` | ✅ merged, PR #1 (`9fc68ee`) |
+| 2a — App Core | menu-bar app, hotkey, panel | ✅ merged, PR #2 (`12b3cdd`) |
+| 2b — Settings & Prefs | Settings window, rebindable hotkey, live reload | ✅ merged, PR #3 (`4380489`) + 5 follow-up fixes |
+| 2c — Auto-update | Sparkle delivery | ⬜ not started, no plan written |
+
+Historical reference material for the 2007 and 2019 incarnations is vendored under [`docs/inputs/legacy/`](docs/inputs/legacy/).
 
 - **Design specs:** `docs/specs/YYYY-MM-DD-feature-name.md`
 - **Implementation plans:** `docs/plans/YYYY-MM-DD-feature-name.md`

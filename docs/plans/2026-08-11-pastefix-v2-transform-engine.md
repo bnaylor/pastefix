@@ -1,6 +1,12 @@
 # Pastefix v2 Transform Engine — Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> ## ✅ STATUS: COMPLETE — merged to `main` as [PR #1](https://github.com/bnaylor/pastefix/pull/1) (`9fc68ee`), 2026-08-12.
+>
+> **Do not re-execute this plan.** Checkboxes were ticked retroactively on 2026-09-18
+> from the git history; they were left unticked during execution. The commit log is the
+> authoritative record.
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 >
 > **Swift specifics:** when writing tests, invoke `swift-testing-pro`; when writing async/Process/JSContext code, invoke `swift-concurrency-pro`. Test code below uses the Swift Testing framework (`import Testing`, `@Test`, `#expect`).
 
@@ -76,7 +82,7 @@ Tests/PastefixCoreTests/
   - `enum TransformError: Error, Equatable { case richInputUnavailable; case timeout; case nonZeroExit(code: Int32, stderr: String); case scriptFailed(String) }`
   - `struct WhitespaceCleanup: Transformer` with `id == "builtin.whitespace"`, `name == "Whitespace Cleanup"`, `requiresRichInput == false`, `source == .builtin`.
 
-- [ ] **Step 1: Scaffold the package**
+- [x] **Step 1: Scaffold the package**
 
 Create `Package.swift`:
 
@@ -108,7 +114,7 @@ mkdir -p Sources/PastefixCore/Native Sources/PastefixCore/Scripting Sources/Past
 printf 'placeholder\n' > Tests/PastefixCoreTests/Fixtures/.keep
 ```
 
-- [ ] **Step 2: Define the protocol and core types**
+- [x] **Step 2: Define the protocol and core types**
 
 Create `Sources/PastefixCore/Transformer.swift`:
 
@@ -151,7 +157,7 @@ public protocol Transformer: Identifiable, Sendable {
 }
 ```
 
-- [ ] **Step 3: Write the failing test**
+- [x] **Step 3: Write the failing test**
 
 Create `Tests/PastefixCoreTests/WhitespaceCleanupTests.swift`:
 
@@ -185,12 +191,12 @@ import Testing
 }
 ```
 
-- [ ] **Step 4: Run the test to verify it fails**
+- [x] **Step 4: Run the test to verify it fails**
 
 Run: `swift test --filter WhitespaceCleanupTests`
 Expected: FAIL — `WhitespaceCleanup` is undefined.
 
-- [ ] **Step 5: Implement `WhitespaceCleanup`**
+- [x] **Step 5: Implement `WhitespaceCleanup`**
 
 Create `Sources/PastefixCore/Native/WhitespaceCleanup.swift`:
 
@@ -226,12 +232,12 @@ public struct WhitespaceCleanup: Transformer {
 }
 ```
 
-- [ ] **Step 6: Run the test to verify it passes**
+- [x] **Step 6: Run the test to verify it passes**
 
 Run: `swift test --filter WhitespaceCleanupTests`
 Expected: PASS (4 tests).
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add Package.swift Sources/PastefixCore/Transformer.swift Sources/PastefixCore/Native/WhitespaceCleanup.swift Tests/PastefixCoreTests/WhitespaceCleanupTests.swift Tests/PastefixCoreTests/Fixtures/.keep
@@ -250,7 +256,7 @@ git commit -m "feat(core): scaffold PastefixCore with Transformer protocol and w
 - Consumes: `Transformer`, `TransformInput` (Task 1).
 - Produces: `struct Transliterate: Transformer` with `id == "builtin.transliterate"`, `name == "Transliterate to ASCII"`, `requiresRichInput == false`, `source == .builtin`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `Tests/PastefixCoreTests/TransliterateTests.swift`:
 
@@ -284,12 +290,12 @@ import Testing
 }
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `swift test --filter TransliterateTests`
 Expected: FAIL — `Transliterate` is undefined.
 
-- [ ] **Step 3: Implement `Transliterate`**
+- [x] **Step 3: Implement `Transliterate`**
 
 Create `Sources/PastefixCore/Native/Transliterate.swift`:
 
@@ -330,12 +336,12 @@ public struct Transliterate: Transformer {
 }
 ```
 
-- [ ] **Step 4: Run the test to verify it passes**
+- [x] **Step 4: Run the test to verify it passes**
 
 Run: `swift test --filter TransliterateTests`
 Expected: PASS (4 tests).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add Sources/PastefixCore/Native/Transliterate.swift Tests/PastefixCoreTests/TransliterateTests.swift
@@ -354,7 +360,7 @@ git commit -m "feat(core): add transliterate/strip-non-ASCII transform"
 - Consumes: `Transformer`, `TransformInput` (Task 1).
 - Produces: `struct WrapReflow: Transformer` with a stored `width: Int`, `init(width: Int)`, `id == "builtin.wrapreflow"`, `name == "Wrap & Reflow"`, `requiresRichInput == false`, `source == .builtin`. Paragraphs are separated by blank lines; within a paragraph, existing single newlines are treated as soft breaks and rejoined before wrapping (vim-`gq` behavior). Words longer than `width` overflow their line rather than being broken.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `Tests/PastefixCoreTests/WrapReflowTests.swift`:
 
@@ -389,12 +395,12 @@ import Testing
 }
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `swift test --filter WrapReflowTests`
 Expected: FAIL — `WrapReflow` is undefined.
 
-- [ ] **Step 3: Implement `WrapReflow`**
+- [x] **Step 3: Implement `WrapReflow`**
 
 Create `Sources/PastefixCore/Native/WrapReflow.swift`:
 
@@ -442,12 +448,12 @@ public struct WrapReflow: Transformer {
 }
 ```
 
-- [ ] **Step 4: Run the test to verify it passes**
+- [x] **Step 4: Run the test to verify it passes**
 
 Run: `swift test --filter WrapReflowTests`
 Expected: PASS (4 tests).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add Sources/PastefixCore/Native/WrapReflow.swift Tests/PastefixCoreTests/WrapReflowTests.swift
@@ -466,7 +472,7 @@ git commit -m "feat(core): add wrap & reflow transform"
 - Consumes: `Transformer`, `TransformInput`, `TransformError` (Task 1).
 - Produces: `struct RichToPlain: Transformer` with `id == "builtin.richtoplain"`, `name == "Rich → Plain Text"`, `requiresRichInput == true`, `source == .builtin`. `apply` reconstructs `NSAttributedString` from `input.richRTFD`; if `richRTFD` is nil it throws `TransformError.richInputUnavailable`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `Tests/PastefixCoreTests/RichToPlainTests.swift`:
 
@@ -506,12 +512,12 @@ import AppKit
 }
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `swift test --filter RichToPlainTests`
 Expected: FAIL — `RichToPlain` is undefined.
 
-- [ ] **Step 3: Implement `RichToPlain`**
+- [x] **Step 3: Implement `RichToPlain`**
 
 Create `Sources/PastefixCore/Native/RichToPlain.swift`:
 
@@ -541,12 +547,12 @@ public struct RichToPlain: Transformer {
 }
 ```
 
-- [ ] **Step 4: Run the test to verify it passes**
+- [x] **Step 4: Run the test to verify it passes**
 
 Run: `swift test --filter RichToPlainTests`
 Expected: PASS (3 tests).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add Sources/PastefixCore/Native/RichToPlain.swift Tests/PastefixCoreTests/RichToPlainTests.swift
@@ -567,7 +573,7 @@ git commit -m "feat(core): add rich-to-plain transform"
   - `struct ScriptMetadata: Equatable, Sendable { var name: String?; var enabled: Bool; var order: Int? }` with memberwise defaults `name = nil`, `enabled = true`, `order = nil`.
   - `static func ScriptMetadata.parse(_ source: String) -> ScriptMetadata`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `Tests/PastefixCoreTests/ScriptMetadataTests.swift`:
 
@@ -624,12 +630,12 @@ import Testing
 }
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `swift test --filter ScriptMetadataTests`
 Expected: FAIL — `ScriptMetadata` is undefined.
 
-- [ ] **Step 3: Implement `ScriptMetadata`**
+- [x] **Step 3: Implement `ScriptMetadata`**
 
 Create `Sources/PastefixCore/Scripting/ScriptMetadata.swift`:
 
@@ -672,12 +678,12 @@ public struct ScriptMetadata: Equatable, Sendable {
 }
 ```
 
-- [ ] **Step 4: Run the test to verify it passes**
+- [x] **Step 4: Run the test to verify it passes**
 
 Run: `swift test --filter ScriptMetadataTests`
 Expected: PASS (5 tests).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add Sources/PastefixCore/Scripting/ScriptMetadata.swift Tests/PastefixCoreTests/ScriptMetadataTests.swift
@@ -700,7 +706,7 @@ git commit -m "feat(core): add script magic-comment metadata parser"
   - `enum ShellRunner { static func run(scriptURL: URL, input: String, timeout: TimeInterval) async throws -> String }` — executes the script file directly (shebang honored), feeds `input` on stdin, returns stdout as UTF-8. Non-zero exit → `TransformError.nonZeroExit(code:stderr:)`; exceeding `timeout` → terminate process, throw `TransformError.timeout`.
   - `struct ShellTransformer: Transformer` — `init(url: URL, metadata: ScriptMetadata, timeout: TimeInterval)`; `id == "shell:" + url.lastPathComponent`; `name` = metadata name or filename; `requiresRichInput == false`; `source == .shell(url)`; `apply` calls `ShellRunner.run`.
 
-- [ ] **Step 1: Create the fixture scripts**
+- [x] **Step 1: Create the fixture scripts**
 
 ```bash
 cat > Tests/PastefixCoreTests/Fixtures/upper.sh <<'EOF'
@@ -720,7 +726,7 @@ EOF
 chmod +x Tests/PastefixCoreTests/Fixtures/upper.sh Tests/PastefixCoreTests/Fixtures/fail.sh Tests/PastefixCoreTests/Fixtures/sleep.sh
 ```
 
-- [ ] **Step 2: Write the failing test**
+- [x] **Step 2: Write the failing test**
 
 Create `Tests/PastefixCoreTests/ShellRunnerTests.swift`:
 
@@ -764,12 +770,12 @@ import Foundation
 }
 ```
 
-- [ ] **Step 3: Run the test to verify it fails**
+- [x] **Step 3: Run the test to verify it fails**
 
 Run: `swift test --filter ShellRunnerTests`
 Expected: FAIL — `ShellRunner` is undefined.
 
-- [ ] **Step 4: Implement `ShellRunner`**
+- [x] **Step 4: Implement `ShellRunner`**
 
 Create `Sources/PastefixCore/Scripting/ShellRunner.swift`. Read stdout/stderr fully before `waitUntilExit` to avoid pipe-buffer deadlock; enforce timeout with a watchdog that terminates the process:
 
@@ -831,7 +837,7 @@ public enum ShellRunner {
 }
 ```
 
-- [ ] **Step 5: Implement `ShellTransformer`**
+- [x] **Step 5: Implement `ShellTransformer`**
 
 Create `Sources/PastefixCore/Scripting/ShellTransformer.swift`:
 
@@ -860,12 +866,12 @@ public struct ShellTransformer: Transformer {
 }
 ```
 
-- [ ] **Step 6: Run the tests to verify they pass**
+- [x] **Step 6: Run the tests to verify they pass**
 
 Run: `swift test --filter ShellRunnerTests`
 Expected: PASS (4 tests). The timeout test takes ~1s.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add Sources/PastefixCore/Scripting/ShellRunner.swift Sources/PastefixCore/Scripting/ShellTransformer.swift Tests/PastefixCoreTests/ShellRunnerTests.swift Tests/PastefixCoreTests/Fixtures/upper.sh Tests/PastefixCoreTests/Fixtures/fail.sh Tests/PastefixCoreTests/Fixtures/sleep.sh
@@ -887,7 +893,7 @@ git commit -m "feat(core): add shell runner and shell transformer"
   - `enum JSRunner { static func run(source: String, input: String, timeout: TimeInterval) async throws -> String }` — evaluates `source` in a fresh `JSContext`, calls `transform(input)`, returns the string result. A JS exception or missing/`undefined` `transform`, or a non-string return → `TransformError.scriptFailed(String)`. Exceeding `timeout` → `TransformError.timeout` (result abandoned; the JS thread is left to finish — documented best-effort).
   - `struct JSTransformer: Transformer` — `init(url: URL, metadata: ScriptMetadata, timeout: TimeInterval)`; `id == "js:" + url.lastPathComponent`; `name` = metadata name or filename; `requiresRichInput == false`; `source == .javascript(url)`; `apply` reads the file's contents and calls `JSRunner.run`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `Tests/PastefixCoreTests/JSRunnerTests.swift`:
 
@@ -925,12 +931,12 @@ import Foundation
 }
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `swift test --filter JSRunnerTests`
 Expected: FAIL — `JSRunner` is undefined.
 
-- [ ] **Step 3: Implement `JSRunner`**
+- [x] **Step 3: Implement `JSRunner`**
 
 Create `Sources/PastefixCore/Scripting/JSRunner.swift`. Run the JS on a detached global-queue work item and race it against a timeout via a checked continuation guarded by a lock so it resumes exactly once:
 
@@ -990,7 +996,7 @@ private final class ResumeGuard: @unchecked Sendable {
 }
 ```
 
-- [ ] **Step 4: Implement `JSTransformer`**
+- [x] **Step 4: Implement `JSTransformer`**
 
 Create `Sources/PastefixCore/Scripting/JSTransformer.swift`:
 
@@ -1020,12 +1026,12 @@ public struct JSTransformer: Transformer {
 }
 ```
 
-- [ ] **Step 5: Run the tests to verify they pass**
+- [x] **Step 5: Run the tests to verify they pass**
 
 Run: `swift test --filter JSRunnerTests`
 Expected: PASS (4 tests). The runaway-loop test returns in ~1s (the JS thread is abandoned).
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add Sources/PastefixCore/Scripting/JSRunner.swift Sources/PastefixCore/Scripting/JSTransformer.swift Tests/PastefixCoreTests/JSRunnerTests.swift
@@ -1047,7 +1053,7 @@ git commit -m "feat(core): add JavaScriptCore runner and JS transformer"
   - `struct TransformerRegistry { let config: RegistryConfig; init(config:); func load() -> [any Transformer] }`.
   - `load()` returns enabled transforms only, ordered by ascending `order` (built-ins default to their fixed positions 10/20/30/40; scripts use their metadata `order`, defaulting to 1000), ties broken by `name`. Built-ins: RichToPlain(10), Transliterate(20), WrapReflow(30, width from config), WhitespaceCleanup(40). Files with extension `.js` → `JSTransformer`; every other regular file that is not hidden → `ShellTransformer`. A script whose metadata `enabled == false` is excluded.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `Tests/PastefixCoreTests/TransformerRegistryTests.swift`:
 
@@ -1102,12 +1108,12 @@ import Foundation
 }
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `swift test --filter TransformerRegistryTests`
 Expected: FAIL — `TransformerRegistry` is undefined.
 
-- [ ] **Step 3: Implement `TransformerRegistry`**
+- [x] **Step 3: Implement `TransformerRegistry`**
 
 Create `Sources/PastefixCore/Discovery/TransformerRegistry.swift`:
 
@@ -1172,12 +1178,12 @@ public struct TransformerRegistry {
 }
 ```
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `swift test --filter TransformerRegistryTests`
 Expected: PASS (4 tests).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add Sources/PastefixCore/Discovery/TransformerRegistry.swift Tests/PastefixCoreTests/TransformerRegistryTests.swift
@@ -1200,7 +1206,7 @@ git commit -m "feat(core): add transformer registry with discovery and ordering"
 
 The `Debouncer` is unit-tested (deterministic). The `ScriptWatcher` FSEvents integration is verified manually (documented in Step 5) because real filesystem-event timing is not deterministic in unit tests.
 
-- [ ] **Step 1: Write the failing test (Debouncer)**
+- [x] **Step 1: Write the failing test (Debouncer)**
 
 Create `Tests/PastefixCoreTests/ScriptWatcherTests.swift`:
 
@@ -1237,12 +1243,12 @@ private final class Counter: @unchecked Sendable {
 }
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `swift test --filter ScriptWatcherTests`
 Expected: FAIL — `Debouncer` is undefined.
 
-- [ ] **Step 3: Implement `Debouncer` and `ScriptWatcher`**
+- [x] **Step 3: Implement `Debouncer` and `ScriptWatcher`**
 
 Create `Sources/PastefixCore/Discovery/ScriptWatcher.swift`:
 
@@ -1318,12 +1324,12 @@ public final class ScriptWatcher {
 }
 ```
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `swift test --filter ScriptWatcherTests`
 Expected: PASS (2 tests).
 
-- [ ] **Step 5: Manual verification of FSEvents integration**
+- [x] **Step 5: Manual verification of FSEvents integration**
 
 Add this to a scratch executable or a temporary `@main` and confirm the callback fires (this is not a unit test — FSEvents timing is non-deterministic):
 
@@ -1339,7 +1345,7 @@ RunLoop.main.run()
 
 Confirm "scripts changed" prints once per edit burst, then remove the scratch code.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add Sources/PastefixCore/Discovery/ScriptWatcher.swift Tests/PastefixCoreTests/ScriptWatcherTests.swift
@@ -1356,16 +1362,16 @@ git commit -m "feat(core): add debounced FSEvents script watcher"
 
 **Interfaces:** none.
 
-- [ ] **Step 1: Run the entire suite**
+- [x] **Step 1: Run the entire suite**
 
 Run: `swift test`
 Expected: PASS — all suites (Whitespace, Transliterate, WrapReflow, RichToPlain, ScriptMetadata, ShellRunner, JSRunner, TransformerRegistry, ScriptWatcher).
 
-- [ ] **Step 2: Write the package README**
+- [x] **Step 2: Write the package README**
 
 Document (per `AGENTS.md` docs-currency rule): what `PastefixCore` is, the four built-in transforms, the shell contract (stdin→stdout, non-zero exit = error, minimal env), the JS contract (`function transform(text)`), the magic-comment metadata keys (`name`, `enabled`, `order`), the `~/.config/pastefix/scripts/` default location, and the JS-timeout best-effort caveat. Include one shell and one JS example script.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add README.md

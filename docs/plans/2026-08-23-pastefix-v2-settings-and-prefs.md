@@ -1,6 +1,20 @@
 # Pastefix v2 Settings & Preferences (Plan 2b) — Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> ## ✅ STATUS: COMPLETE — merged to `main` as [PR #3](https://github.com/bnaylor/pastefix/pull/3) (`4380489`), 2026-08-25.
+>
+> **Do not re-execute this plan.** Tasks 1–9 are implemented, committed, and merged;
+> Task 10 (manual UX) was walked through and produced five follow-up fixes, also merged
+> (`59bec2d`, `9ad051b`, `25b3511`, `57c3d6a`, `3610f31`). The checkboxes below were
+> ticked retroactively on 2026-09-18 from the git history and the app's persisted
+> prefs — they were left unticked during execution, which is a trap for any agent
+> handed this file. The commit log is the authoritative record.
+>
+> One gap: **drag-to-reorder (Task 10, Step 4) has no evidence of ever being
+> exercised** — no `pastefix.transformOrder` key was ever written to the prefs
+> domain. Treat reordering as untested at the UX level. The pure logic underneath it
+> (`TransformOverrides`) *is* unit-tested.
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 >
 > **Swift specifics:** tests → `swift-testing-pro`; async/AppKit concurrency → `swift-concurrency-pro`; SwiftUI → `swiftui-pro`. Package tests use Swift Testing (`import Testing`, `@Test`, `#expect`).
 
@@ -58,7 +72,7 @@ Pastefix/Pastefix/
   - `var scriptsDirectoryURL: URL` (computed from `scriptsDirectoryPath`).
   Each stored property reads its initial value from `defaults` in `init` and writes back on `didSet` under a namespaced key (`pastefix.wrapWidth`, `pastefix.autoHideOnBlur`, `pastefix.scriptsDirectoryPath`, `pastefix.transformEnabled`, `pastefix.transformOrder`).
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `Tests/PastefixAppCoreTests/SettingsStoreTests.swift`:
 
@@ -109,12 +123,12 @@ import Foundation
 }
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `swift test --filter SettingsStoreTests`
 Expected: FAIL — `SettingsStore` undefined.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Create `Sources/PastefixAppCore/SettingsStore.swift`:
 
@@ -171,12 +185,12 @@ public final class SettingsStore: ObservableObject {
 }
 ```
 
-- [ ] **Step 4: Run the test to verify it passes**
+- [x] **Step 4: Run the test to verify it passes**
 
 Run: `swift test --filter SettingsStoreTests`
 Expected: PASS (3 tests).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add Sources/PastefixAppCore/SettingsStore.swift Tests/PastefixAppCoreTests/SettingsStoreTests.swift
@@ -197,7 +211,7 @@ git commit -m "feat(appcore): add UserDefaults-backed SettingsStore"
   `static func apply(to loaded: [any Transformer], enabled: [String: Bool], order: [String: Int]) -> [any Transformer]`.
   Rules: an entry is **kept** unless `enabled[id] == false` (missing → kept). The kept entries are sorted by `order[id]` when present, otherwise by their **original index** in `loaded` (so unspecified items hold their load-order position); ties broken by original index. Stable and deterministic.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `Tests/PastefixAppCoreTests/TransformOverridesTests.swift`:
 
@@ -250,12 +264,12 @@ private struct StubTransformer: Transformer {
 }
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `swift test --filter TransformOverridesTests`
 Expected: FAIL — `TransformOverrides` undefined.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Create `Sources/PastefixAppCore/TransformOverrides.swift`:
 
@@ -286,14 +300,14 @@ public enum TransformOverrides {
 }
 ```
 
-- [ ] **Step 4: Run the test to verify it passes**
+- [x] **Step 4: Run the test to verify it passes**
 
 Run: `swift test --filter TransformOverridesTests`
 Expected: PASS (5 tests).
 
 > Note on `explicitOrderOverridesLoadOrderElsePositionHeld`: with `order = ["c": 0]`, c sorts to 0 while a,b use the `sentinel` and fall back to load index (0,1). So order is c, a, b — `out.first == "c"` holds.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add Sources/PastefixAppCore/TransformOverrides.swift Tests/PastefixAppCoreTests/TransformOverridesTests.swift
@@ -320,7 +334,7 @@ git commit -m "feat(appcore): add pure transform enable/reorder override applica
    ```
    (If `Package.resolved` is at a different path under the project, add whatever `git status` shows as new/modified under `Pastefix.xcodeproj`.)
 
-- [ ] **Controller verification (before dispatching Task 4):**
+- [x] **Controller verification (before dispatching Task 4):**
 
 Run:
 ```bash
@@ -343,7 +357,7 @@ Expected: the `KeyboardShortcuts` references appear in the pbxproj and the build
 - Consumes: `KeyboardShortcuts` (Task 3), `AppModel` (existing, unchanged here).
 - Produces: `extension KeyboardShortcuts.Name { static let summonPastefix }` with default `⌘⇧C`; the AppDelegate registers a listener via `KeyboardShortcuts.onKeyUp(for: .summonPastefix)` calling `summon()`. `GlobalHotkey` is removed.
 
-- [ ] **Step 1: Define the shortcut name**
+- [x] **Step 1: Define the shortcut name**
 
 Create `Pastefix/Pastefix/HotkeyName.swift`:
 
@@ -359,7 +373,7 @@ extension KeyboardShortcuts.Name {
 }
 ```
 
-- [ ] **Step 2: Replace the Carbon hotkey in the AppDelegate**
+- [x] **Step 2: Replace the Carbon hotkey in the AppDelegate**
 
 In `Pastefix/Pastefix/PastefixApp.swift`, remove the `GlobalHotkey` property and its creation in `applicationDidFinishLaunching`, and register the KeyboardShortcuts listener instead. The delegate's hotkey setup becomes:
 
@@ -386,18 +400,18 @@ import KeyboardShortcuts
 
 Delete the `private var hotkey: GlobalHotkey?` line and any `hotkey.register()` / stored-hotkey code. Keep `summon()` and `model` exactly as they are.
 
-- [ ] **Step 3: Delete the Carbon implementation**
+- [x] **Step 3: Delete the Carbon implementation**
 
 ```bash
 git rm Pastefix/Pastefix/GlobalHotkey.swift
 ```
 
-- [ ] **Step 4: Build**
+- [x] **Step 4: Build**
 
 Run: `xcodebuild build -project Pastefix/Pastefix.xcodeproj -scheme Pastefix -destination 'platform=macOS,arch=arm64' -configuration Debug 2>&1 | grep -E "BUILD SUCCEEDED|BUILD FAILED|error:"`
 Expected: `** BUILD SUCCEEDED **`. Confirm there is no remaining reference to `GlobalHotkey`.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add Pastefix/Pastefix/HotkeyName.swift Pastefix/Pastefix/PastefixApp.swift
@@ -416,7 +430,7 @@ git commit -m "feat(app): rebindable summon hotkey via KeyboardShortcuts (replac
 - Consumes: `SettingsStore`, `TransformOverrides` (Tasks 1–2); existing `TransformerRegistry`, `RegistryConfig`, `TransformCoordinator`, `ClipboardBridge`.
 - Produces: `AppModel` now takes `init(settings: SettingsStore)`; `transformers` becomes `@Published private(set) var transformers: [any Transformer]`; a `func reload()` rebuilds the registry from `settings` (scriptsDir + wrapWidth) and applies overrides; `enabledTransformers()` filters the (already override-applied) `transformers` by rich-gating only. A `settings` reference is held for reload and auto-hide.
 
-- [ ] **Step 1: Rewrite AppModel to consume settings**
+- [x] **Step 1: Rewrite AppModel to consume settings**
 
 Replace `Pastefix/Pastefix/AppModel.swift` with:
 
@@ -513,7 +527,7 @@ final class AppModel: ObservableObject {
 }
 ```
 
-- [ ] **Step 2: Update the AppDelegate to construct AppModel with settings**
+- [x] **Step 2: Update the AppDelegate to construct AppModel with settings**
 
 In `Pastefix/Pastefix/PastefixApp.swift`, the AppDelegate must own a `SettingsStore` and pass it to `AppModel`. Change the model/settings properties:
 
@@ -524,12 +538,12 @@ In `Pastefix/Pastefix/PastefixApp.swift`, the AppDelegate must own a `SettingsSt
 
 (Keep the `import PastefixAppCore` at the top of the file. The `lazy` lets `model` use `settings` at first access.)
 
-- [ ] **Step 3: Build**
+- [x] **Step 3: Build**
 
 Run: `xcodebuild build -project Pastefix/Pastefix.xcodeproj -scheme Pastefix -destination 'platform=macOS,arch=arm64' -configuration Debug 2>&1 | grep -E "BUILD SUCCEEDED|BUILD FAILED|error:"`
 Expected: `** BUILD SUCCEEDED **`. (`PanelView` still binds to the same `AppModel` API it used before — `enabledTransformers()`, `apply`, etc. — so it is unaffected.)
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add Pastefix/Pastefix/AppModel.swift Pastefix/Pastefix/PastefixApp.swift
@@ -547,7 +561,7 @@ git commit -m "feat(app): drive transformers from settings with reload + overrid
 - Consumes: `PastefixCore.ScriptWatcher` (`init(directory:debounce:onChange:)`, `start()`, `stop()`), `AppModel.reload()`, `SettingsStore.scriptsDirectoryURL`.
 - Produces: the AppDelegate owns a `ScriptWatcher` that calls `model.reload()` (on the main actor) when the scripts directory changes.
 
-- [ ] **Step 1: Add the watcher to the AppDelegate**
+- [x] **Step 1: Add the watcher to the AppDelegate**
 
 In `applicationDidFinishLaunching` (after the model/panel/hotkey setup), start a watcher and store it. Add a stored property `private var scriptWatcher: PastefixCore.ScriptWatcher?` and:
 
@@ -567,12 +581,12 @@ Add `import PastefixCore` to the file if not already present.
 
 > Note: `ScriptWatcher`'s debouncer dispatches `onChange` on `.main`; `MainActor.assumeIsolated` lets us call the `@MainActor` `model.reload()` without an await. If the compiler rejects `assumeIsolated` here, wrap in `Task { @MainActor in self?.model.reload() }` instead — either is acceptable as long as `reload()` runs on the main actor.
 
-- [ ] **Step 2: Build**
+- [x] **Step 2: Build**
 
 Run: `xcodebuild build -project Pastefix/Pastefix.xcodeproj -scheme Pastefix -destination 'platform=macOS,arch=arm64' -configuration Debug 2>&1 | grep -E "BUILD SUCCEEDED|BUILD FAILED|error:"`
 Expected: `** BUILD SUCCEEDED **`.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add Pastefix/Pastefix/PastefixApp.swift
@@ -590,7 +604,7 @@ git commit -m "feat(app): live-reload transform palette on scripts-directory cha
 - Consumes: `PanelController.onResignKey` (existing stub), `SettingsStore.autoHideOnBlur`, `AppModel.cancel()`.
 - Produces: when the panel loses key focus AND `settings.autoHideOnBlur` is true AND a session is active, the panel auto-hides (Cancel-equivalent: clipboard untouched, session ends).
 
-- [ ] **Step 1: Wire onResignKey after creating the panel**
+- [x] **Step 1: Wire onResignKey after creating the panel**
 
 In `applicationDidFinishLaunching`, after `self.panel = panel` and before/after the hotkey wiring, add:
 
@@ -603,12 +617,12 @@ In `applicationDidFinishLaunching`, after `self.panel = panel` and before/after 
 
 (Guarding on `model.document != nil` prevents a spurious hide when the panel isn't presenting a session.)
 
-- [ ] **Step 2: Build**
+- [x] **Step 2: Build**
 
 Run: `xcodebuild build -project Pastefix/Pastefix.xcodeproj -scheme Pastefix -destination 'platform=macOS,arch=arm64' -configuration Debug 2>&1 | grep -E "BUILD SUCCEEDED|BUILD FAILED|error:"`
 Expected: `** BUILD SUCCEEDED **`.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add Pastefix/Pastefix/PastefixApp.swift
@@ -627,7 +641,7 @@ git commit -m "feat(app): auto-hide the panel on blur when enabled in settings"
 - Consumes: `SettingsStore` (Task 1), `AppModel` (Task 5, for the transform list + `reload()`), `KeyboardShortcuts.Recorder` + `.summonPastefix` (Tasks 3–4).
 - Produces: a `SettingsView` with three tabs (General, Shortcut, Transforms); the app's `Settings` scene hosts it; the MenuBarExtra gets a `SettingsLink` "Settings…" item.
 
-- [ ] **Step 1: Implement `SettingsView`**
+- [x] **Step 1: Implement `SettingsView`**
 
 Create `Pastefix/Pastefix/SettingsView.swift`:
 
@@ -718,7 +732,7 @@ struct SettingsView: View {
 
 (`NSOpenPanel` requires AppKit; `import SwiftUI` re-exports it on macOS, but add `import AppKit` if the build complains.)
 
-- [ ] **Step 2: Add the Settings scene and menu item**
+- [x] **Step 2: Add the Settings scene and menu item**
 
 In `Pastefix/Pastefix/PastefixApp.swift`, add a `Settings` scene to the `body` and a `SettingsLink` in the `MenuBarExtra`. The scene body becomes:
 
@@ -739,12 +753,12 @@ In `Pastefix/Pastefix/PastefixApp.swift`, add a `Settings` scene to the `body` a
     }
 ```
 
-- [ ] **Step 3: Build**
+- [x] **Step 3: Build**
 
 Run: `xcodebuild build -project Pastefix/Pastefix.xcodeproj -scheme Pastefix -destination 'platform=macOS,arch=arm64' -configuration Debug 2>&1 | grep -E "BUILD SUCCEEDED|BUILD FAILED|error:"`
 Expected: `** BUILD SUCCEEDED **`.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add Pastefix/Pastefix/SettingsView.swift Pastefix/Pastefix/PastefixApp.swift
@@ -761,22 +775,22 @@ git commit -m "feat(app): Settings window (general, shortcut recorder, transform
 
 **Interfaces:** none.
 
-- [ ] **Step 1: Full package suite**
+- [x] **Step 1: Full package suite**
 
 Run: `swift test`
 Expected: PASS — the existing suites plus `SettingsStoreTests` (3) and `TransformOverridesTests` (5). Report the total.
 
-- [ ] **Step 2: App build**
+- [x] **Step 2: App build**
 
 Run: `xcodebuild build -project Pastefix/Pastefix.xcodeproj -scheme Pastefix -destination 'platform=macOS,arch=arm64' -configuration Debug 2>&1 | grep -E "BUILD SUCCEEDED|BUILD FAILED"`
 Expected: `** BUILD SUCCEEDED **`.
 
-- [ ] **Step 3: Update docs**
+- [x] **Step 3: Update docs**
 
 - `README.md`: add a "Settings (Plan 2b)" note — the Settings window (wrap width, auto-hide, scripts folder, per-transform enable/reorder), the rebindable ⌘⇧C hotkey, and live script reload. Note Sparkle auto-updates are still forthcoming.
 - `AGENTS.md`: update "Still forthcoming (Plan 2b…)" — remove the items now shipped (Settings, rebindable hotkey, live reload, auto-hide, configurable wrap width), leaving Sparkle. Add `KeyboardShortcuts` as the app target's one third-party dependency in the layout/what-this-is notes. Note that `GlobalHotkey.swift` (Carbon) was replaced by KeyboardShortcuts, and update the "things that bit us" Carbon entry to note it's historical (the file is gone).
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add README.md AGENTS.md
@@ -791,13 +805,13 @@ git commit -m "docs: document Plan 2b settings, hotkey, and live reload"
 
 Launch: `Pastefix/launch.sh`.
 
-- [ ] **Step 1: Settings opens** — from the menu-bar icon choose **Settings…** (or ⌘,). The window opens with General / Shortcut / Transforms tabs.
-- [ ] **Step 2: Wrap width** — change **Wrap width** to a small number (e.g. 20). Summon (⌘⇧C), paste a long line, apply **Wrap & Reflow** → it wraps at the new width. (Confirms settings → registry config.)
-- [ ] **Step 3: Rebind hotkey** — in **Shortcut**, record a new shortcut (e.g. ⌥⌘V). Confirm the new combo summons the panel and the old ⌘⇧C no longer does.
-- [ ] **Step 4: Transforms enable/reorder** — in **Transforms**, disable one (e.g. Whitespace Cleanup) → it disappears from the palette on next summon. Drag to reorder → the palette order changes.
-- [ ] **Step 5: Live reload** — with the app running, add an executable script to your scripts folder (`~/.config/pastefix/scripts/rev.sh` = `#!/bin/sh` / `# pastefix: name = Reverse` / `rev`). Within ~1s, summon → **Reverse** appears **without relaunch**.
-- [ ] **Step 6: Auto-hide** — with "Hide panel when it loses focus" ON, summon the panel then click another app → the panel hides, clipboard unchanged. Toggle it OFF → summon → clicking away leaves the panel up.
-- [ ] **Step 7: Persistence** — quit and relaunch; confirm your wrap width, hotkey, and transform tweaks survived.
+- [x] **Step 1: Settings opens** — from the menu-bar icon choose **Settings…** (or ⌘,). The window opens with General / Shortcut / Transforms tabs.
+- [x] **Step 2: Wrap width** — change **Wrap width** to a small number (e.g. 20). Summon (⌘⇧C), paste a long line, apply **Wrap & Reflow** → it wraps at the new width. (Confirms settings → registry config.)
+- [x] **Step 3: Rebind hotkey** — in **Shortcut**, record a new shortcut (e.g. ⌥⌘V). Confirm the new combo summons the panel and the old ⌘⇧C no longer does.
+- [~] **Step 4: Transforms enable/reorder** — in **Transforms**, disable one (e.g. Whitespace Cleanup) → it disappears from the palette on next summon. Drag to reorder → the palette order changes. *(Disable verified; **reorder never exercised** — see status banner.)*
+- [x] **Step 5: Live reload** — with the app running, add an executable script to your scripts folder (`~/.config/pastefix/scripts/rev.sh` = `#!/bin/sh` / `# pastefix: name = Reverse` / `rev`). Within ~1s, summon → **Reverse** appears **without relaunch**.
+- [x] **Step 6: Auto-hide** — with "Hide panel when it loses focus" ON, summon the panel then click another app → the panel hides, clipboard unchanged. Toggle it OFF → summon → clicking away leaves the panel up.
+- [x] **Step 7: Persistence** — quit and relaunch; confirm your wrap width, hotkey, and transform tweaks survived.
 
 Report any failing step; those become fix-loop findings.
 

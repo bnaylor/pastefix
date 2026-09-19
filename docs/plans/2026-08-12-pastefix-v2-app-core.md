@@ -1,6 +1,12 @@
 # Pastefix v2 App Core (Plan 2a) — Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> ## ✅ STATUS: COMPLETE — merged to `main` as [PR #2](https://github.com/bnaylor/pastefix/pull/2) (`12b3cdd`), 2026-08-23.
+>
+> **Do not re-execute this plan.** Checkboxes were ticked retroactively on 2026-09-18
+> from the git history; they were left unticked during execution. The commit log is the
+> authoritative record.
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 >
 > **Swift specifics:** when writing tests, invoke `swift-testing-pro`; for async/AppKit concurrency, invoke `swift-concurrency-pro`; for SwiftUI views, `swiftui-pro`. Package tests use Swift Testing (`import Testing`, `@Test`, `#expect`).
 
@@ -59,7 +65,7 @@ Info.plist / target settings               # LSUIElement = YES (set during scaff
 - Consumes: the existing `PastefixCore` target.
 - Produces: a library product `PastefixAppCore` (depends on `PastefixCore`) and a test target `PastefixAppCoreTests`, both building green. This product is what the Xcode app links in Task 2.
 
-- [ ] **Step 1: Edit `Package.swift`**
+- [x] **Step 1: Edit `Package.swift`**
 
 Add the product, target, and test target (keep the existing `PastefixCore` entries):
 
@@ -87,7 +93,7 @@ let package = Package(
 )
 ```
 
-- [ ] **Step 2: Add a temporary placeholder so the target compiles**
+- [x] **Step 2: Add a temporary placeholder so the target compiles**
 
 Create `Sources/PastefixAppCore/Placeholder.swift`:
 
@@ -96,7 +102,7 @@ Create `Sources/PastefixAppCore/Placeholder.swift`:
 enum PastefixAppCorePlaceholder {}
 ```
 
-- [ ] **Step 3: Write a smoke test**
+- [x] **Step 3: Write a smoke test**
 
 Create `Tests/PastefixAppCoreTests/SmokeTests.swift`:
 
@@ -109,12 +115,12 @@ import Testing
 }
 ```
 
-- [ ] **Step 4: Build and test**
+- [x] **Step 4: Build and test**
 
 Run: `swift test`
 Expected: PASS — the existing engine suite plus the new smoke test; no regressions.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add Package.swift Sources/PastefixAppCore/Placeholder.swift Tests/PastefixAppCoreTests/SmokeTests.swift
@@ -142,7 +148,7 @@ git commit -m "feat(appcore): add PastefixAppCore library target"
    git commit -m "chore(app): scaffold Pastefix Xcode app target (LSUIElement, links PastefixCore + PastefixAppCore)"
    ```
 
-- [ ] **Controller verification (before dispatching Task 3):**
+- [x] **Controller verification (before dispatching Task 3):**
 
 Run:
 ```bash
@@ -164,7 +170,7 @@ Expected: the `Pastefix` scheme is listed and the build succeeds. If the scheme 
 - Consumes: nothing from earlier tasks.
 - Produces: `struct ClipboardSnapshot: Sendable` with `let plainText: String?`, `let richRTFD: Data?`, `init(plainText:richRTFD:)`, a convenience `init(plainText:rich: NSAttributedString?)` that serializes `rich` to RTFD `Data`, and `var hasRichContent: Bool` (`richRTFD != nil`).
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `Tests/PastefixAppCoreTests/ClipboardSnapshotTests.swift`:
 
@@ -205,12 +211,12 @@ import AppKit
 }
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `swift test --filter ClipboardSnapshotTests`
 Expected: FAIL — `ClipboardSnapshot` undefined.
 
-- [ ] **Step 3: Implement, and remove the placeholder**
+- [x] **Step 3: Implement, and remove the placeholder**
 
 Delete `Sources/PastefixAppCore/Placeholder.swift`. Create `Sources/PastefixAppCore/ClipboardSnapshot.swift`:
 
@@ -244,12 +250,12 @@ public struct ClipboardSnapshot: Sendable {
 }
 ```
 
-- [ ] **Step 4: Run the test to verify it passes**
+- [x] **Step 4: Run the test to verify it passes**
 
 Run: `swift test --filter ClipboardSnapshotTests`
 Expected: PASS (3 tests).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add Sources/PastefixAppCore/ClipboardSnapshot.swift Tests/PastefixAppCoreTests/ClipboardSnapshotTests.swift
@@ -269,7 +275,7 @@ git commit -m "feat(appcore): add ClipboardSnapshot"
 - Consumes: `ClipboardSnapshot` (Task 3).
 - Produces: `struct PasteDocument: Sendable` with `let origin: ClipboardSnapshot`, `private(set) var history: [String]`, `private(set) var cursor: Int`, `init(origin:)` (history = `[origin.plainText ?? ""]`, cursor 0), computed `var working: String`, `var canUndo/canRedo: Bool`, `mutating func pushState(_:)` (skips when equal to `working`, truncates redo tail), `mutating func setWorking(_:)` (in-place edit of the current state), `mutating func undo()`, `mutating func redo()`, `mutating func refresh(origin:)`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `Tests/PastefixAppCoreTests/PasteDocumentTests.swift`:
 
@@ -341,12 +347,12 @@ import Testing
 }
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `swift test --filter PasteDocumentTests`
 Expected: FAIL — `PasteDocument` undefined.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Create `Sources/PastefixAppCore/PasteDocument.swift`:
 
@@ -392,12 +398,12 @@ public struct PasteDocument: Sendable {
 }
 ```
 
-- [ ] **Step 4: Run the test to verify it passes**
+- [x] **Step 4: Run the test to verify it passes**
 
 Run: `swift test --filter PasteDocumentTests`
 Expected: PASS (7 tests).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add Sources/PastefixAppCore/PasteDocument.swift Tests/PastefixAppCoreTests/PasteDocumentTests.swift
@@ -420,7 +426,7 @@ git commit -m "feat(appcore): add PasteDocument with undo/redo history"
     - `static func isEnabled(_ transformer: any Transformer, for document: PasteDocument) -> Bool` — `requiresRichInput` transforms enabled only when `document.origin.hasRichContent`.
     - `static func apply(_ transformer: any Transformer, to document: PasteDocument) async -> (PasteDocument, TransformOutcome)` — builds `TransformInput(text: document.working, richRTFD: document.origin.richRTFD)`, awaits `apply`, pushes the result (or returns `.unchanged`), maps `TransformError` to a human message on failure. Returns an updated copy; never mutates via `inout`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `Tests/PastefixAppCoreTests/TransformCoordinatorTests.swift`:
 
@@ -489,12 +495,12 @@ private struct FakeTransformer: Transformer {
 }
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `swift test --filter TransformCoordinatorTests`
 Expected: FAIL — `TransformCoordinator` undefined.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Create `Sources/PastefixAppCore/TransformCoordinator.swift`:
 
@@ -545,12 +551,12 @@ public enum TransformCoordinator {
 }
 ```
 
-- [ ] **Step 4: Run the test to verify it passes**
+- [x] **Step 4: Run the test to verify it passes**
 
 Run: `swift test --filter TransformCoordinatorTests`
 Expected: PASS (5 tests).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add Sources/PastefixAppCore/TransformCoordinator.swift Tests/PastefixAppCoreTests/TransformCoordinatorTests.swift
@@ -568,7 +574,7 @@ git commit -m "feat(appcore): add TransformCoordinator bridging engine and docum
 - Consumes: nothing from the package.
 - Produces: `final class GlobalHotkey` with `init(onFire: @escaping () -> Void)`, `func register()`, `func unregister()`. Registers ⌘⇧C globally via `RegisterEventHotKey`; the installed Carbon event handler calls `onFire` on the main thread. `deinit` calls `unregister()`.
 
-- [ ] **Step 1: Implement**
+- [x] **Step 1: Implement**
 
 Create `Pastefix/GlobalHotkey.swift`:
 
@@ -627,12 +633,12 @@ final class GlobalHotkey {
 }
 ```
 
-- [ ] **Step 2: Build**
+- [x] **Step 2: Build**
 
 Run: `xcodebuild build -project Pastefix.xcodeproj -scheme Pastefix -destination 'platform=macOS' -quiet`
 Expected: build succeeds (no reference to `GlobalHotkey` yet — this only proves it compiles).
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add Pastefix/GlobalHotkey.swift
@@ -653,7 +659,7 @@ git commit -m "feat(app): add Carbon global hotkey (Cmd-Shift-C)"
   - `enum ClipboardBridge` with `static func snapshot(from: NSPasteboard = .general) -> ClipboardSnapshot` and `static func writePlain(_ text: String, to: NSPasteboard = .general)`.
   - `final class PanelController` with `init(rootView:)` (takes an `NSView` — the hosted SwiftUI content), `func show()`, `func hide()`, and a settable `onResignKey: (() -> Void)?` (unused in 2a; wired for 2b auto-hide). Uses a `.nonactivatingPanel`, `.floating` level `NSPanel`.
 
-- [ ] **Step 1: Implement `ClipboardBridge`**
+- [x] **Step 1: Implement `ClipboardBridge`**
 
 Create `Pastefix/ClipboardBridge.swift`:
 
@@ -676,7 +682,7 @@ enum ClipboardBridge {
 }
 ```
 
-- [ ] **Step 2: Implement `PanelController`**
+- [x] **Step 2: Implement `PanelController`**
 
 Create `Pastefix/PanelController.swift`:
 
@@ -723,12 +729,12 @@ final class PanelController: NSObject, NSWindowDelegate {
 }
 ```
 
-- [ ] **Step 3: Build**
+- [x] **Step 3: Build**
 
 Run: `xcodebuild build -project Pastefix.xcodeproj -scheme Pastefix -destination 'platform=macOS' -quiet`
 Expected: build succeeds.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add Pastefix/ClipboardBridge.swift Pastefix/PanelController.swift
@@ -756,7 +762,7 @@ git commit -m "feat(app): add clipboard bridge and floating panel controller"
   - `func cancel()` — `endSession()` without touching the pasteboard
   - `var onEndSession: (() -> Void)?` — hook the app uses to hide the panel
 
-- [ ] **Step 1: Implement**
+- [x] **Step 1: Implement**
 
 Create `Pastefix/AppModel.swift`:
 
@@ -834,12 +840,12 @@ final class AppModel: ObservableObject {
 }
 ```
 
-- [ ] **Step 2: Build**
+- [x] **Step 2: Build**
 
 Run: `xcodebuild build -project Pastefix.xcodeproj -scheme Pastefix -destination 'platform=macOS' -quiet`
 Expected: build succeeds.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add Pastefix/AppModel.swift
@@ -859,7 +865,7 @@ git commit -m "feat(app): add AppModel wiring engine, document, and clipboard"
 - Consumes: `AppModel` (Task 8), `GlobalHotkey` (Task 6), `PanelController` (Task 7), `PastefixCore.Transformer`.
 - Produces: the SwiftUI `PanelView` (editor + palette + toolbar + error banner) and the `@main` `PastefixApp` with a `MenuBarExtra`, wiring the hotkey to `AppModel.summon()` and hosting `PanelView` in the panel.
 
-- [ ] **Step 1: Implement `PanelView`**
+- [x] **Step 1: Implement `PanelView`**
 
 Create `Pastefix/PanelView.swift`:
 
@@ -936,7 +942,7 @@ struct PanelView: View {
 }
 ```
 
-- [ ] **Step 2: Implement `PastefixApp`**
+- [x] **Step 2: Implement `PastefixApp`**
 
 Remove the scaffold's default `@main` app struct and `ContentView` (if the user left them). Create `Pastefix/PastefixApp.swift`:
 
@@ -1002,16 +1008,16 @@ private extension Scene {
 
 > Implementer note: SwiftUI `App` + AppKit glue has a few valid shapes. If `.also`/`attach` timing proves flaky (e.g. `model` not ready), fall back to an `NSApplicationDelegateAdaptor` that owns `AppCoordinator` and receives the `AppModel` — but keep `AppModel` the single source of truth and do NOT change its interface. Report which shape you used.
 
-- [ ] **Step 3: Build**
+- [x] **Step 3: Build**
 
 Run: `xcodebuild build -project Pastefix.xcodeproj -scheme Pastefix -destination 'platform=macOS' -quiet`
 Expected: build succeeds.
 
-- [ ] **Step 4: Update the README**
+- [x] **Step 4: Update the README**
 
 Add a "The app (Plan 2a)" section to `README.md`: what the menu-bar app does, the ⌘⇧C summon → transform → Save flow, and that it's the core (Settings, live script reload, auto-updates are forthcoming in 2b).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add Pastefix/PanelView.swift Pastefix/PastefixApp.swift README.md
@@ -1024,23 +1030,23 @@ git commit -m "feat(app): menu-bar app with summon panel, palette, and save"
 
 **This task is performed by the human.** The controller presents the checklist and records the result; it does not dispatch a subagent.
 
-- [ ] **Step 1: Launch**
+- [x] **Step 1: Launch**
 
 Run: `xcodebuild build -project Pastefix.xcodeproj -scheme Pastefix -destination 'platform=macOS' -configuration Debug -quiet` then open the built `.app` (path from `xcodebuild -showBuildSettings … | grep TARGET_BUILD_DIR`), or launch from Xcode (⌘R). Confirm a menu-bar icon appears and there is no Dock icon.
 
-- [ ] **Step 2: Summon**
+- [x] **Step 2: Summon**
 
 Copy some rich text (e.g. from a browser), press **⌘⇧C**. Confirm the floating panel appears with the plain text loaded, over whatever app was focused.
 
-- [ ] **Step 3: Transform**
+- [x] **Step 3: Transform**
 
 Confirm the palette shows the built-ins; "Rich → Plain Text" is present (rich clipboard). Click **Transliterate to ASCII** and **Whitespace Cleanup**; confirm the text changes and **Undo**/**Redo** work. Copy plain-only text, Refresh, and confirm "Rich → Plain Text" is now absent/disabled.
 
-- [ ] **Step 4: Save & paste**
+- [x] **Step 4: Save & paste**
 
 Click **Save** (or ⌘S); confirm the panel hides. Paste into a plain-text field and confirm the transformed text is what lands. Summon again, click **Cancel** (Esc); confirm the clipboard is unchanged.
 
-- [ ] **Step 5: Script (optional)**
+- [x] **Step 5: Script (optional)**
 
 Drop an executable `~/.config/pastefix/scripts/shout.sh` (`#!/bin/sh` / `# pastefix: name = Shout` / `tr '[:lower:]' '[:upper:]'`), relaunch, summon, and confirm "Shout" appears in the palette and works. (Live reload without relaunch is Plan 2b.)
 
