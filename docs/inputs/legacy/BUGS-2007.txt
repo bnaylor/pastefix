@@ -1,0 +1,3 @@
+
+* WONTFIX: 'Split' won't split a line if it has no spaces.  You have no business
+  pasting shit like that into IRC anyway. :)

@@ -1,0 +1,25 @@
+- check for updates
+  -- sparkle!
+- about window
+- help text
+
+- apple-n / dock click for getting the window back if you close it
+- revert=>refresh?  save=>save to clipboard?
+- status message on first edit explaining 'refresh'
+
+=================================================================================================
+
+Event capture:
+
+  The event capturing stuff in prefs is hackish.  I very nearly got a much nicer version working,
+  where it just detected all the modifier flags for you, but I never could get the Cmd key to be 
+  processed.  The reason there is still a button-based capture rather than just a text entry field
+  is that it is relatively impossible (and discouraged by Apple) to work backwards from a character 
+  to a virtual key code.
+  
+  It *should* be possible to capture command keystrokes without subclassing NSApp, but I give up
+  for now.  Everything I could find said I just needed to make my responder a subclass of NSWindow
+  and trap -performKeyEquivalent but that just didn't roll.
+  
+  What's there now is a little messy thanks to all the various hoops I jumped through earlier..
+  

@@ -44,7 +44,8 @@ features):
 Pastefix (2007, Objective-C) was a menu-bar utility with a global hotkey whose
 job was to clean text for pasting into IRC: strip/transliterate non-ASCII,
 flatten rich text to plain, and wrap/split long lines. See
-`~/Source/Pastefix/README.md` and the original `TextProc.m` for the classic
+[`docs/inputs/legacy/README-2019.md`](../inputs/legacy/README-2019.md) and the
+original [`TextProc-2007.m`](../inputs/legacy/TextProc-2007.m) for the classic
 algorithms (iconv `ASCII//TRANSLIT` with a lossy fallback; line splitting on
 word boundaries).
 

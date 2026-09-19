@@ -32,6 +32,12 @@ still in ~/Source/Pastefix - and actually the README.md there does a decent job 
 and mentions some things I forgot above.  Rather than flesh this out here, just read that file
 and the TODO file as well.  Looks like there's a legit 2007 version in ~/Source/pastefix-save/ as well.
 
+> **Editor's note (2026-09-18):** both of those trees were machine-local. The files
+> referenced above are now vendored under [`legacy/`](legacy/) — see
+> [`legacy/README.md`](legacy/README.md) for the map. `~/src/ishare` (the Zipline
+> reference, cited under "Soon") was deliberately *not* vendored; that work stays
+> on the original machine.
+
 Oh and https://scromp.net/Pastefix/ still exists!
 
 # Goals
