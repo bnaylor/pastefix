@@ -7,6 +7,7 @@ import PastefixAppCore
 struct SettingsView: View {
     @ObservedObject var settings: SettingsStore
     @ObservedObject var model: AppModel
+    @ObservedObject var updater: UpdaterController
 
     var body: some View {
         TabView {
@@ -14,7 +15,7 @@ struct SettingsView: View {
             shortcut.tabItem { Label("Shortcut", systemImage: "keyboard") }
             transforms.tabItem { Label("Transforms", systemImage: "slider.horizontal.3") }
         }
-        .frame(width: 460, height: 340)
+        .frame(width: 460, height: 400)
         .onAppear {
             NSApp.activate(ignoringOtherApps: true)
         }
@@ -33,6 +34,19 @@ struct SettingsView: View {
                         settings.resetScriptsDirectoryToDefault()
                         model.reload()
                     }
+                }
+            }
+            Section("Updates") {
+                Toggle("Automatically check for updates", isOn: Binding(
+                    get: { updater.automaticallyChecksForUpdates },
+                    set: { updater.automaticallyChecksForUpdates = $0 }
+                ))
+                HStack {
+                    Button("Check Now") { updater.checkForUpdates() }
+                        .disabled(!updater.canCheckForUpdates)
+                    Spacer()
+                    Text("Pastefix \(updater.versionDescription)")
+                        .font(.caption).foregroundStyle(.secondary)
                 }
             }
         }
