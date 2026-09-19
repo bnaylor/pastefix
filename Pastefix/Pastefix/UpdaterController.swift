@@ -11,6 +11,9 @@ final class UpdaterController: NSObject, ObservableObject {
     /// Mirrors `SPUUpdater.canCheckForUpdates` so menu items and buttons disable during a check.
     @Published private(set) var canCheckForUpdates = false
 
+    /// `SPUUpdater.delegate` is read-only in Sparkle 2, so the delegate must be handed to the
+    /// controller's initializer, which needs `self`. That forces this property to be an implicitly
+    /// unwrapped optional, assigned only after `super.init()` has run.
     private var controller: SPUStandardUpdaterController!
     private var cancellables = Set<AnyCancellable>()
 
@@ -54,6 +57,8 @@ final class UpdaterController: NSObject, ObservableObject {
     }
 }
 
+/// This conformance is unconditional (unlike the Debug-only method inside it) because `init` passes
+/// `updaterDelegate: self` unconditionally; Release just compiles this as an empty extension.
 extension UpdaterController: SPUUpdaterDelegate {
     #if DEBUG
     /// Debug-only feed override for the local end-to-end update test:
