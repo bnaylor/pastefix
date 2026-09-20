@@ -11,10 +11,16 @@ struct SidebarView: View {
             ForEach(SidebarGrouping.sections(model.enabledTransformers())) { section in
                 Section(section.title) {
                     ForEach(section.transformers, id: \.id) { transformer in
-                        Button(transformer.name) { model.apply(transformer) }
-                            .buttonStyle(.plain)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .contentShape(Rectangle())
+                        // Sizing lives inside the label so the whole row is the hit target,
+                        // not just the glyphs of the name.
+                        Button {
+                            model.apply(transformer)
+                        } label: {
+                            Text(transformer.name)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
                     }
                 }
             }

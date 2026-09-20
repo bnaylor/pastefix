@@ -60,6 +60,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let hostingView = NSHostingView(rootView: PanelView(model: model, settings: settings))
         let panel = PanelController(rootView: hostingView)
         self.panel = panel
+        // Size the panel for the persisted sidebar state before it is ever shown.
+        panel.setSidebarVisible(settings.showSidebar)
 
         // Auto-hide the panel when it loses key focus (if enabled in settings and a session is active).
         panel.onResignKey = { [weak self] in
@@ -89,6 +91,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
                 MainActor.assumeIsolated { self?.startWatchingScripts() }
+            }
+            .store(in: &cancellables)
+
+        // Grow/shrink the panel when the sidebar is toggled: SwiftUI's minWidth can't
+        // resize an AppKit window on its own.
+        settings.$showSidebar
+            .dropFirst()
+            .removeDuplicates()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] shown in
+                MainActor.assumeIsolated { self?.panel?.setSidebarVisible(shown) }
             }
             .store(in: &cancellables)
     }

@@ -34,6 +34,8 @@ struct PanelView: View {
                     if isPaletteOpen {
                         CommandPaletteView(model: model, onClose: closePalette)
                             .transition(.opacity)
+                            // A sidebar-started apply must not leave a live palette behind.
+                            .disabled(model.isApplying)
                     }
                 }
                 if settings.showSidebar {
@@ -50,6 +52,11 @@ struct PanelView: View {
         // A new session always starts with the palette closed.
         .onChange(of: model.document == nil) { _, ended in
             if ended { isPaletteOpen = false }
+        }
+        // Hand focus back to the editor once a transform finishes, unless the user has
+        // the palette open and is picking the next one.
+        .onChange(of: model.isApplying) { _, applying in
+            if !applying && !isPaletteOpen { editorFocused = true }
         }
     }
 

@@ -24,6 +24,8 @@ struct CommandPaletteView: View {
             Color.black.opacity(0.25)
                 .ignoresSafeArea()
                 .onTapGesture { onClose() }
+                .accessibilityLabel("Close transform palette")
+                .accessibilityAddTraits(.isButton)
             card
                 .frame(width: 520)
                 .padding(.top, 40)
@@ -55,9 +57,9 @@ struct CommandPaletteView: View {
                             .contentShape(Rectangle())
                             .onTapGesture { apply(items, index) }
                             .listRowBackground(index == selected ? Color.accentColor.opacity(0.25) : Color.clear)
-                            .id(result.id)
                     }
                     .listStyle(.plain)
+                    .scrollContentBackground(.hidden)
                     .frame(height: CGFloat(min(items.count, 8)) * 44)
                     .onChange(of: selected) { _, new in
                         guard items.indices.contains(new) else { return }
@@ -91,17 +93,23 @@ struct CommandPaletteView: View {
                 }
             }
             Spacer()
-            if isSelected { Image(systemName: "return").foregroundStyle(.secondary) }
+            if isSelected {
+                Image(systemName: "return")
+                    .foregroundStyle(.secondary)
+                    .accessibilityHidden(true)
+            }
         }
         .padding(.vertical, 4)
     }
 
     private func highlightedName(_ result: SearchResult) -> AttributedString {
         var text = AttributedString(result.transformer.name)
+        // Set the base font first so the bold runs differ only in weight, not in size.
+        text.font = .body
         for range in result.matchedRanges {
             guard let lower = AttributedString.Index(range.lowerBound, within: text),
                   let upper = AttributedString.Index(range.upperBound, within: text) else { continue }
-            text[lower..<upper].font = .body.bold()
+            text[lower..<upper].font = .body.weight(.bold)
             text[lower..<upper].foregroundColor = .accentColor
         }
         return text
@@ -109,7 +117,10 @@ struct CommandPaletteView: View {
 
     private func move(_ delta: Int, count: Int) {
         guard count > 0 else { return }
-        selection = ((selection + delta) % count + count) % count
+        // Step from the index the list is actually showing, which is `selection` clamped
+        // to the current result count — otherwise a stale larger `selection` skips rows.
+        let current = min(selection, count - 1)
+        selection = ((current + delta) % count + count) % count
     }
 
     private func apply(_ items: [SearchResult], _ index: Int) {
