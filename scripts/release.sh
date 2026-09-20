@@ -236,7 +236,8 @@ git worktree add -q --detach "$PAGES_WT" origin/gh-pages
     { print }
   ' appcast.xml > appcast.xml.new
   mv appcast.xml.new appcast.xml
-  if ! xmllint --noout --nonet appcast.xml 2>&1 | grep -q .; then :; else die "appcast.xml failed validation"; fi
+  XMLLINT_OUT=$(xmllint --noout --nonet appcast.xml 2>&1) && [[ -z "$XMLLINT_OUT" ]] \
+    || die "appcast.xml failed validation: ${XMLLINT_OUT:-non-zero exit}"
   git add appcast.xml
   git commit -q -m "appcast: $VERSION (build $BUILD)"
   git push -q origin HEAD:gh-pages
