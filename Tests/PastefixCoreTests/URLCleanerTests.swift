@@ -42,6 +42,17 @@ import Foundation
         #expect(URLCleaner.isTracking("mc_eid"))
         #expect(!URLCleaner.isTracking("id"))
     }
+    @Test func htmlEscapedAmpersandSeparatorsAreNormalisedAndCleaned() {
+        let input = "https://ex.com/p?utm_source=news&amp;utm_medium=email&amp;utm_campaign=black+friday+sale&amp;id=7"
+        #expect(clean(input) == "https://ex.com/p?id=7")
+    }
+    @Test func htmlEscapedAmpersandWithoutTrackingIsStillNormalised() {
+        #expect(clean("https://ex.com/p?a=1&amp;b=2") == "https://ex.com/p?a=1&b=2")
+    }
+    @Test func literalAmpInParamValueSurvivesOnlyWhenNotASeparator() {
+        // `amp` as a real parameter name is untouched; only the `&amp;` escape sequence is normalised.
+        #expect(clean("https://ex.com/p?amp=1&x=2") == "https://ex.com/p?amp=1&x=2")
+    }
     @Test func applyAndMetadata() async throws {
         #expect(try await subject.apply(.init(text: "https://ex.com/?utm_x=1")) == "https://ex.com/")
         #expect(subject.id == "builtin.urlclean")

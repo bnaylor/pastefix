@@ -28,9 +28,16 @@ public struct URLCleaner: Transformer {
     /// nil when the URL has no tracking parameters (caller keeps the original text).
     static func cleanURL(_ url: URL) -> URL? {
         guard var comps = URLComponents(url: url, resolvingAgainstBaseURL: false),
-              let items = comps.percentEncodedQueryItems, !items.isEmpty else { return nil }
+              let rawQuery = comps.percentEncodedQuery, !rawQuery.isEmpty else { return nil }
+        // Links copied out of HTML/email often carry the entity-escaped "&amp;" separator
+        // instead of a literal "&"; treat that escaping itself as part of what cleaning removes.
+        let hadEscapedAmpersand = rawQuery.contains("&amp;")
+        if hadEscapedAmpersand {
+            comps.percentEncodedQuery = rawQuery.replacingOccurrences(of: "&amp;", with: "&")
+        }
+        guard let items = comps.percentEncodedQueryItems, !items.isEmpty else { return nil }
         let kept = items.filter { !isTracking($0.name.removingPercentEncoding ?? $0.name) }
-        guard kept.count != items.count else { return nil }
+        guard hadEscapedAmpersand || kept.count != items.count else { return nil }
         comps.percentEncodedQueryItems = kept.isEmpty ? nil : kept
         return comps.url
     }
