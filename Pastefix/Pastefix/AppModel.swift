@@ -15,6 +15,12 @@ final class AppModel: ObservableObject {
     let settings: SettingsStore
     var onEndSession: (() -> Void)?
 
+    /// Bumped on every summon and every dismissal. An in-flight transform captures the
+    /// value it started under, so a result from a session the user has since dismissed
+    /// can't land in a newer one — `document != nil` alone doesn't catch a dismiss-then-
+    /// re-summon inside the apply window.
+    private var sessionGeneration = 0
+
     init(settings: SettingsStore) {
         self.settings = settings
         reload()
@@ -41,6 +47,7 @@ final class AppModel: ObservableObject {
 
     func summon() {
         errorMessage = nil
+        sessionGeneration &+= 1
         document = PasteDocument(origin: ClipboardBridge.snapshot())
     }
 
@@ -61,12 +68,19 @@ final class AppModel: ObservableObject {
     func apply(_ transformer: any Transformer) {
         guard let current = document, !isApplying else { return }
         isApplying = true
+        let generation = sessionGeneration
         Task {
             let (updated, outcome) = await TransformCoordinator.apply(transformer, to: current)
             // The session can end (Save/Cancel/auto-hide) while a slow transform is in
-            // flight. Drop the result rather than resurrecting a dead document — and
-            // never leave `isApplying` stuck true for the next summon.
-            guard self.document != nil else { self.isApplying = false; return }
+            // flight, and the user can summon a fresh one before it finishes. Drop the
+            // result unless we are still in the session that asked for it — and never
+            // leave `isApplying` stuck true for the next summon. Clearing it on the stale
+            // path is safe: applies are serialised by `isApplying`, and a new session
+            // starts with it false.
+            guard self.document != nil, self.sessionGeneration == generation else {
+                self.isApplying = false
+                return
+            }
             self.document = updated
             switch outcome {
             case .applied, .unchanged: self.errorMessage = nil
@@ -103,6 +117,7 @@ final class AppModel: ObservableObject {
         document = nil
         errorMessage = nil
         isApplying = false
+        sessionGeneration &+= 1
         onEndSession?()
     }
 }

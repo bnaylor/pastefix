@@ -176,8 +176,13 @@ public struct MarkdownLink: Transformer {
   `isFetchable(_:)` returns false (no request, straight to the fallback) for an
   empty host, `localhost`, any `*.local` or `*.localhost` name, and every
   address literal in loopback, link-local, private (RFC 1918 and CGNAT),
-  multicast or reserved space. Literals are parsed with `inet_pton`, not a
-  hand-rolled dotted-quad split, so alternate spellings cannot slip past:
+  multicast or reserved space. Literals in any form `inet_pton` or `inet_aton`
+  accepts — dotted quad, 32-bit decimal (`2130706433`), hex or octal octets
+  (`0x7f.0.0.1`, `0177.0.0.1`), short `a.b` forms (`127.1`), and IPv6 including
+  IPv4-mapped — are canonicalised to their bytes and range-checked; only a host
+  that parses as neither is treated as a hostname. The two parsers disagree on
+  leading zeros (`inet_pton` reads `0177` as decimal 177, `inet_aton` as octal
+  127), so a host is refused if *either* reading is private. The ranges:
   IPv4 `0.0.0.0/8`, `10.0.0.0/8`, `100.64.0.0/10`, `127.0.0.0/8`,
   `169.254.0.0/16`, `172.16.0.0/12`, `192.168.0.0/16`, `224.0.0.0/4`,
   `240.0.0.0/4`; IPv6 `::/128`, `::1/128`, `fe80::/10`, `fc00::/7`,
@@ -329,6 +334,10 @@ Swift Testing, offline.
   not the network); a URL used as existing link text left alone; the 16-URL
   fetch cap; `render` pure-function cases. `fetchURL`/`isFetchable` are covered
   by `TitleFetchPolicyTests` alongside the parsing suite.
+- `FetchableHostTests`: `isFetchable` — every blocked IPv4 and IPv6 range at its
+  boundaries, the legacy numeric spellings, IPv4-mapped forms, and the
+  `localhost`/`*.local`/`*.localhost` names. Pure helpers (`isPrivateIPv4`,
+  `isPrivateIPv6`) are exercised directly. No sockets.
 - `TitleParsingTests`: parsing only — feed HTML bytes through the
   internal `parseTitle(data:)` helper: normal, uppercase `<TITLE>`, missing,
   truncated at cap, entity decoding, non-UTF8 with charset fallback to
