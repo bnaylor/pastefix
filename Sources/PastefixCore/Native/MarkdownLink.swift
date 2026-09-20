@@ -25,7 +25,8 @@ public struct URLSessionTitleFetcher: TitleFetcher {
         let config = URLSessionConfiguration.ephemeral
         config.timeoutIntervalForRequest = timeout
         config.timeoutIntervalForResource = timeout
-        let session = URLSession(configuration: config)
+        // A 302 to http://192.168.1.1/ would otherwise walk straight past `isFetchable`.
+        let session = URLSession(configuration: config, delegate: RedirectGuard(), delegateQueue: nil)
         defer { session.invalidateAndCancel() }
         do {
             let (bytes, response) = try await session.bytes(for: request)
@@ -72,24 +73,66 @@ public struct URLSessionTitleFetcher: TitleFetcher {
         return comps.url ?? url
     }
 
-    /// False for hosts we must never contact: loopback, link-local, `.local` mDNS names,
-    /// and the RFC 1918 private ranges. A paste can contain anything, and a transform is
-    /// not a licence to probe the user's LAN. Unfetchable URLs get the `host/path` fallback
-    /// with no request made.
+    /// False for hosts we must never contact: loopback, link-local, `.local`/`.localhost`
+    /// mDNS names, and the private/reserved IP ranges. A paste can contain anything, and a
+    /// transform is not a licence to probe the user's LAN. Unfetchable URLs get the
+    /// `host/path` fallback with no request made.
+    ///
+    /// Address literals go through `inet_pton`, not a hand-rolled dotted-quad parse, so
+    /// alternate spellings (`0x7f.0.0.1`, `2130706433`, `::ffff:127.0.0.1`, `[::1]`) either
+    /// reduce to the same bytes the range checks see or fail to parse as an address at all.
+    ///
+    /// Hostnames are **not** resolved before fetching, so a public name pointing at a
+    /// private address still gets a request. That is deliberate: this is side-effect hygiene
+    /// for a user-initiated GET from the user's own machine, not a server-side trust
+    /// boundary — the user could type the address directly, and a resolver-level check would
+    /// mean a DNS round trip and a TOCTOU gap for no real gain here.
     static func isFetchable(_ url: URL) -> Bool {
         guard var host = url.host?.lowercased(), !host.isEmpty else { return false }
         if host.hasPrefix("["), host.hasSuffix("]") { host = String(host.dropFirst().dropLast()) }
-        if host == "localhost" || host.hasSuffix(".local") { return false }
-        if host == "::1" || host == "0:0:0:0:0:0:0:1" { return false }
-        let octets = host.split(separator: ".", omittingEmptySubsequences: false).map { UInt8($0) }
-        guard octets.count == 4, let a = octets[0], let b = octets[1], octets[2] != nil, octets[3] != nil
-        else { return true }   // not a dotted-quad literal: a normal hostname
-        if a == 127 { return false }                       // 127.0.0.0/8
-        if a == 10 { return false }                        // 10.0.0.0/8
-        if a == 172, (16...31).contains(b) { return false } // 172.16.0.0/12
-        if a == 192, b == 168 { return false }             // 192.168.0.0/16
-        if a == 169, b == 254 { return false }             // 169.254.0.0/16
-        return true
+        if host == "localhost" || host.hasSuffix(".local") || host.hasSuffix(".localhost") { return false }
+
+        var v4 = in_addr()
+        if host.withCString({ inet_pton(AF_INET, $0, &v4) }) == 1 {
+            let b = withUnsafeBytes(of: v4.s_addr) { Array($0) }   // network byte order
+            return !isPrivateIPv4((b[0], b[1], b[2], b[3]))
+        }
+        var v6 = in6_addr()
+        if host.withCString({ inet_pton(AF_INET6, $0, &v6) }) == 1 {
+            return !isPrivateIPv6(withUnsafeBytes(of: v6) { Array($0) })
+        }
+        return true   // a hostname, not an address literal
+    }
+
+    /// Private, loopback, link-local, CGNAT, multicast and reserved IPv4 space.
+    static func isPrivateIPv4(_ bytes: (UInt8, UInt8, UInt8, UInt8)) -> Bool {
+        let (a, b, _, _) = bytes
+        if a == 0 { return true }                          // 0.0.0.0/8 "this network"
+        if a == 10 { return true }                         // 10.0.0.0/8
+        if a == 100, (64...127).contains(b) { return true } // 100.64.0.0/10 CGNAT
+        if a == 127 { return true }                        // 127.0.0.0/8 loopback
+        if a == 169, b == 254 { return true }              // 169.254.0.0/16 link-local
+        if a == 172, (16...31).contains(b) { return true }  // 172.16.0.0/12
+        if a == 192, b == 168 { return true }              // 192.168.0.0/16
+        if (224...239).contains(a) { return true }         // 224.0.0.0/4 multicast
+        if a >= 240 { return true }                        // 240.0.0.0/4 reserved + broadcast
+        return false
+    }
+
+    /// Unspecified, loopback, link-local, unique-local and site-local IPv6 space, plus
+    /// IPv4-mapped addresses whose embedded v4 address is itself private.
+    static func isPrivateIPv6(_ bytes: [UInt8]) -> Bool {
+        guard bytes.count == 16 else { return true }
+        if bytes.allSatisfy({ $0 == 0 }) { return true }                       // ::/128
+        if bytes.dropLast().allSatisfy({ $0 == 0 }), bytes[15] == 1 { return true } // ::1/128
+        if bytes[0] == 0xFE, bytes[1] & 0xC0 == 0x80 { return true }           // fe80::/10
+        if bytes[0] & 0xFE == 0xFC { return true }                             // fc00::/7
+        if bytes[0] == 0xFE, bytes[1] & 0xC0 == 0xC0 { return true }           // fec0::/10
+        // ::ffff:0:0/96 — an IPv4 address wearing a v6 hat; judge it as IPv4.
+        if bytes[0..<10].allSatisfy({ $0 == 0 }), bytes[10] == 0xFF, bytes[11] == 0xFF {
+            return isPrivateIPv4((bytes[12], bytes[13], bytes[14], bytes[15]))
+        }
+        return false
     }
 
     /// Decodes a byte-capped HTML buffer as UTF-8, retrying after dropping up to 3 trailing
@@ -135,6 +178,26 @@ public struct URLSessionTitleFetcher: TitleFetcher {
         let named: [(String, String)] = [("&lt;", "<"), ("&gt;", ">"), ("&quot;", "\""), ("&apos;", "'"), ("&nbsp;", " "), ("&amp;", "&")]
         for (k, v) in named { out = out.replacingOccurrences(of: k, with: v) }
         return out
+    }
+}
+
+/// Refuses a redirect whose destination we would not have fetched in the first place — an
+/// open redirect is otherwise a way to reach `192.168.1.1` from a perfectly public URL. When
+/// the redirect is refused the original 3xx response is delivered instead, which fails the
+/// 2xx check in `title(for:)`, so the link simply gets its `host/path` fallback.
+private final class RedirectGuard: NSObject, URLSessionTaskDelegate, Sendable {
+    func urlSession(
+        _ session: URLSession,
+        task: URLSessionTask,
+        willPerformHTTPRedirection response: HTTPURLResponse,
+        newRequest request: URLRequest,
+        completionHandler: @escaping (URLRequest?) -> Void
+    ) {
+        guard let url = request.url,
+              let scheme = url.scheme?.lowercased(), scheme == "https" || scheme == "http",
+              URLSessionTitleFetcher.isFetchable(url)
+        else { return completionHandler(nil) }
+        completionHandler(request)
     }
 }
 
