@@ -14,6 +14,9 @@ Pastefix runs as a macOS menu-bar app. A clipboard icon sits in the menu bar; pr
 
 1. **Summon** — ⌘⇧C snapshots the clipboard and opens the editor panel.
 2. **Transform** — a horizontal palette of buttons along the bottom of the panel lists every enabled transformer (built-ins + user scripts). Click one to apply it; the monospaced editor updates instantly. An error banner appears in red if a transformer fails.
+
+   **Content detection.** When the buffer contains a URL or is valid JSON, a `Detected: URL` badge appears beside the palette and transforms that apply to that kind are listed first. Nothing is hidden; your enable/reorder settings still apply.
+
 3. **Edit** — the editor is freely editable. Undo/Redo/Refresh controls are in the toolbar.
 4. **Save (⌘S)** — writes the working text back to the clipboard and dismisses the panel.
 5. **Cancel (Esc)** — discards changes and dismisses the panel.
@@ -36,11 +39,12 @@ Pastefix checks for updates once a day via [Sparkle](https://sparkle-project.org
 
 The engine provides:
 
-- **Four built-in native transforms** written in Swift, fast and dependency-free
+- **Ten built-in native transforms** written in Swift, fast and dependency-free
 - **User scripts** discovered from `~/.config/pastefix/scripts/`, with automatic engine selection (shell or JavaScript) by file extension
 - **Unified error handling** via typed `TransformError`; all transforms run off the main thread with configurable timeouts
 - **Script metadata** via magic comments (name, enabled flag, execution order)
 - **Filesystem watching** with debouncing for dynamic script discovery
+- **Content detection** — the panel recognises URLs and JSON and lists the transforms that apply to them first
 
 ## Built-in Transforms
 
@@ -50,6 +54,9 @@ Each is a zero-configuration `Transformer` conforming to the protocol:
 - **Transliterate to ASCII:** Converts smart punctuation, diacritics, and non-ASCII characters to ASCII equivalents (e.g., é → e, "curly quotes" → straight quotes, emoji dropped).
 - **Wrap & Reflow:** Rewraps text to a configurable width (default 400 columns), respecting paragraph breaks.
 - **Whitespace Cleanup:** Trims leading/trailing spaces and tabs from each line; collapses repeated blank lines.
+- **Clean URL Tracking:** Removes tracking parameters (`utm_*`, `fbclid`, `gclid`, `si`, `mc_cid`, … ) from every URL in the text; other parameters, fragments, and surrounding text are untouched. HTML-escaped `&amp;` query separators (as found in links copied from email or HTML source) are normalised to `&` before stripping, which counts as a change on its own.
+- **URL → Markdown Link:** Replaces each URL with `[Page Title](url)`. The title is fetched over the network with a 3-second timeout and a 256 KB cap; if that fails the link text is `host/path`. URLs already inside Markdown links are skipped. Up to 16 unique URLs per apply are fetched; any beyond that fall back to `host/path` without a network call. The link target always includes a scheme, so `www.example.com` becomes `[…](http://www.example.com)`. Titles are always fetched over `https`, even for an `http://` link (App Transport Security blocks cleartext, so a plain-`http` fetch could only ever fail) — the link target keeps the scheme the text had. Requests carry a `Pastefix` User-Agent and no cookies, and these are never contacted: loopback, link-local, private (RFC 1918 and CGNAT), multicast and reserved IPv4 ranges — including legacy numeric spellings such as `2130706433`, `0x7f.0.0.1` and `127.1` — their IPv6 equivalents (including IPv4-mapped addresses), and `localhost`, `*.local` and `*.localhost` names; redirects to any of those are refused. Hostnames are not resolved before fetching. Links to a blocked host just get the `host/path` fallback.
+- **camelCase / snake_case / kebab-case / CONSTANT_CASE:** Rewrites each line as one identifier phrase. Splits on separators and camel boundaries (`HTTPServerError` → `http_server_error`), keeps digits with their word (`utf8Decoder`), preserves indentation and non-ASCII letters.
 
 ## User Scripts
 
@@ -107,8 +114,8 @@ Magic comments in the first 30 lines define script behavior. Recognized keys are
 ```
 
 - **Comment syntax:** lines are tolerant of comment markers (`#`, `//`, `*`, `/*`); the parser strips leading whitespace and any run of the individual characters space, tab, `#`, `/`, `*`
-- **Keys:** `name` (display name), `enabled` (true/false; default true), `order` (integer execution order; default 1000 for scripts)
-- **Built-in order:** Rich→Plain (10), Transliterate (20), Wrap (30), Whitespace (40); user scripts at order 1000+ appear after built-ins unless explicitly reordered
+- **Keys:** `name` (display name), `enabled` (true/false; default true), `order` (integer execution order; default 1000 for scripts), `kinds` (comma-separated list of `url`, `json`; a script with `kinds` is listed first when that content is detected; unknown names ignored)
+- **Built-in order:** Rich→Plain (10), Transliterate (20), Wrap (30), Whitespace (40), Clean URL Tracking (50), URL → Markdown Link (60), camelCase (70), snake_case (71), kebab-case (72), CONSTANT_CASE (73); user scripts at order 1000+ appear after built-ins unless explicitly reordered
 - **Malformed lines:** ignored silently
 
 ## Execution Model

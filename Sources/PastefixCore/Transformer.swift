@@ -32,5 +32,12 @@ public protocol Transformer: Identifiable, Sendable {
     /// True only for transforms that need the original rich clipboard content.
     var requiresRichInput: Bool { get }
     var source: TransformerSource { get }
+    /// Content kinds this transform is meant for. `nil` (the default) means always
+    /// applicable. The palette lists matching transforms first; nothing is hidden.
+    var applicableKinds: Set<ContentKind>? { get }
     func apply(_ input: TransformInput) async throws -> String
+}
+
+public extension Transformer {
+    var applicableKinds: Set<ContentKind>? { nil }
 }

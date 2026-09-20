@@ -27,6 +27,12 @@ public struct TransformerRegistry {
             (20, "Transliterate to ASCII", Transliterate()),
             (30, "Wrap & Reflow", WrapReflow(width: config.wrapWidth)),
             (40, "Whitespace Cleanup", WhitespaceCleanup()),
+            (50, "Clean URL Tracking", URLCleaner()),
+            (60, "URL → Markdown Link", MarkdownLink()),
+            (70, "camelCase", CaseConvert(style: .camel)),
+            (71, "snake_case", CaseConvert(style: .snake)),
+            (72, "kebab-case", CaseConvert(style: .kebab)),
+            (73, "CONSTANT_CASE", CaseConvert(style: .constant)),
         ]
 
         for url in discoverScriptFiles() {

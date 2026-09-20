@@ -49,7 +49,7 @@ repeated here.
 | Kinds shipped | `url`, `json` | Both have deterministic detectors. `url` has two consumers in this plan; `json` ships as a badge-only kind because it is cheap and the quick-actions plan needs it first. |
 | URL cleaning scope | Every URL in the buffer, not just a lone URL | Pasting prose with links is the common case; a single-URL-only cleaner would silently do nothing on it. |
 | Tracking parameter list | Built-in: exact names `fbclid gclid dclid gbraid wbraid igshid si mc_cid mc_eid ref ref_src _hsenc _hsmi yclid vero_id mkt_tok oly_anon_id oly_enc_id`, plus any name with prefix `utm_` | Covers the requirements' examples and the usual offenders. Not user-configurable in this increment; a script can do bespoke cleaning. |
-| Markdown link title | Fetched over the network, 3 s timeout, 256 KB cap, fallback `host/path` | The user chose fetching. Bounded so a slow site can't exceed the app's 3 s transform gate by much; fallback keeps the transform total (never fails on network error). |
+| Markdown link title | Fetched over the network, 3 s timeout, 256 KB cap, fallback `host/path` | The user chose fetching. Bounded so a slow site can't stall the panel; fallback keeps the transform total (never fails on network error). As shipped, all fetches run in one batch, so the wall-clock worst case is one fetcher timeout under the transform's own 4 s outer bound. |
 | Network isolation | `TitleFetcher` protocol; default `URLSessionTitleFetcher`; tests inject a stub | First network access in the engine. Tests stay offline and deterministic. |
 | Case conversion UX | One transform per case; one `CaseConvert(style:)` struct behind four ids | Consistent with the palette model; each individually enable/reorder-able. |
 | Case conversion unit | Each **line** is one identifier phrase; line breaks preserved | "Quick case conversion of a copied identifier or phrase" is the use; multi-line input keeps its structure. |
@@ -81,9 +81,10 @@ public enum ContentDetector {
 ```
 
 - Returns `[]` if `text.utf8.count > maxBytes` or the trimmed text is empty.
-- `url`: `NSDataDetector(types: .link)` finds at least one match whose URL
-  scheme is `http` or `https`. (Bare `www.example.com` matches too; `mailto:`
-  does not.)
+- `url`: `URLFinder` finds at least one match whose URL scheme is `http` or
+  `https` **and** whose rebuilt candidate (the trimmed text, with the detected
+  scheme prepended when it has none) parses as a `URL`. (Bare
+  `www.example.com` matches too; `mailto:` does not.)
 - `json`: the trimmed text's first character is `{` or `[` **and**
   `JSONSerialization.jsonObject(with:options:[])` (fragments not allowed)
   succeeds. The first-character check avoids parsing every paste.
@@ -116,9 +117,10 @@ applicable). Same first-30-lines / comment-lead-in rules as the other keys.
 **`Detection/URLFinder.swift`** (new, internal) — the one shared helper the
 two URL transforms and the detector use: enumerate `NSDataDetector` link
 matches with `http`/`https` schemes, returning `(range: Range<String.Index>,
-url: URL)` in document order. Trailing sentence punctuation (`.` `,` `)` `;`
-`!` `?` when unbalanced) is excluded from the range so `See https://a.b/c.`
-keeps its full stop.
+url: URL, original: Substring)` in document order — `original` is the text as
+written (which may lack a scheme), `url` always has one. Trailing sentence
+punctuation (`.` `,` `)` `;` `!` `?` when unbalanced) is excluded from the
+range so `See https://a.b/c.` keeps its full stop.
 
 **`Native/URLCleaner.swift`** (new) — `builtin.urlclean`, "Clean URL
 Tracking", order 50, `applicableKinds = [.url]`.
@@ -132,7 +134,9 @@ Tracking", order 50, `applicableKinds = [.url]`.
 - Replaces ranges from the end of the string backwards so earlier ranges stay
   valid. Text outside URLs is untouched. A URL with no tracking params is
   re-emitted verbatim (not round-tripped through `URLComponents`), so nothing
-  changes when there's nothing to change.
+  changes when there's nothing to change — the one exception is an HTML-escaped
+  `&amp;` query separator, which is normalised to `&` first and therefore counts
+  as a change on its own.
 - The pure core is `static func clean(_ text: String) -> String` and
   `static func cleanURL(_ url: URL) -> URL?`.
 
@@ -144,26 +148,61 @@ public protocol TitleFetcher: Sendable {
     func title(for url: URL) async -> String?
 }
 public struct URLSessionTitleFetcher: TitleFetcher { public init(timeout: TimeInterval = 3, maxBytes: Int = 262_144) }
-public struct MarkdownLink: Transformer { public init(fetcher: any TitleFetcher = URLSessionTitleFetcher()) }
+public struct MarkdownLink: Transformer {
+    public init(fetcher: any TitleFetcher = URLSessionTitleFetcher(), fetchTimeout: TimeInterval = 4)
+}
 ```
 
-- For each found URL (skipping any already inside `[...](...)` or `<...>`),
-  replace with `[title](url)`. Titles are fetched concurrently in a
-  `TaskGroup` capped at 8 in flight; each fetch has its own timeout.
-- `URLSessionTitleFetcher`: GET with `Accept: text/html`, an ephemeral session
-  (no cookies, no cache), `timeoutIntervalForRequest = timeout`, stops reading
-  after `maxBytes` (via a delegate or by truncating the received data —
-  implementation detail, but the cap is a hard bound on memory). Parses the
-  first `<title>…</title>` case-insensitively, decodes the five XML entities
-  plus numeric references, collapses internal whitespace, trims. Returns nil
-  on any error, non-2xx status, non-HTML content type, or empty title.
+- For each found URL (skipping any already inside `[...](...)` or `<...>`, and
+  any used as the *text* of an existing link, `[https://a](https://b)`),
+  replace with `[title](url)`. At most 16 unique URLs per apply are fetched;
+  any beyond that fall back without a request. Concurrency is also 16, so the
+  fetches are a single batch, and each is raced against the transform's own
+  `fetchTimeout`.
+- `URLSessionTitleFetcher`: GET with `Accept: text/html` and an explicit
+  `User-Agent: Pastefix (+https://github.com/bnaylor/pastefix)`, an ephemeral
+  session (no cookies, no cache), `timeoutIntervalForRequest = timeout`,
+  streaming the body and stopping as soon as the accumulated bytes end in
+  `</title>` — or at `maxBytes`, which stays a hard bound on memory. Parses the
+  first `<title>…</title>` case-insensitively (an attribute list must be
+  whitespace-separated, so `<titlebar>` is not a title), decodes the five XML
+  entities plus numeric references, collapses internal whitespace, trims.
+  Returns nil on any error, non-2xx status, non-HTML content type, or empty
+  title.
+- Pre-request policy, both pure statics: `fetchURL(for:)` rewrites an `http`
+  URL to its `https` equivalent, because App Transport Security blocks
+  cleartext and a plain-`http` fetch could only ever fail — the Markdown
+  *target* keeps the scheme `URLFinder` produced, only the fetch is upgraded.
+  `isFetchable(_:)` returns false (no request, straight to the fallback) for an
+  empty host, `localhost`, any `*.local` or `*.localhost` name, and every
+  address literal in loopback, link-local, private (RFC 1918 and CGNAT),
+  multicast or reserved space. Literals in any form `inet_pton` or `inet_aton`
+  accepts — dotted quad, 32-bit decimal (`2130706433`), hex or octal octets
+  (`0x7f.0.0.1`, `0177.0.0.1`), short `a.b` forms (`127.1`), and IPv6 including
+  IPv4-mapped — are canonicalised to their bytes and range-checked; only a host
+  that parses as neither is treated as a hostname. The two parsers disagree on
+  leading zeros (`inet_pton` reads `0177` as decimal 177, `inet_aton` as octal
+  127), so a host is refused if *either* reading is private. The ranges:
+  IPv4 `0.0.0.0/8`, `10.0.0.0/8`, `100.64.0.0/10`, `127.0.0.0/8`,
+  `169.254.0.0/16`, `172.16.0.0/12`, `192.168.0.0/16`, `224.0.0.0/4`,
+  `240.0.0.0/4`; IPv6 `::/128`, `::1/128`, `fe80::/10`, `fc00::/7`,
+  `fec0::/10`, and `::ffff:0:0/96` (IPv4-mapped addresses are re-judged against
+  the IPv4 rules). Hostnames are **not** resolved before fetching — accepted
+  scope, since this is side-effect hygiene for a user-initiated GET from the
+  user's own machine, not a server-side trust boundary.
+- Redirects are filtered by the same predicate: a `URLSessionTaskDelegate`
+  cancels any redirect whose destination is not https/http or not fetchable, so
+  an open redirect can't be used to reach a private host. A cancelled redirect
+  delivers the original 3xx, which fails the 2xx check, so the link falls back
+  like any other failure.
 - Fallback title when the fetcher returns nil: `host` + `path` with a trailing
   `/` removed (`example.com/docs/intro`); for a bare host, just the host.
 - Markdown-sensitive characters `[` `]` in the title are escaped with a
   backslash; `(` `)` in the URL are percent-encoded so the link parses.
-- Pure core: `static func render(_ text: String, titles: [URL: String?]) ->
-  String` — the async `apply` gathers titles then calls this. Tests exercise
-  `render` and a stub fetcher; no test opens a socket.
+- Pure core: `static func render(_ text: String, titles: [URL: String]) ->
+  String` (a missing key is the fallback case; there is no nil value) — the
+  async `apply` gathers titles then calls this. Tests exercise `render` and a
+  stub fetcher; no test opens a socket.
 
 **`Native/CaseConvert.swift`** (new) — one struct, four instances registered:
 
@@ -198,10 +237,12 @@ with the default fetcher. Critical Invariant 8's built-in orders become
 ### `PastefixAppCore`
 
 **`PasteDocument`** gains `public private(set) var detectedKinds:
-Set<ContentKind>`, computed from the origin text at init and from the new
-working text after every `push` (transform) / `refresh`. Undo/redo restore the
-kinds for the text they land on (recompute; it's cheap and avoids storing
-history entries twice).
+Set<ContentKind>`, recomputed on the discrete events only: init, `pushState`
+(transform), `undo`, `redo`, `refresh`. Undo/redo restore the kinds for the
+text they land on (recompute; it's cheap and avoids storing history entries
+twice). `setWorking` — the per-keystroke manual edit — deliberately does
+**not** re-detect, so the palette order stays pinned between discrete events
+and detection never runs on every keystroke.
 
 **`PaletteOrdering.swift`** (new)
 
@@ -250,10 +291,19 @@ stays. Undo restores the prior text and its kinds.
 - **`MarkdownLink`** cannot fail on network conditions: every fetch error,
   timeout, oversize body, or non-HTML response becomes the `host/path`
   fallback. It surfaces a `TransformError` only in the impossible case of the
-  render step throwing, which it doesn't. The existing 3 s `isApplying` gate
-  in `AppModel` (Critical Invariant 10) still bounds the UI; the fetcher's own
-  3 s timeout keeps the total close to that even with many links because
-  fetches run concurrently.
+  render step throwing, which it doesn't. There is no 3 s `isApplying` gate —
+  `TransformCoordinator` imposes no timeout on native transforms, so
+  `MarkdownLink` bounds itself: up to 16 unique URLs fetched in a single batch,
+  each raced against the transform's 4 s `fetchTimeout` and separately capped
+  by the fetcher's own 3 s timeout, so the worst case is one batch (≈3 s, 4 s
+  outer bound) however many links the buffer holds. Loopback, link-local,
+  private (RFC 1918 and CGNAT), multicast and reserved IPv4 addresses, their
+  IPv6 equivalents including IPv4-mapped forms, and `localhost`/`.local` names
+  are never contacted at all, and redirects to any of them are refused;
+  hostnames are not resolved before fetching, which is accepted scope for a
+  user-initiated GET from the user's own machine. An `http` link's title is
+  fetched over `https` (ATS blocks cleartext). Either way the user sees a title
+  or the `host/path` fallback, never an error.
 - **`CaseConvert`** cannot fail.
 - **Detection** never throws; oversize input yields `[]`.
 - **Script `kinds` header** with unknown names is ignored, never an error, so
@@ -281,8 +331,14 @@ Swift Testing, offline.
   with entities and newlines normalised; `[`/`]` in title escaped; URL already
   in a Markdown link left alone; multiple URLs, concurrent, order preserved;
   stub that sleeps longer than the timeout → fallback (using a stub timeout,
-  not the network); `render` pure-function cases.
-- `URLSessionTitleFetcherTests`: parsing only — feed HTML bytes through the
+  not the network); a URL used as existing link text left alone; the 16-URL
+  fetch cap; `render` pure-function cases. `fetchURL`/`isFetchable` are covered
+  by `TitleFetchPolicyTests` alongside the parsing suite.
+- `FetchableHostTests`: `isFetchable` — every blocked IPv4 and IPv6 range at its
+  boundaries, the legacy numeric spellings, IPv4-mapped forms, and the
+  `localhost`/`*.local`/`*.localhost` names. Pure helpers (`isPrivateIPv4`,
+  `isPrivateIPv6`) are exercised directly. No sockets.
+- `TitleParsingTests`: parsing only — feed HTML bytes through the
   internal `parseTitle(data:)` helper: normal, uppercase `<TITLE>`, missing,
   truncated at cap, entity decoding, non-UTF8 with charset fallback to
   ISO-8859-1. No sockets.
@@ -301,7 +357,7 @@ Swift Testing, offline.
   `kinds = json` is promoted only for `json`; nil-kind transforms never move
   relative to each other.
 - `PasteDocumentTests` additions: kinds computed at init, after push, after
-  undo/redo, after refresh.
+  undo/redo, after refresh — and *not* after `setWorking`.
 
 Manual (app): summon with a URL → badge shows, the two URL transforms lead
 the palette; Clean URL Tracking strips `utm_*`; URL → Markdown Link produces a

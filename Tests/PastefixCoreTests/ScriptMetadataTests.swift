@@ -47,4 +47,12 @@ import Testing
         let md = ScriptMetadata.parse(padding + "# pastefix: name = TooLate")
         #expect(md.name == nil)
     }
+
+    @Test func parsesKinds() {
+        #expect(ScriptMetadata.parse("# pastefix: kinds = url").kinds == [.url])
+        #expect(ScriptMetadata.parse("# pastefix: kinds = URL, json").kinds == [.url, .json])
+        #expect(ScriptMetadata.parse("# pastefix: kinds = json,unknown").kinds == [.json])
+        #expect(ScriptMetadata.parse("# pastefix: kinds = bogus").kinds == nil)
+        #expect(ScriptMetadata.parse("# pastefix: name = X").kinds == nil)
+    }
 }
