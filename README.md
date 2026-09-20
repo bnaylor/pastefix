@@ -53,8 +53,8 @@ Each is a zero-configuration `Transformer` conforming to the protocol:
 - **Transliterate to ASCII:** Converts smart punctuation, diacritics, and non-ASCII characters to ASCII equivalents (e.g., é → e, "curly quotes" → straight quotes, emoji dropped).
 - **Wrap & Reflow:** Rewraps text to a configurable width (default 400 columns), respecting paragraph breaks.
 - **Whitespace Cleanup:** Trims leading/trailing spaces and tabs from each line; collapses repeated blank lines.
-- **Clean URL Tracking:** Removes tracking parameters (`utm_*`, `fbclid`, `gclid`, `si`, `mc_cid`, … ) from every URL in the text; other parameters, fragments, and surrounding text are untouched.
-- **URL → Markdown Link:** Replaces each URL with `[Page Title](url)`. The title is fetched over the network with a 3-second timeout and a 256 KB cap; if that fails the link text is `host/path`. URLs already inside Markdown links are skipped. Up to 16 unique URLs per apply are fetched; any beyond that fall back to `host/path` without a network call.
+- **Clean URL Tracking:** Removes tracking parameters (`utm_*`, `fbclid`, `gclid`, `si`, `mc_cid`, … ) from every URL in the text; other parameters, fragments, and surrounding text are untouched. HTML-escaped `&amp;` query separators (as found in links copied from email or HTML source) are normalised to `&` before stripping.
+- **URL → Markdown Link:** Replaces each URL with `[Page Title](url)`. The title is fetched over the network with a 3-second timeout and a 256 KB cap; if that fails the link text is `host/path`. URLs already inside Markdown links are skipped. Up to 16 unique URLs per apply are fetched; any beyond that fall back to `host/path` without a network call. The link target always includes a scheme, so `www.example.com` becomes `[…](http://www.example.com)`.
 - **camelCase / snake_case / kebab-case / CONSTANT_CASE:** Rewrites each line as one identifier phrase. Splits on separators and camel boundaries (`HTTPServerError` → `http_server_error`), keeps digits with their word (`utf8Decoder`), preserves indentation and non-ASCII letters.
 
 ## User Scripts
