@@ -75,6 +75,10 @@ private struct StubTitleFetcher: TitleFetcher {
         let out = MarkdownLink.render("https://ex.com/x", titles: [u: "a\\b [c]"])
         #expect(out == "[a\\\\b \\[c\\]](https://ex.com/x)")
     }
+    @Test func urlUsedAsExistingLinkTextIsLeftAlone() {
+        let text = "[https://ex.com/a](https://ex.com/b)"
+        #expect(MarkdownLink.render(text, titles: [:]) == text)
+    }
     @Test func fetchCountBoundedAtSixteen() async throws {
         let urls = (1...20).map { "https://host\($0).test/p\($0)" }
         let titles = Dictionary(uniqueKeysWithValues: urls.map { ($0, "Title-\($0)") })

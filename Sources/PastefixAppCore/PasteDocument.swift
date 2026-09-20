@@ -30,9 +30,11 @@ public struct PasteDocument: Sendable {
     }
 
     /// Coalesce a manual edit into the current state (no new history entry).
+    /// Deliberately does **not** re-detect: kinds are recomputed only on the discrete
+    /// events (init, push, undo/redo, refresh), so the palette order stays pinned while
+    /// the user types and detection isn't run per keystroke.
     public mutating func setWorking(_ text: String) {
         history[cursor] = text
-        redetect()
     }
 
     public mutating func undo() {

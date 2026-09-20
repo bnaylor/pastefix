@@ -20,9 +20,68 @@ import Foundation
     }
     @Test func doubleEncodedAmpersandDecodesOnce() { #expect(URLSessionTitleFetcher.decodeEntities("&amp;lt;") == "&lt;") }
     @Test func uppercaseHexEntity() { #expect(URLSessionTitleFetcher.decodeEntities("&#X2014;") == "—") }
+    @Test func titlebarTagIsNotATitle() {
+        #expect(parse("<titlebar>x</titlebar><title>Real</title>") == "Real")
+    }
     @Test func utf8TruncatedMidCharacterStillDecodesAsUTF8() {
         var bytes = Array("<title>café — page</title><p>".utf8)
         bytes.append(contentsOf: [0xE2, 0x80])   // first two bytes of a 3-byte sequence, cut by the cap
         #expect(URLSessionTitleFetcher.parseTitle(data: Data(bytes)) == "café — page")
+    }
+}
+
+/// Pre-request policy for `URLSessionTitleFetcher`: which URL is actually fetched, and
+/// which hosts are never contacted at all.
+@Suite struct TitleFetchPolicyTests {
+    private func fetchURL(_ s: String) -> String {
+        URLSessionTitleFetcher.fetchURL(for: URL(string: s)!).absoluteString
+    }
+    private func fetchable(_ s: String) -> Bool {
+        URLSessionTitleFetcher.isFetchable(URL(string: s)!)
+    }
+
+    @Test func httpIsFetchedOverHTTPS() {
+        #expect(fetchURL("http://ex.com/a?b=1") == "https://ex.com/a?b=1")
+    }
+    @Test func httpsIsUnchanged() {
+        #expect(fetchURL("https://ex.com/a?b=1") == "https://ex.com/a?b=1")
+    }
+    @Test func httpUpgradeKeepsFragmentAndPort() {
+        #expect(fetchURL("http://ex.com:8080/a#f") == "https://ex.com:8080/a#f")
+    }
+    @Test func publicHostIsFetchable() {
+        #expect(fetchable("https://example.com/a"))
+        #expect(fetchable("https://8.8.8.8/a"))
+        #expect(fetchable("https://172.32.0.1/a"))
+        #expect(fetchable("https://11.0.0.1/a"))
+    }
+    @Test func localhostIsNotFetchable() {
+        #expect(!fetchable("http://localhost/a"))
+        #expect(!fetchable("http://LOCALHOST:3000/a"))
+    }
+    @Test func dotLocalIsNotFetchable() {
+        #expect(!fetchable("http://mac.local/a"))
+        #expect(!fetchable("http://Mac.LOCAL/a"))
+    }
+    @Test func loopbackIsNotFetchable() {
+        #expect(!fetchable("http://127.0.0.1/a"))
+        #expect(!fetchable("http://127.1.2.3/a"))
+        #expect(!fetchable("http://[::1]/a"))
+    }
+    @Test func privateRangesAreNotFetchable() {
+        #expect(!fetchable("http://10.1.2.3/a"))
+        #expect(!fetchable("http://172.16.0.1/a"))
+        #expect(!fetchable("http://172.31.255.254/a"))
+        #expect(!fetchable("http://192.168.1.1/a"))
+        #expect(!fetchable("http://169.254.1.1/a"))
+    }
+    @Test func closeTitleSuffixDetectedCaseInsensitively() {
+        #expect(URLSessionTitleFetcher.endsWithCloseTitle(Data("<title>Hi</TITLE>".utf8)))
+        #expect(URLSessionTitleFetcher.endsWithCloseTitle(Data("</title>".utf8)))
+        #expect(!URLSessionTitleFetcher.endsWithCloseTitle(Data("<title>Hi</title> more".utf8)))
+        #expect(!URLSessionTitleFetcher.endsWithCloseTitle(Data("</tit".utf8)))
+    }
+    @Test func emptyHostIsNotFetchable() {
+        #expect(!URLSessionTitleFetcher.isFetchable(URL(string: "file:///tmp/x.html")!))
     }
 }

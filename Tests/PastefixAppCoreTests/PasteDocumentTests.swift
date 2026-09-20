@@ -73,7 +73,10 @@ import PastefixCore
         #expect(d.detectedKinds == [.url])
         d.redo()
         #expect(d.detectedKinds == [.json])
+        // Manual edits do not re-detect: the palette order is pinned per discrete event.
         d.setWorking("plain")
+        #expect(d.detectedKinds == [.json])
+        d.pushState("x")
         #expect(d.detectedKinds == [])
         d.refresh(origin: ClipboardSnapshot(plainText: "www.example.com", richRTFD: nil))
         #expect(d.detectedKinds == [.url])

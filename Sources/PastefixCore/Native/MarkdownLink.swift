@@ -14,9 +14,14 @@ public struct URLSessionTitleFetcher: TitleFetcher {
         self.maxBytes = maxBytes
     }
 
+    /// Sent so operators can identify (and, if they like, block) the transform.
+    static let userAgent = "Pastefix (+https://github.com/bnaylor/pastefix)"
+
     public func title(for url: URL) async -> String? {
-        var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: timeout)
+        guard Self.isFetchable(url) else { return nil }
+        var request = URLRequest(url: Self.fetchURL(for: url), cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: timeout)
         request.setValue("text/html", forHTTPHeaderField: "Accept")
+        request.setValue(Self.userAgent, forHTTPHeaderField: "User-Agent")
         let config = URLSessionConfiguration.ephemeral
         config.timeoutIntervalForRequest = timeout
         config.timeoutIntervalForResource = timeout
@@ -30,12 +35,61 @@ public struct URLSessionTitleFetcher: TitleFetcher {
             var data = Data()
             for try await byte in bytes {
                 data.append(byte)
+                // The title is in <head>; stop the moment it closes rather than reading
+                // the whole (possibly 256 KB) body.
+                if Self.endsWithCloseTitle(data) { break }
                 if data.count >= maxBytes { break }
             }
             return Self.parseTitle(data: data)
         } catch {
             return nil
         }
+    }
+
+    private static let closeTitleBytes = Array("</title>".utf8)
+
+    /// True when the last bytes of `data` are `</title>` (ASCII case-insensitive).
+    static func endsWithCloseTitle(_ data: Data) -> Bool {
+        guard data.count >= closeTitleBytes.count else { return false }
+        var i = data.index(data.endIndex, offsetBy: -closeTitleBytes.count)
+        for expected in closeTitleBytes {
+            let byte = data[i]
+            let lowered = (byte >= 0x41 && byte <= 0x5A) ? byte + 0x20 : byte
+            if lowered != expected { return false }
+            i = data.index(after: i)
+        }
+        return true
+    }
+
+    /// The URL actually requested. App Transport Security blocks cleartext, so an `http`
+    /// link is fetched over `https` (same host, port, path, query, fragment) — otherwise
+    /// every `http://` and bare-`www.` link would always fall back. The Markdown *target*
+    /// keeps whatever scheme `URLFinder` produced; only the fetch is upgraded.
+    static func fetchURL(for url: URL) -> URL {
+        guard url.scheme?.lowercased() == "http",
+              var comps = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return url }
+        comps.scheme = "https"
+        return comps.url ?? url
+    }
+
+    /// False for hosts we must never contact: loopback, link-local, `.local` mDNS names,
+    /// and the RFC 1918 private ranges. A paste can contain anything, and a transform is
+    /// not a licence to probe the user's LAN. Unfetchable URLs get the `host/path` fallback
+    /// with no request made.
+    static func isFetchable(_ url: URL) -> Bool {
+        guard var host = url.host?.lowercased(), !host.isEmpty else { return false }
+        if host.hasPrefix("["), host.hasSuffix("]") { host = String(host.dropFirst().dropLast()) }
+        if host == "localhost" || host.hasSuffix(".local") { return false }
+        if host == "::1" || host == "0:0:0:0:0:0:0:1" { return false }
+        let octets = host.split(separator: ".", omittingEmptySubsequences: false).map { UInt8($0) }
+        guard octets.count == 4, let a = octets[0], let b = octets[1], octets[2] != nil, octets[3] != nil
+        else { return true }   // not a dotted-quad literal: a normal hostname
+        if a == 127 { return false }                       // 127.0.0.0/8
+        if a == 10 { return false }                        // 10.0.0.0/8
+        if a == 172, (16...31).contains(b) { return false } // 172.16.0.0/12
+        if a == 192, b == 168 { return false }             // 192.168.0.0/16
+        if a == 169, b == 254 { return false }             // 169.254.0.0/16
+        return true
     }
 
     /// Decodes a byte-capped HTML buffer as UTF-8, retrying after dropping up to 3 trailing
@@ -50,7 +104,7 @@ public struct URLSessionTitleFetcher: TitleFetcher {
 
     static func parseTitle(data: Data) -> String? {
         let html = decodeHTML(data)
-        guard let open = html.range(of: "<title[^>]*>", options: [.regularExpression, .caseInsensitive]),
+        guard let open = html.range(of: "<title(\\s[^>]*)?>", options: [.regularExpression, .caseInsensitive]),
               let close = html.range(of: "</title>", options: .caseInsensitive, range: open.upperBound..<html.endIndex)
         else { return nil }
         let raw = decodeEntities(String(html[open.upperBound..<close.lowerBound]))
@@ -95,10 +149,12 @@ public struct MarkdownLink: Transformer {
 
     private let fetcher: any TitleFetcher
     private let fetchTimeout: TimeInterval
-    private static let maxConcurrentFetches = 8
-    /// Caps total wall-clock time: worst case is ceil(maxFetchedURLs / maxConcurrentFetches)
-    /// batches, each bounded by fetchTimeout. Any URL beyond this count falls back to
-    /// `host/path` without ever being fetched.
+    /// Equal to `maxFetchedURLs`, so every fetched URL runs in a single batch.
+    private static let maxConcurrentFetches = 16
+    /// Caps total wall-clock time: ceil(maxFetchedURLs / maxConcurrentFetches) == 1 batch,
+    /// bounded by fetchTimeout, so the worst case is one fetchTimeout regardless of how
+    /// many links the buffer holds. Any URL beyond this count falls back to `host/path`
+    /// without ever being fetched.
     private static let maxFetchedURLs = 16
 
     public init(fetcher: any TitleFetcher = URLSessionTitleFetcher(), fetchTimeout: TimeInterval = 4) {
@@ -157,6 +213,9 @@ public struct MarkdownLink: Transformer {
             let after = text[f.range.upperBound...]
             if before.hasSuffix("](") { return false }
             if before.hasSuffix("<"), after.hasPrefix(">") { return false }
+            // A URL used as the *text* of an existing link: `[https://a](https://b)`.
+            // Wrapping it would nest brackets and break the link.
+            if before.hasSuffix("["), after.hasPrefix("](") { return false }
             return true
         }
     }
