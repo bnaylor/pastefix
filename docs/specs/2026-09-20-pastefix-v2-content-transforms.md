@@ -174,8 +174,22 @@ public struct MarkdownLink: Transformer {
   cleartext and a plain-`http` fetch could only ever fail — the Markdown
   *target* keeps the scheme `URLFinder` produced, only the fetch is upgraded.
   `isFetchable(_:)` returns false (no request, straight to the fallback) for an
-  empty host, `localhost`, any `*.local`, `::1`, and the `127.0.0.0/8`,
-  `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `169.254.0.0/16` ranges.
+  empty host, `localhost`, any `*.local` or `*.localhost` name, and every
+  address literal in loopback, link-local, private (RFC 1918 and CGNAT),
+  multicast or reserved space. Literals are parsed with `inet_pton`, not a
+  hand-rolled dotted-quad split, so alternate spellings cannot slip past:
+  IPv4 `0.0.0.0/8`, `10.0.0.0/8`, `100.64.0.0/10`, `127.0.0.0/8`,
+  `169.254.0.0/16`, `172.16.0.0/12`, `192.168.0.0/16`, `224.0.0.0/4`,
+  `240.0.0.0/4`; IPv6 `::/128`, `::1/128`, `fe80::/10`, `fc00::/7`,
+  `fec0::/10`, and `::ffff:0:0/96` (IPv4-mapped addresses are re-judged against
+  the IPv4 rules). Hostnames are **not** resolved before fetching — accepted
+  scope, since this is side-effect hygiene for a user-initiated GET from the
+  user's own machine, not a server-side trust boundary.
+- Redirects are filtered by the same predicate: a `URLSessionTaskDelegate`
+  cancels any redirect whose destination is not https/http or not fetchable, so
+  an open redirect can't be used to reach a private host. A cancelled redirect
+  delivers the original 3xx, which fails the 2xx check, so the link falls back
+  like any other failure.
 - Fallback title when the fetcher returns nil: `host` + `path` with a trailing
   `/` removed (`example.com/docs/intro`); for a bare host, just the host.
 - Markdown-sensitive characters `[` `]` in the title are escaped with a
@@ -277,10 +291,14 @@ stays. Undo restores the prior text and its kinds.
   `MarkdownLink` bounds itself: up to 16 unique URLs fetched in a single batch,
   each raced against the transform's 4 s `fetchTimeout` and separately capped
   by the fetcher's own 3 s timeout, so the worst case is one batch (≈3 s, 4 s
-  outer bound) however many links the buffer holds. Local and private hosts are
-  never contacted at all, and an `http` link's title is fetched over `https`
-  (ATS blocks cleartext); either way the user sees a title or the `host/path`
-  fallback, never an error.
+  outer bound) however many links the buffer holds. Loopback, link-local,
+  private (RFC 1918 and CGNAT), multicast and reserved IPv4 addresses, their
+  IPv6 equivalents including IPv4-mapped forms, and `localhost`/`.local` names
+  are never contacted at all, and redirects to any of them are refused;
+  hostnames are not resolved before fetching, which is accepted scope for a
+  user-initiated GET from the user's own machine. An `http` link's title is
+  fetched over `https` (ATS blocks cleartext). Either way the user sees a title
+  or the `host/path` fallback, never an error.
 - **`CaseConvert`** cannot fail.
 - **Detection** never throws; oversize input yields `[]`.
 - **Script `kinds` header** with unknown names is ignored, never an error, so
