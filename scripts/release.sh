@@ -166,7 +166,17 @@ STAGE="$WORK/dmg-stage"
 mkdir -p "$STAGE"
 ditto "$APP" "$STAGE/Pastefix.app"
 ln -s /Applications "$STAGE/Applications"
-hdiutil create -volname "Pastefix $VERSION" -srcfolder "$STAGE" -ov -format UDZO -quiet "$DMG"
+# hdiutil create is flaky immediately after a fresh bundle copy (Spotlight/quarantine hold
+# files busy); never pass -quiet, it closes stderr and hides the reason.
+DMG_OK=0
+for attempt in 1 2 3 4 5; do
+  if hdiutil create -volname "Pastefix $VERSION" -srcfolder "$STAGE" -ov -format UDZO "$DMG"; then
+    DMG_OK=1; break
+  fi
+  echo "hdiutil create failed (attempt $attempt/5); retrying in 3s" >&2
+  sleep 3
+done
+(( DMG_OK )) || die "hdiutil create failed after 5 attempts"
 codesign --force --sign "$IDENTITY" --timestamp "$DMG"
 
 step "Notarizing the DMG"
