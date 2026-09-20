@@ -84,4 +84,13 @@ import Foundation
             #expect(s.scriptsDirectoryPath == SettingsStore.defaultScriptsPath)
         }
     }
+
+    @Test func showSidebarDefaultsOffAndPersists() {
+        withFreshDefaults { d in
+            let s = SettingsStore(defaults: d)
+            #expect(s.showSidebar == false)
+            s.showSidebar = true
+            #expect(SettingsStore(defaults: d).showSidebar == true)
+        }
+    }
 }
