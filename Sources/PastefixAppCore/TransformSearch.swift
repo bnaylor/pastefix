@@ -38,7 +38,11 @@ public enum TransformSearch {
     private static let wordSeparators: Set<Character> = [" ", "_", "-", "→", "&", "/"]
 
     /// Matches per character so highlight ranges map 1:1 onto the original name: each
-    /// character of `name` is folded on its own and compared by its first scalar.
+    /// character of `name` is folded on its own and compared by its first character.
+    /// Camel-case boundaries (a lowercase letter or digit followed by an uppercase
+    /// letter, the same rule `CaseConvert.words` uses) count as word starts alongside
+    /// separators. Characters whose fold expands to more than one character (e.g. "ß"
+    /// -> "ss", "ﬁ" -> "fi") are matched by their first folded character only.
     static func match(_ q: [Character], in name: String) -> (tier: Int, ranges: [Range<String.Index>])? {
         let chars = Array(name)
         let folded: [Character] = chars.map { fold(String($0)).first ?? $0 }
@@ -48,8 +52,13 @@ public enum TransformSearch {
             guard start + q.count <= folded.count else { return false }
             return Array(folded[start..<start + q.count]) == q
         }
+        func isWordStart(at i: Int) -> Bool {
+            if wordSeparators.contains(chars[i - 1]) && !wordSeparators.contains(chars[i]) { return true }
+            if chars[i].isUppercase, chars[i - 1].isLowercase || chars[i - 1].isNumber { return true }
+            return false
+        }
         if hasPrefix(at: 0) { return (1, [range(0, q.count)]) }
-        for i in 1..<max(1, chars.count) where wordSeparators.contains(chars[i - 1]) && !wordSeparators.contains(chars[i]) {
+        for i in 1..<max(1, chars.count) where isWordStart(at: i) {
             if hasPrefix(at: i) { return (2, [range(i, i + q.count)]) }
         }
         var matched: [Int] = []

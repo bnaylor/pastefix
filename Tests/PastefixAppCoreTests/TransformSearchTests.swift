@@ -60,9 +60,19 @@ private struct T: Transformer {
     }
     @Test func rangesAreValidIndicesOfOriginalName() {
         for r in TransformSearch.rank(query: "a", in: list, kinds: []) {
-            for range in r.matchedRanges {
-                #expect(range.lowerBound >= r.transformer.name.startIndex && range.upperBound <= r.transformer.name.endIndex)
-            }
+            #expect(!r.matchedRanges.isEmpty)
+            for range in r.matchedRanges { #expect(!range.isEmpty) }
+            let joined = r.matchedRanges.map { String(r.transformer.name[$0]) }.joined()
+            #expect(TransformSearch.fold(joined) == "a")
         }
+    }
+    @Test func camelBoundaryIsAWordStart() {
+        let r = TransformSearch.rank(query: "case", in: list, kinds: []).first { $0.id == "camel" }!
+        #expect(r.tier == 2)
+        #expect(r.matchedRanges.map { String(r.transformer.name[$0]) } == ["Case"])
+    }
+    @Test func subsequenceMergesAdjacentMatches() {
+        // "cse" in "camelCase": c(0), then s(7) e(8) adjacent → two ranges, the second merged.
+        #expect(highlighted("cse", "camel") == ["c", "se"])
     }
 }
