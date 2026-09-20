@@ -1,6 +1,6 @@
 # Pastefix v2 Content Transforms & Detection (Plan 3) — Implementation Plan
 
-> ## ⬜ STATUS: NOT STARTED — written 2026-09-20 from the approved spec.
+> ## 🟡 STATUS: IN REVIEW — implemented on `feat/content-transforms` 2026-09-20; [PR #6](https://github.com/bnaylor/pastefix/pull/6) open. All tasks done, including the manual checks and the final-review fix waves.
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 >

@@ -206,7 +206,7 @@ When you **significantly expand the project** — a new target, subsystem, scrip
 | 2a — App Core | menu-bar app, hotkey, panel | ✅ merged, PR #2 (`12b3cdd`) |
 | 2b — Settings & Prefs | Settings window, rebindable hotkey, live reload | ✅ merged, PR #3 (`4380489`) + 5 follow-up fixes |
 | 2c — Auto-update | Sparkle, hardened runtime, release script | ✅ merged, [PR #5](https://github.com/bnaylor/pastefix/pull/5) (`0cc1082`) |
-| 3 — Content transforms | URL cleanup, Markdown link, case conversion, detection | 🟡 in review on `feat/content-transforms`, PR pending |
+| 3 — Content transforms | URL cleanup, Markdown link, case conversion, detection | 🟡 in review, [PR #6](https://github.com/bnaylor/pastefix/pull/6) |
 
 Historical reference material for the 2007 and 2019 incarnations is vendored under [`docs/inputs/legacy/`](docs/inputs/legacy/).
 
