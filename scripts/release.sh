@@ -38,13 +38,13 @@ TEAM_ID="RMKGLPG4K4"
 NOTARY_PROFILE="pastefix-notary"
 GH_REPO="bnaylor/pastefix"
 FEED_URL="https://bnaylor.github.io/pastefix/appcast.xml"
-MIN_SYSTEM_VERSION="14.6"     # keep in step with MACOSX_DEPLOYMENT_TARGET in the pbxproj
 TAG="v$VERSION"
 DMG_NAME="Pastefix-$VERSION.dmg"
 RELEASE_URL="https://github.com/$GH_REPO/releases/tag/$TAG"
 ENCLOSURE_URL="https://github.com/$GH_REPO/releases/download/$TAG/$DMG_NAME"
 
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/pastefix-release-$VERSION.XXXX")
+echo "work dir: $WORK"
 DERIVED="$WORK/DerivedData"
 ARCHIVE="$WORK/Pastefix.xcarchive"
 EXPORT_DIR="$WORK/export"
@@ -64,7 +64,7 @@ cd "$REPO_ROOT"
 # --- preconditions -------------------------------------------------------------------------
 step "Checking preconditions"
 [[ -z "$(git status --porcelain)" ]] || die "working tree not clean"
-git fetch -q origin gh-pages
+git fetch -q origin gh-pages || die "cannot fetch origin/gh-pages (see docs/RELEASING.md)"
 if [[ "${RELEASE_ALLOW_BRANCH:-0}" == "1" ]]; then
   # Dry-run testing from a feature branch only; a real release must never set this.
   (( DRY_RUN )) || die "RELEASE_ALLOW_BRANCH is only honoured with --dry-run"
@@ -80,6 +80,7 @@ git rev-parse -q --verify origin/gh-pages >/dev/null || die "origin/gh-pages mis
 gh auth status >/dev/null 2>&1 || die "gh is not authenticated"
 xcrun notarytool history --keychain-profile "$NOTARY_PROFILE" >/dev/null 2>&1 \
   || die "notary profile '$NOTARY_PROFILE' missing (see docs/RELEASING.md)"
+command -v xmllint >/dev/null || die "xmllint not found"
 
 IDENTITY="${CODESIGN_IDENTITY:-}"
 if [[ -z "$IDENTITY" ]]; then
@@ -124,8 +125,19 @@ BUILT_SHORT=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$A
 BUILT_BUILD=$(/usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "$APP/Contents/Info.plist")
 [[ "$BUILT_SHORT" == "$VERSION" && "$BUILT_BUILD" == "$BUILD" ]] \
   || die "built app reports $BUILT_SHORT ($BUILT_BUILD), expected $VERSION ($BUILD)"
+
+EXPORTED_FEED_URL=$(/usr/libexec/PlistBuddy -c "Print :SUFeedURL" "$APP/Contents/Info.plist" 2>/dev/null || true)
+EXPORTED_PUBLIC_KEY=$(/usr/libexec/PlistBuddy -c "Print :SUPublicEDKey" "$APP/Contents/Info.plist" 2>/dev/null || true)
+[[ "$EXPORTED_FEED_URL" == "$FEED_URL" && "$EXPORTED_PUBLIC_KEY" == "$PUBLIC_KEY" ]] \
+  || die "exported app is missing or has wrong SUFeedURL/SUPublicEDKey — Sparkle would abort at launch; do NOT ship"
+
+MIN_SYSTEM_VERSION=$(/usr/libexec/PlistBuddy -c "Print :LSMinimumSystemVersion" "$APP/Contents/Info.plist")
+[[ -n "$MIN_SYSTEM_VERSION" ]] || die "LSMinimumSystemVersion missing from exported app"
+
 codesign -d --entitlements - "$APP" 2>/dev/null | grep -q "com.apple.security.app-sandbox" \
   && die "app-sandbox entitlement present — Critical Invariant 9 violated"
+codesign -d --entitlements - "$APP" 2>/dev/null | grep -q "com.apple.security.cs.allow-jit" \
+  || die "allow-jit entitlement missing — JS transforms would break under the hardened runtime"
 codesign --verify --deep --strict "$APP" || die "code signature invalid"
 
 # --- notarize + staple the app -------------------------------------------------------------
@@ -152,7 +164,7 @@ spctl --assess --type execute --verbose=2 "$APP" || die "spctl rejected the stap
 step "Building $DMG_NAME"
 STAGE="$WORK/dmg-stage"
 mkdir -p "$STAGE"
-cp -R "$APP" "$STAGE/"
+ditto "$APP" "$STAGE/Pastefix.app"
 ln -s /Applications "$STAGE/Applications"
 hdiutil create -volname "Pastefix $VERSION" -srcfolder "$STAGE" -ov -format UDZO -quiet "$DMG"
 codesign --force --sign "$IDENTITY" --timestamp "$DMG"
@@ -180,6 +192,7 @@ cat > "$ITEM_FILE" <<EOF
 EOF
 
 step "Appcast item"
+echo "item file: $ITEM_FILE"
 cat "$ITEM_FILE"
 
 if (( DRY_RUN )); then
@@ -223,7 +236,7 @@ git worktree add -q --detach "$PAGES_WT" origin/gh-pages
     { print }
   ' appcast.xml > appcast.xml.new
   mv appcast.xml.new appcast.xml
-  xmllint --noout appcast.xml
+  if ! xmllint --noout --nonet appcast.xml 2>&1 | grep -q .; then :; else die "appcast.xml failed validation"; fi
   git add appcast.xml
   git commit -q -m "appcast: $VERSION (build $BUILD)"
   git push -q origin HEAD:gh-pages
