@@ -43,4 +43,34 @@ import Foundation
         t.replaceSubrange(f.range, with: "URL")
         #expect(t == "x URL y")
     }
+
+    @Test func trimmingActuallyFiresAndURLMatchesOriginal() {
+        // Cases where NSDataDetector itself includes the trailing character.
+        let cases: [(String, String)] = [
+            ("see https://example.com/a:", "https://example.com/a"),
+            ("see https://example.com/a'", "https://example.com/a"),
+            ("see https://example.com/a?", "https://example.com/a"),
+            ("wrap (https://en.wikipedia.org/wiki/Foo_(bar))", "https://en.wikipedia.org/wiki/Foo_(bar)"),
+        ]
+        for (text, expected) in cases {
+            let found = URLFinder.find(in: text)
+            #expect(found.count == 1, "\(text)")
+            #expect(String(found[0].original) == expected, "\(text)")
+            #expect(found[0].url.absoluteString == expected, "\(text)")
+        }
+    }
+
+    @Test func schemelessTrimmedMatchRebuildsURLFromTrimmedText() {
+        let found = URLFinder.find(in: "see www.example.com/a?")
+        #expect(found.count == 1)
+        #expect(String(found[0].original) == "www.example.com/a")
+        #expect(found[0].url.absoluteString == "http://www.example.com/a")
+    }
+
+    @Test func urlAlwaysEndsWithOriginal() {
+        let text = "a https://x.test/p. b www.y.test/q, c (https://z.test/r) d https://w.test/s?k=v!"
+        for f in URLFinder.find(in: text) {
+            #expect(f.url.absoluteString.hasSuffix(String(f.original)), Comment(rawValue: String(f.original)))
+        }
+    }
 }

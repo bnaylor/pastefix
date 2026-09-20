@@ -24,14 +24,15 @@ enum URLFinder {
             }
             let original = text[range]
             guard !original.isEmpty else { continue }
-            let candidate = original.contains("://") ? String(original) : "http://" + original
-            // Prefer NSDataDetector's own resolved URL: it already carries the correct
-            // scheme for bare hosts (www.example.com -> http://www.example.com) and,
-            // crucially, for non-http matches (mailto:, ftp:) whose original text lacks
-            // "://" and would otherwise be misparsed as an http(s) URL by `candidate`.
-            guard let url = match.url ?? URL(string: candidate),
-                  let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https"
+            // Scheme comes from the detector: only it knows that a "://"-free match is a
+            // mailto address rather than a bare host.
+            guard let detected = match.url,
+                  let scheme = detected.scheme?.lowercased(), scheme == "http" || scheme == "https"
             else { continue }
+            // The URL must describe the trimmed range, not the detector's untrimmed match:
+            // callers replace `range` with a rewrite of `url`.
+            let candidate = original.contains("://") ? String(original) : scheme + "://" + original
+            guard let url = URL(string: candidate) else { continue }
             out.append(FoundURL(range: range, url: url, original: original))
         }
         return out
