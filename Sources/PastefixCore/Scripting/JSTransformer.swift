@@ -5,6 +5,7 @@ public struct JSTransformer: Transformer {
     public let name: String
     public let requiresRichInput = false
     public let source: TransformerSource
+    public let applicableKinds: Set<ContentKind>?
     private let url: URL
     private let timeout: TimeInterval
 
@@ -14,6 +15,7 @@ public struct JSTransformer: Transformer {
         self.id = "js:" + url.lastPathComponent
         self.name = metadata.name ?? url.deletingPathExtension().lastPathComponent
         self.source = .javascript(url)
+        self.applicableKinds = metadata.kinds
     }
 
     public func apply(_ input: TransformInput) async throws -> String {

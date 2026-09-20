@@ -4,11 +4,13 @@ public struct ScriptMetadata: Equatable, Sendable {
     public var name: String?
     public var enabled: Bool
     public var order: Int?
+    public var kinds: Set<ContentKind>?
 
-    public init(name: String? = nil, enabled: Bool = true, order: Int? = nil) {
+    public init(name: String? = nil, enabled: Bool = true, order: Int? = nil, kinds: Set<ContentKind>? = nil) {
         self.name = name
         self.enabled = enabled
         self.order = order
+        self.kinds = kinds
     }
 
     public static func parse(_ source: String) -> ScriptMetadata {
@@ -28,6 +30,10 @@ public struct ScriptMetadata: Equatable, Sendable {
             case "name": md.name = value
             case "enabled": md.enabled = (value.lowercased() == "true")
             case "order": md.order = Int(value)
+            case "kinds":
+                let parsed = value.split(separator: ",")
+                    .compactMap { ContentKind(rawValue: $0.trimmingCharacters(in: .whitespaces).lowercased()) }
+                md.kinds = parsed.isEmpty ? nil : Set(parsed)
             default: break
             }
         }
