@@ -29,6 +29,11 @@ maintainer's machine. Design: `docs/specs/2026-09-18-pastefix-v2-auto-update.md`
      `find ~/Library/Developer/Xcode/DerivedData -path "*/artifacts/sparkle/Sparkle/bin/generate_keys"`.
    - **Never** run a bare `generate_keys` on a machine that lacks the key
      expecting to "regenerate" it. Restore from the backup export instead.
+   - **Back up the private key before the first release.** Run
+     `generate_keys -x ~/Desktop/pastefix-sparkle-private-key.txt` once, move
+     the file into the password manager, then delete it from disk. Do this
+     before cutting the first release — on 2026-09-19 this export was made on
+     the maintainer's machine.
 4. **`gh`** authenticated with push access to `bnaylor/pastefix`.
 5. **Export signing certificate.** `scripts/ExportOptions.plist` names the
    generic `signingCertificate` "Developer ID Application" rather than one
@@ -65,6 +70,12 @@ tag → `gh release create` with the DMG → prepend an `<item>` to `appcast.xml
 on `gh-pages`. Every step is fatal. The three irreversible steps (tag,
 release, appcast) are last and adjacent.
 
+Right after export, the script also asserts that the exported bundle carries
+the correct `SUFeedURL` and `SUPublicEDKey` and the `allow-jit` entitlement
+(and not `app-sandbox`), and reads `LSMinimumSystemVersion` from the exported
+app's `Info.plist` for the appcast item — it does not hand-carry a copy of
+that value.
+
 Versions: the argument becomes `CFBundleShortVersionString`; `CFBundleVersion`
 (what Sparkle compares) is `git rev-list --count HEAD`. No version-bump commit
 is needed or wanted.
@@ -74,7 +85,8 @@ merged PRs; the appcast links to the release page. Edit the release on GitHub
 afterwards if the generated notes need help.
 
 Each run leaves its work directory (DerivedData, archive, DMG) under
-`$TMPDIR`; delete it when done.
+`$TMPDIR`; delete it when done. The script prints it (`work dir: …`) as soon
+as it's created.
 
 ## If something goes wrong
 
@@ -95,12 +107,14 @@ re-run it.
 
 - If the release was **not** created: `git push --delete origin vX.Y.Z && git tag -d vX.Y.Z`,
   then re-run `scripts/release.sh X.Y.Z`.
-- If the release **was** created: `gh release delete vX.Y.Z --yes --cleanup-tag`
-  (deletes both the release and the tag, locally and on origin), then re-run.
+- If the release **was** created: `gh release delete vX.Y.Z --yes --cleanup-tag && git tag -d vX.Y.Z`
+  (`gh` deletes the release and the tag on origin; it does **not** delete the
+  local tag, and a leftover local tag blocks the script's "tag already exists"
+  precondition), then re-run.
 - If only the appcast push failed, the release itself is fine and doesn't need
-  undoing — paste the saved `$WORK/item.xml` (the work-directory path the
-  script prints) into `appcast.xml` on `gh-pages` by hand: as the first
-  `<item>` in `<channel>`, commit, push.
+  undoing — paste the saved item file (the script prints `item file: $ITEM_FILE`
+  when it composes the item) into `appcast.xml` on `gh-pages` by hand: as the
+  first `<item>` in `<channel>`, commit, push.
 - If the script was interrupted between adding and removing its `gh-pages`
   worktree, run `git worktree prune`. Normally an `EXIT` trap removes the
   worktree even on failure, but a killed process can skip it.
@@ -120,4 +134,7 @@ older one in `/Applications`, DMG and `sign_update` the newer one, serve the
 directory with `python3 -m http.server 8000` alongside an `appcast.xml` whose
 `<enclosure>` points at `http://localhost:8000/<dmg>`, then Check for Updates.
 Release builds ignore the override. Remove it afterwards with
-`defaults delete scromp.net.Pastefix PastefixUpdateFeedURL`.
+`defaults delete scromp.net.Pastefix PastefixUpdateFeedURL`. Also remove the
+test build from `/Applications` when done: test builds use build numbers
+(100+) higher than a real release's commit count, so a leftover would refuse
+the first real update.

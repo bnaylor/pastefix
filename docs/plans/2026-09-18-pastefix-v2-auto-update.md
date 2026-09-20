@@ -1,6 +1,6 @@
 # Pastefix v2 Auto-update & Release Pipeline (Plan 2c) — Implementation Plan
 
-> ## ⬜ STATUS: NOT STARTED — written 2026-09-18 from the approved spec.
+> ## 🟡 STATUS: IN REVIEW — implemented on `feat/auto-update` 2026-09-19/20; PR pending. Tasks 0–8 done; Task 6 Step 6 (notarized dry run) and Task 9 outstanding.
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 >

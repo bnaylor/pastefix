@@ -66,7 +66,7 @@ Recorded here so the plan and the code don't relitigate them.
 
 One new file, three small edits. Nothing outside `Pastefix/Pastefix/`.
 
-**`UpdaterController.swift`** (new) — a `@MainActor final class UpdaterController: ObservableObject` that owns a `SPUStandardUpdaterController` started at init and exposes:
+**`UpdaterController.swift`** (new) — a `@MainActor final class UpdaterController: ObservableObject` that owns a `SPUStandardUpdaterController` created with `startingUpdater: false`; `start()` is called from `applicationDidFinishLaunching`. It exposes:
 
 - `func checkForUpdates()` — calls `NSApp.activate(ignoringOtherApps: true)`
   and then `updater.checkForUpdates()`. The activation is mandatory: an
@@ -87,10 +87,11 @@ user default when set. That is the hook the end-to-end test uses to point a
 Debug build at a local feed. Release builds compile the delegate method away and
 always use `SUFeedURL`.
 
-**`PastefixApp.swift`** — the `AppDelegate` creates the `UpdaterController` in
-`applicationDidFinishLaunching` (Sparkle wants to start after launch, not in a
-property initialiser). `MenuBarExtra` gains a "Check for Updates…" button
-between "Settings…" and the divider, disabled when `!canCheckForUpdates`.
+**`PastefixApp.swift`** — the `AppDelegate` owns the `UpdaterController` as a
+stored property (the `MenuBarExtra` body reads it) and calls `start()` from
+`applicationDidFinishLaunching`, since Sparkle wants to start after launch.
+`MenuBarExtra` gains a "Check for Updates…" button between "Settings…" and the
+divider, disabled when `!canCheckForUpdates`.
 
 **`SettingsView.swift`** — the General tab's form gains a section at the
 bottom: an "Automatically check for updates" `Toggle`, a "Check Now" button,
@@ -140,7 +141,7 @@ Preconditions, checked up front:
 - Notary keychain profile `pastefix-notary` exists
   (`xcrun notarytool history --keychain-profile pastefix-notary`).
 - `SUPublicEDKey` in `Info.plist` is non-empty, and the matching private key is
-  in the keychain (`sign_update` succeeds on a scratch file).
+  in the keychain (`generate_keys -p` prints exactly the `SUPublicEDKey` value).
 
 Steps:
 
@@ -151,7 +152,10 @@ Steps:
    temp directory (universal, `-destination 'generic/platform=macOS'`:
    `minimumSystemVersion` 14.6 includes Intel Macs).
 3. `xcodebuild -exportArchive` with `scripts/ExportOptions.plist` (method
-   `developer-id`, `signingStyle manual`, `teamID RMKGLPG4K4`).
+   `developer-id`, `signingStyle manual`, `teamID RMKGLPG4K4`). The script then
+   asserts the exported bundle's `SUFeedURL` and `SUPublicEDKey` match the
+   values baked into the release, and that its entitlements carry
+   `allow-jit` (and not `app-sandbox`), before proceeding.
 4. `xcrun notarytool submit --wait` on a zip of the app; on success `xcrun
    stapler staple` the app. On `Invalid`, print the log
    (`notarytool log`) and stop.
@@ -163,8 +167,9 @@ Steps:
    DMG, capture `sparkle:edSignature` and `length`.
 7. Compose the appcast `<item>`: title `Version <version>`, `pubDate` now in
    RFC 822, `sparkle:version` = BUILD, `sparkle:shortVersionString` = version,
-   `sparkle:minimumSystemVersion` = the target's `MACOSX_DEPLOYMENT_TARGET`
-   (14.6), `sparkle:releaseNotesLink` = the GitHub release URL, and the
+   `sparkle:minimumSystemVersion` = read from the exported app's
+   `LSMinimumSystemVersion` (14.6 today), `sparkle:releaseNotesLink` = the
+   GitHub release URL, and the
    `<enclosure>` with the release asset URL
    `https://github.com/bnaylor/pastefix/releases/download/v<version>/Pastefix-<version>.dmg`,
    `length`, `type="application/octet-stream"`, `sparkle:edSignature`.

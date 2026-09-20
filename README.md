@@ -8,6 +8,8 @@ PastefixCore is a macOS clipboard transform engine that unifies native Swift tra
 
 Pastefix runs as a macOS menu-bar app. A clipboard icon sits in the menu bar; pressing **⌘⇧C** summons a floating panel over whatever app is in the foreground (no Space-switch, no Dock icon).
 
+**Install:** download the latest notarized DMG from [GitHub Releases](https://github.com/bnaylor/pastefix/releases), drag Pastefix to Applications. The app keeps itself up to date via Sparkle.
+
 **Core flow:**
 
 1. **Summon** — ⌘⇧C snapshots the clipboard and opens the editor panel.
