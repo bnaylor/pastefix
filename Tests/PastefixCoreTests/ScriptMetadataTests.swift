@@ -55,4 +55,11 @@ import Testing
         #expect(ScriptMetadata.parse("# pastefix: kinds = bogus").kinds == nil)
         #expect(ScriptMetadata.parse("# pastefix: name = X").kinds == nil)
     }
+
+    @Test func parsesCategory() {
+        #expect(ScriptMetadata.parse("# pastefix: category = Text").category == "Text")
+        #expect(ScriptMetadata.parse("# pastefix: category =   Spaced Out  ").category == "Spaced Out")
+        #expect(ScriptMetadata.parse("# pastefix: category =").category == nil)
+        #expect(ScriptMetadata.parse("# pastefix: name = X").category == nil)
+    }
 }

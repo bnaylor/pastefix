@@ -5,6 +5,7 @@ public struct Transliterate: Transformer {
     public let name = "Transliterate to ASCII"
     public let requiresRichInput = false
     public let source: TransformerSource = .builtin
+    public let category: String? = TransformCategory.characters
 
     public init() {}
 

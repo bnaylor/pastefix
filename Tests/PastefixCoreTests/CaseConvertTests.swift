@@ -53,6 +53,7 @@ import Testing
             #expect(t.name == name)
             #expect(t.applicableKinds == nil)
             #expect(t.source == .builtin)
+            #expect(t.category == TransformCategory.case)
             #expect(try await t.apply(.init(text: "a b")) == expected)
         }
     }

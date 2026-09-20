@@ -11,6 +11,7 @@ public struct CaseConvert: Transformer {
     public let requiresRichInput = false
     public let source: TransformerSource = .builtin
     public let applicableKinds: Set<ContentKind>? = nil
+    public let category: String? = TransformCategory.case
     public let style: Style
 
     public init(style: Style) {

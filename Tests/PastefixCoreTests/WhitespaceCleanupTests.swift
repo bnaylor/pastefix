@@ -23,5 +23,6 @@ import Testing
         #expect(subject.id == "builtin.whitespace")
         #expect(subject.requiresRichInput == false)
         #expect(subject.source == .builtin)
+        #expect(subject.category == TransformCategory.layout)
     }
 }

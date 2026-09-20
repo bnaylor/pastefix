@@ -65,6 +65,7 @@ private struct StubTitleFetcher: TitleFetcher {
         #expect(t.id == "builtin.markdownlink")
         #expect(t.name == "URL → Markdown Link")
         #expect(t.applicableKinds == [.url])
+        #expect(t.category == TransformCategory.urls)
     }
     @Test func schemelessURLGetsSchemeInTarget() {
         let u = URL(string: "http://www.example.com/p")!

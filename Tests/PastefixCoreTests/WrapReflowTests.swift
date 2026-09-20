@@ -25,4 +25,11 @@ import Testing
         let out = try await subject.apply(.init(text: "supercalifragilistic ok"))
         #expect(out == "supercalifragilistic\nok")
     }
+
+    @Test func metadata() {
+        let subject = WrapReflow(width: 80)
+        #expect(subject.id == "builtin.wrapreflow")
+        #expect(subject.source == .builtin)
+        #expect(subject.category == TransformCategory.layout)
+    }
 }

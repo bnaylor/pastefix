@@ -5,6 +5,7 @@ public struct WhitespaceCleanup: Transformer {
     public let name = "Whitespace Cleanup"
     public let requiresRichInput = false
     public let source: TransformerSource = .builtin
+    public let category: String? = TransformCategory.layout
 
     public init() {}
 
