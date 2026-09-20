@@ -10,15 +10,29 @@
 		44988CDF3032B5AE0042BEFC /* PastefixCore in Frameworks */ = {isa = PBXBuildFile; productRef = 44988CDE3032B5AE0042BEFC /* PastefixCore */; };
 		44988CE4303A4AD40042BEFC /* PastefixAppCore in Frameworks */ = {isa = PBXBuildFile; productRef = 44988CE3303A4AD40042BEFC /* PastefixAppCore */; };
 		44C9835C303BE8DF00BB563C /* KeyboardShortcuts in Frameworks */ = {isa = PBXBuildFile; productRef = 44C9835B303BE8DF00BB563C /* KeyboardShortcuts */; };
+		44C98360303C000000BB563C /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = 44C98361303C000000BB563C /* Sparkle */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
 		44988CCF3032B43A0042BEFC /* Pastefix.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Pastefix.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		44C98363303C000000BB563C /* Exceptions for "Pastefix" folder in "Pastefix" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 44988CCE3032B43A0042BEFC /* Pastefix */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		44988CD13032B43A0042BEFC /* Pastefix */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				44C98363303C000000BB563C /* Exceptions for "Pastefix" folder in "Pastefix" target */,
+			);
 			path = Pastefix;
 			sourceTree = "<group>";
 		};
@@ -32,6 +46,7 @@
 				44988CDF3032B5AE0042BEFC /* PastefixCore in Frameworks */,
 				44988CE4303A4AD40042BEFC /* PastefixAppCore in Frameworks */,
 				44C9835C303BE8DF00BB563C /* KeyboardShortcuts in Frameworks */,
+				44C98360303C000000BB563C /* Sparkle in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -85,6 +100,7 @@
 				44988CDE3032B5AE0042BEFC /* PastefixCore */,
 				44988CE3303A4AD40042BEFC /* PastefixAppCore */,
 				44C9835B303BE8DF00BB563C /* KeyboardShortcuts */,
+				44C98361303C000000BB563C /* Sparkle */,
 			);
 			productName = Pastefix;
 			productReference = 44988CCF3032B43A0042BEFC /* Pastefix.app */;
@@ -117,6 +133,7 @@
 			packageReferences = (
 				44988CDD3032B5AE0042BEFC /* XCLocalSwiftPackageReference "../../pastefix" */,
 				44C9835A303BE8DF00BB563C /* XCRemoteSwiftPackageReference "KeyboardShortcuts" */,
+				44C98362303C000000BB563C /* XCRemoteSwiftPackageReference "Sparkle" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 44988CD03032B43A0042BEFC /* Products */;
@@ -272,13 +289,16 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = Pastefix/Pastefix.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
 				ENABLE_APP_SANDBOX = NO;
+				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Pastefix/Info.plist;
 				INFOPLIST_KEY_LSUIElement = YES;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -304,13 +324,16 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = Pastefix/Pastefix.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
 				ENABLE_APP_SANDBOX = NO;
+				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Pastefix/Info.plist;
 				INFOPLIST_KEY_LSUIElement = YES;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -370,6 +393,14 @@
 				minimumVersion = 3.0.1;
 			};
 		};
+		44C98362303C000000BB563C /* XCRemoteSwiftPackageReference "Sparkle" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/sparkle-project/Sparkle";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 2.7.0;
+			};
+		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -386,6 +417,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 44C9835A303BE8DF00BB563C /* XCRemoteSwiftPackageReference "KeyboardShortcuts" */;
 			productName = KeyboardShortcuts;
+		};
+		44C98361303C000000BB563C /* Sparkle */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 44C98362303C000000BB563C /* XCRemoteSwiftPackageReference "Sparkle" */;
+			productName = Sparkle;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

@@ -14,14 +14,25 @@ struct PastefixApp: App {
             Button("Summon Pastefix") { delegate.summon() }
             SettingsLink { Text("Settings…") }
                 .keyboardShortcut(",", modifiers: .command)
+            CheckForUpdatesButton(updater: delegate.updater)
             Divider()
             Button("Quit Pastefix") { NSApplication.shared.terminate(nil) }
                 .keyboardShortcut("q", modifiers: .command)
         }
 
         Settings {
-            SettingsView(settings: delegate.settings, model: delegate.model)
+            SettingsView(settings: delegate.settings, model: delegate.model, updater: delegate.updater)
         }
+    }
+}
+
+/// Menu item that disables itself while a check is already running.
+struct CheckForUpdatesButton: View {
+    @ObservedObject var updater: UpdaterController
+
+    var body: some View {
+        Button("Check for Updates…") { updater.checkForUpdates() }
+            .disabled(!updater.canCheckForUpdates)
     }
 }
 
@@ -35,12 +46,16 @@ struct PastefixApp: App {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private(set) var settings = SettingsStore()
     private(set) lazy var model = AppModel(settings: settings)
+    let updater = UpdaterController()
     private var panel: PanelController?
     private var scriptWatcher: ScriptWatcher?
     private var lastSummonAt: Date = .distantPast
     private var cancellables = Set<AnyCancellable>()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Sparkle: scheduled daily checks start here, after launch, per Sparkle's guidance.
+        updater.start()
+
         // Build the panel once, hosting PanelView against the single AppModel.
         let hostingView = NSHostingView(rootView: PanelView(model: model))
         let panel = PanelController(rootView: hostingView)

@@ -8,6 +8,8 @@ PastefixCore is a macOS clipboard transform engine that unifies native Swift tra
 
 Pastefix runs as a macOS menu-bar app. A clipboard icon sits in the menu bar; pressing **⌘⇧C** summons a floating panel over whatever app is in the foreground (no Space-switch, no Dock icon).
 
+**Install:** download the latest notarized DMG from [GitHub Releases](https://github.com/bnaylor/pastefix/releases), drag Pastefix to Applications. The app keeps itself up to date via Sparkle.
+
 **Core flow:**
 
 1. **Summon** — ⌘⇧C snapshots the clipboard and opens the editor panel.
@@ -26,7 +28,9 @@ Pastefix includes a Settings window (⌘, or "Settings…" in the menu) with thr
 
 All settings persist via `UserDefaults`. User scripts are watched for changes; editing a script under `~/.config/pastefix/scripts/` updates the palette instantly without relaunch.
 
-**Forthcoming (Plan 2c):** auto-update delivery via Sparkle.
+### Updates (Plan 2c)
+
+Pastefix checks for updates once a day via [Sparkle](https://sparkle-project.org) and asks before installing anything. **Check for Updates…** in the menu bar runs a check on demand; Settings → General has an **Automatically check for updates** toggle, a **Check Now** button, and the installed version. Updates are EdDSA-signed and Developer-ID-verified; the feed is `https://bnaylor.github.io/pastefix/appcast.xml`. Maintainers: see [docs/RELEASING.md](docs/RELEASING.md).
 
 ## Overview
 
