@@ -57,7 +57,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         updater.start()
 
         // Build the panel once, hosting PanelView against the single AppModel.
-        let hostingView = NSHostingView(rootView: PanelView(model: model))
+        let hostingView = NSHostingView(rootView: PanelView(model: model, settings: settings))
         let panel = PanelController(rootView: hostingView)
         self.panel = panel
 
