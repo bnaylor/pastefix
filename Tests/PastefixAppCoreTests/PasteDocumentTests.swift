@@ -1,4 +1,5 @@
 import Testing
+import PastefixCore
 @testable import PastefixAppCore
 
 @Suite struct PasteDocumentTests {
@@ -61,5 +62,20 @@ import Testing
         d.refresh(origin: ClipboardSnapshot(plainText: "fresh", richRTFD: nil))
         #expect(d.working == "fresh")
         #expect(d.canUndo == false)
+    }
+
+    @Test func detectedKindsTrackWorkingText() {
+        var d = doc("https://example.com")
+        #expect(d.detectedKinds == [.url])
+        d.pushState("{\"a\":1}")
+        #expect(d.detectedKinds == [.json])
+        d.undo()
+        #expect(d.detectedKinds == [.url])
+        d.redo()
+        #expect(d.detectedKinds == [.json])
+        d.setWorking("plain")
+        #expect(d.detectedKinds == [])
+        d.refresh(origin: ClipboardSnapshot(plainText: "www.example.com", richRTFD: nil))
+        #expect(d.detectedKinds == [.url])
     }
 }
