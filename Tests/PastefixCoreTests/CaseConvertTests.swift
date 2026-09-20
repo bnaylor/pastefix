@@ -37,20 +37,23 @@ import Testing
     @Test func lineWithoutTokensUnchanged() {
         #expect(CaseConvert.convert("--- ***", style: .snake) == "--- ***")
     }
+    @Test func crlfLineEndingsPreserved() {
+        #expect(CaseConvert.convert("foo bar\r\nbaz qux\r\n---\r\n", style: .snake) == "foo_bar\r\nbaz_qux\r\n---\r\n")
+    }
     @Test func metadata() async throws {
-        let cases: [(CaseConvert.Style, String, String)] = [
-            (.camel, "builtin.case.camel", "camelCase"),
-            (.snake, "builtin.case.snake", "snake_case"),
-            (.kebab, "builtin.case.kebab", "kebab-case"),
-            (.constant, "builtin.case.constant", "CONSTANT_CASE"),
+        let cases: [(CaseConvert.Style, String, String, String)] = [
+            (.camel, "builtin.case.camel", "camelCase", "aB"),
+            (.snake, "builtin.case.snake", "snake_case", "a_b"),
+            (.kebab, "builtin.case.kebab", "kebab-case", "a-b"),
+            (.constant, "builtin.case.constant", "CONSTANT_CASE", "A_B"),
         ]
-        for (style, id, name) in cases {
+        for (style, id, name, expected) in cases {
             let t = CaseConvert(style: style)
             #expect(t.id == id)
             #expect(t.name == name)
             #expect(t.applicableKinds == nil)
             #expect(t.source == .builtin)
-            #expect(try await t.apply(.init(text: "a b")).isEmpty == false)
+            #expect(try await t.apply(.init(text: "a b")) == expected)
         }
     }
 }

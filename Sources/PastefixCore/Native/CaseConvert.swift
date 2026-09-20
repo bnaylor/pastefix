@@ -30,7 +30,7 @@ public struct CaseConvert: Transformer {
     static func convert(_ text: String, style: Style) -> String {
         text.components(separatedBy: "\n").map { line -> String in
             let lead = line.prefix { $0 == " " || $0 == "\t" }
-            let trail = line.reversed().prefix { $0 == " " || $0 == "\t" }
+            let trail = line.reversed().prefix { $0 == " " || $0 == "\t" || $0 == "\r" }
             let core = line.dropFirst(lead.count).dropLast(trail.count)
             let ws = words(in: String(core))
             guard !ws.isEmpty else { return line }
