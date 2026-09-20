@@ -15,7 +15,8 @@ Pastefix runs as a macOS menu-bar app. A clipboard icon sits in the menu bar; pr
 1. **Summon** — ⌘⇧C snapshots the clipboard and opens the editor panel.
 2. **Transform** — a horizontal palette of buttons along the bottom of the panel lists every enabled transformer (built-ins + user scripts). Click one to apply it; the monospaced editor updates instantly. An error banner appears in red if a transformer fails.
 
-**Content detection.** When the buffer contains a URL or is valid JSON, a `Detected: URL` badge appears beside the palette and transforms that apply to that kind are listed first. Nothing is hidden; your enable/reorder settings still apply.
+   **Content detection.** When the buffer contains a URL or is valid JSON, a `Detected: URL` badge appears beside the palette and transforms that apply to that kind are listed first. Nothing is hidden; your enable/reorder settings still apply.
+
 3. **Edit** — the editor is freely editable. Undo/Redo/Refresh controls are in the toolbar.
 4. **Save (⌘S)** — writes the working text back to the clipboard and dismisses the panel.
 5. **Cancel (Esc)** — discards changes and dismisses the panel.
@@ -53,8 +54,8 @@ Each is a zero-configuration `Transformer` conforming to the protocol:
 - **Transliterate to ASCII:** Converts smart punctuation, diacritics, and non-ASCII characters to ASCII equivalents (e.g., é → e, "curly quotes" → straight quotes, emoji dropped).
 - **Wrap & Reflow:** Rewraps text to a configurable width (default 400 columns), respecting paragraph breaks.
 - **Whitespace Cleanup:** Trims leading/trailing spaces and tabs from each line; collapses repeated blank lines.
-- **Clean URL Tracking:** Removes tracking parameters (`utm_*`, `fbclid`, `gclid`, `si`, `mc_cid`, … ) from every URL in the text; other parameters, fragments, and surrounding text are untouched. HTML-escaped `&amp;` query separators (as found in links copied from email or HTML source) are normalised to `&` before stripping.
-- **URL → Markdown Link:** Replaces each URL with `[Page Title](url)`. The title is fetched over the network with a 3-second timeout and a 256 KB cap; if that fails the link text is `host/path`. URLs already inside Markdown links are skipped. Up to 16 unique URLs per apply are fetched; any beyond that fall back to `host/path` without a network call. The link target always includes a scheme, so `www.example.com` becomes `[…](http://www.example.com)`.
+- **Clean URL Tracking:** Removes tracking parameters (`utm_*`, `fbclid`, `gclid`, `si`, `mc_cid`, … ) from every URL in the text; other parameters, fragments, and surrounding text are untouched. HTML-escaped `&amp;` query separators (as found in links copied from email or HTML source) are normalised to `&` before stripping, which counts as a change on its own.
+- **URL → Markdown Link:** Replaces each URL with `[Page Title](url)`. The title is fetched over the network with a 3-second timeout and a 256 KB cap; if that fails the link text is `host/path`. URLs already inside Markdown links are skipped. Up to 16 unique URLs per apply are fetched; any beyond that fall back to `host/path` without a network call. The link target always includes a scheme, so `www.example.com` becomes `[…](http://www.example.com)`. Titles are always fetched over `https`, even for an `http://` link (App Transport Security blocks cleartext, so a plain-`http` fetch could only ever fail) — the link target keeps the scheme the text had. Requests carry a `Pastefix` User-Agent and no cookies, and local or private hosts (`localhost`, `*.local`, loopback, and the RFC 1918 ranges) are never contacted: those links just get the `host/path` fallback.
 - **camelCase / snake_case / kebab-case / CONSTANT_CASE:** Rewrites each line as one identifier phrase. Splits on separators and camel boundaries (`HTTPServerError` → `http_server_error`), keeps digits with their word (`utf8Decoder`), preserves indentation and non-ASCII letters.
 
 ## User Scripts
