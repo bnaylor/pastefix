@@ -44,9 +44,18 @@ final class AppModel: ObservableObject {
         document = PasteDocument(origin: ClipboardBridge.snapshot())
     }
 
+    /// Palette list: enabled transforms in the user's order, with those applicable to the
+    /// detected content first. Settings uses `allTransformers`, which detection never reorders.
     func enabledTransformers() -> [any Transformer] {
         guard let document else { return [] }
-        return transformers.filter { TransformCoordinator.isEnabled($0, for: document) }
+        let enabled = transformers.filter { TransformCoordinator.isEnabled($0, for: document) }
+        return PaletteOrdering.order(enabled, for: document.detectedKinds)
+    }
+
+    /// "URL", "URL, JSON", or nil when nothing was detected.
+    var detectedSummary: String? {
+        guard let kinds = document?.detectedKinds, !kinds.isEmpty else { return nil }
+        return ContentKind.allCases.filter(kinds.contains).map(\.displayName).joined(separator: ", ")
     }
 
     func apply(_ transformer: any Transformer) {

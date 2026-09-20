@@ -60,6 +60,13 @@ struct PanelView: View {
     private var palette: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
+                if let summary = model.detectedSummary {
+                    Text("Detected: \(summary)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .padding(.trailing, 4)
+                        .accessibilityLabel("Detected content: \(summary)")
+                }
                 ForEach(model.enabledTransformers(), id: \.id) { transformer in
                     Button(transformer.name) { model.apply(transformer) }
                         .buttonStyle(.bordered)
