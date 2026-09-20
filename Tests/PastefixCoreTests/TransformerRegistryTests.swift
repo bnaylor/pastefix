@@ -14,7 +14,11 @@ import Foundation
         let dir = try makeTempDir()
         let reg = TransformerRegistry(config: .init(scriptsDirectory: dir, wrapWidth: 400))
         let ids = reg.load().map(\.id)
-        #expect(ids == ["builtin.richtoplain", "builtin.transliterate", "builtin.wrapreflow", "builtin.whitespace"])
+        #expect(ids == [
+            "builtin.richtoplain", "builtin.transliterate", "builtin.wrapreflow", "builtin.whitespace",
+            "builtin.urlclean", "builtin.markdownlink",
+            "builtin.case.camel", "builtin.case.snake", "builtin.case.kebab", "builtin.case.constant",
+        ])
     }
 
     @Test func discoversAndOrdersScriptsAmongBuiltins() throws {
@@ -43,7 +47,7 @@ import Foundation
         let dir = FileManager.default.temporaryDirectory
             .appendingPathComponent("does-not-exist-\(UUID().uuidString)")
         let reg = TransformerRegistry(config: .init(scriptsDirectory: dir, wrapWidth: 80))
-        #expect(reg.load().count == 4)   // built-ins only, no crash
+        #expect(reg.load().count == 10)   // built-ins only, no crash
     }
 
     @Test func scriptKindsSurfaceAsApplicableKinds() throws {
