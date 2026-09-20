@@ -34,11 +34,12 @@ public struct URLSessionTitleFetcher: TitleFetcher {
                   (200..<300).contains(http.statusCode),
                   (http.mimeType ?? "").lowercased().contains("html") else { return nil }
             var data = Data()
+            var scan = TitleScan()
             for try await byte in bytes {
                 data.append(byte)
                 // The title is in <head>; stop the moment it closes rather than reading
                 // the whole (possibly 256 KB) body.
-                if Self.endsWithCloseTitle(data) { break }
+                if scan.isComplete(data) { break }
                 if data.count >= maxBytes { break }
             }
             return Self.parseTitle(data: data)
@@ -47,19 +48,42 @@ public struct URLSessionTitleFetcher: TitleFetcher {
         }
     }
 
+    private static let openTitleBytes = Array("<title".utf8)
     private static let closeTitleBytes = Array("</title>".utf8)
 
+    /// True when the last bytes of `data` are `<title` (ASCII case-insensitive).
+    static func endsWithOpenTitle(_ data: Data) -> Bool { endsWith(data, openTitleBytes) }
+
     /// True when the last bytes of `data` are `</title>` (ASCII case-insensitive).
-    static func endsWithCloseTitle(_ data: Data) -> Bool {
-        guard data.count >= closeTitleBytes.count else { return false }
-        var i = data.index(data.endIndex, offsetBy: -closeTitleBytes.count)
-        for expected in closeTitleBytes {
+    static func endsWithCloseTitle(_ data: Data) -> Bool { endsWith(data, closeTitleBytes) }
+
+    private static func endsWith(_ data: Data, _ suffix: [UInt8]) -> Bool {
+        guard data.count >= suffix.count else { return false }
+        var i = data.index(data.endIndex, offsetBy: -suffix.count)
+        for expected in suffix {
             let byte = data[i]
             let lowered = (byte >= 0x41 && byte <= 0x5A) ? byte + 0x20 : byte
             if lowered != expected { return false }
             i = data.index(after: i)
         }
         return true
+    }
+
+    /// Stop condition for the streaming read: complete once the buffer holds an opening
+    /// `<title` **and then** a closing `</title>`. Waiting for the opening tag matters —
+    /// a bare `</title>` can appear first inside a comment or a script string, and
+    /// stopping there would truncate the body before the real title ever arrived.
+    struct TitleScan {
+        private var sawOpenTitle = false
+
+        /// Call once after each appended byte.
+        mutating func isComplete(_ data: Data) -> Bool {
+            guard sawOpenTitle else {
+                sawOpenTitle = endsWithOpenTitle(data)
+                return false
+            }
+            return endsWithCloseTitle(data)
+        }
     }
 
     /// The URL actually requested. App Transport Security blocks cleartext, so an `http`
@@ -78,9 +102,11 @@ public struct URLSessionTitleFetcher: TitleFetcher {
     /// transform is not a licence to probe the user's LAN. Unfetchable URLs get the
     /// `host/path` fallback with no request made.
     ///
-    /// Address literals go through `inet_pton`, not a hand-rolled dotted-quad parse, so
-    /// alternate spellings (`0x7f.0.0.1`, `2130706433`, `::ffff:127.0.0.1`, `[::1]`) either
-    /// reduce to the same bytes the range checks see or fail to parse as an address at all.
+    /// Address literals in any form `inet_pton` or `inet_aton` accepts — dotted quad,
+    /// 32-bit decimal (`2130706433`), hex or octal octets (`0x7f.0.0.1`, `0177.0.0.1`),
+    /// short `a.b` forms (`127.1`), and IPv6 including IPv4-mapped — are canonicalised to
+    /// their bytes and range-checked. Only a host that parses as neither is treated as a
+    /// hostname, and hostnames are not resolved (see below).
     ///
     /// Hostnames are **not** resolved before fetching, so a public name pointing at a
     /// private address still gets a request. That is deliberate: this is side-effect hygiene
@@ -92,16 +118,36 @@ public struct URLSessionTitleFetcher: TitleFetcher {
         if host.hasPrefix("["), host.hasSuffix("]") { host = String(host.dropFirst().dropLast()) }
         if host == "localhost" || host.hasSuffix(".local") || host.hasSuffix(".localhost") { return false }
 
-        var v4 = in_addr()
-        if host.withCString({ inet_pton(AF_INET, $0, &v4) }) == 1 {
-            let b = withUnsafeBytes(of: v4.s_addr) { Array($0) }   // network byte order
-            return !isPrivateIPv4((b[0], b[1], b[2], b[3]))
+        // `inet_pton` is strict; `inet_aton` also accepts the legacy spellings, every one of
+        // which `getaddrinfo` happily resolves (`http://2130706433/` reaches loopback). The
+        // two disagree on leading zeros — Darwin's `inet_pton` reads `0177` as decimal 177,
+        // `inet_aton` as octal 127 — so rather than bet on which reading the resolver will
+        // use, the host is blocked if *either* reading lands in private space.
+        var parsedAsIPv4 = false
+        var privateIPv4 = false
+        var strict = in_addr()
+        if host.withCString({ inet_pton(AF_INET, $0, &strict) }) == 1 {
+            parsedAsIPv4 = true
+            privateIPv4 = privateIPv4 || isPrivateIPv4(octets(of: strict))
         }
+        var legacy = in_addr()
+        if host.withCString({ inet_aton($0, &legacy) }) != 0 {
+            parsedAsIPv4 = true
+            privateIPv4 = privateIPv4 || isPrivateIPv4(octets(of: legacy))
+        }
+        if parsedAsIPv4 { return !privateIPv4 }
+
         var v6 = in6_addr()
         if host.withCString({ inet_pton(AF_INET6, $0, &v6) }) == 1 {
             return !isPrivateIPv6(withUnsafeBytes(of: v6) { Array($0) })
         }
         return true   // a hostname, not an address literal
+    }
+
+    /// The four octets of an `in_addr`, in network byte order.
+    private static func octets(of addr: in_addr) -> (UInt8, UInt8, UInt8, UInt8) {
+        let b = withUnsafeBytes(of: addr.s_addr) { Array($0) }
+        return (b[0], b[1], b[2], b[3])
     }
 
     /// Private, loopback, link-local, CGNAT, multicast and reserved IPv4 space.
@@ -244,6 +290,8 @@ public struct MarkdownLink: Transformer {
             }
             for await (url, title) in group {
                 if let title { titles[url] = title }
+                // Dead while maxConcurrentFetches == maxFetchedURLs (one batch drains it);
+                // kept so the group still refills if the concurrency cap is ever lowered.
                 if next < toFetch.count {
                     let url = toFetch[next]; next += 1
                     group.addTask { (url, await Self.fetchBounded(url, fetcher: fetcher, timeout: timeout)) }

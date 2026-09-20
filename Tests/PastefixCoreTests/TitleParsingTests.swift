@@ -51,4 +51,42 @@ import Foundation
         #expect(!URLSessionTitleFetcher.endsWithCloseTitle(Data("<title>Hi</title> more".utf8)))
         #expect(!URLSessionTitleFetcher.endsWithCloseTitle(Data("</tit".utf8)))
     }
+    @Test func openTitleSuffixDetectedCaseInsensitively() {
+        #expect(URLSessionTitleFetcher.endsWithOpenTitle(Data("<html><head><TITLE".utf8)))
+        #expect(URLSessionTitleFetcher.endsWithOpenTitle(Data("<title".utf8)))
+        #expect(!URLSessionTitleFetcher.endsWithOpenTitle(Data("</title".utf8)))
+        #expect(!URLSessionTitleFetcher.endsWithOpenTitle(Data("<tit".utf8)))
+        #expect(!URLSessionTitleFetcher.endsWithOpenTitle(Data("<title>".utf8)))
+    }
+
+    /// Feeds `html` a byte at a time and returns the prefix the streaming read would keep.
+    private func streamed(_ html: String) -> String {
+        var scan = URLSessionTitleFetcher.TitleScan()
+        var data = Data()
+        for byte in Array(html.utf8) {
+            data.append(byte)
+            if scan.isComplete(data) { break }
+        }
+        return String(data: data, encoding: .utf8) ?? ""
+    }
+
+    @Test func streamingStopsAtTheFirstRealTitle() {
+        #expect(streamed("<html><head><title>Real</title></head><body>lots more") ==
+                "<html><head><title>Real</title>")
+    }
+    @Test func streamingIgnoresACloseTagWithNoOpenTag() {
+        // A bare `</title>` in a comment must not truncate the body before the real title.
+        let html = "<!-- </title> --><title>Real</title>rest"
+        #expect(streamed(html) == "<!-- </title> --><title>Real</title>")
+        #expect(URLSessionTitleFetcher.parseTitle(data: Data(streamed(html).utf8)) == "Real")
+    }
+    @Test func streamingToleratesTitlebarBeforeTheRealTitle() {
+        let html = "<titlebar>x</titlebar><title>Real</title>rest"
+        #expect(streamed(html) == "<titlebar>x</titlebar><title>Real</title>")
+        #expect(URLSessionTitleFetcher.parseTitle(data: Data(streamed(html).utf8)) == "Real")
+    }
+    @Test func streamingReadsEverythingWhenThereIsNoTitle() {
+        #expect(streamed("<html><body>no title here</body></html>") ==
+                "<html><body>no title here</body></html>")
+    }
 }

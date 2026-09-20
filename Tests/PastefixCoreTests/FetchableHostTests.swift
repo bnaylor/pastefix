@@ -118,11 +118,29 @@ import Foundation
         #expect(fetchable("https://[::ffff:8.8.8.8]/a"))
     }
 
-    // MARK: alternate encodings the old dotted-quad parse would have missed
+    // MARK: legacy address spellings
 
-    @Test func alternateIPv4SpellingsDoNotBypassTheCheck() {
-        // inet_pton is strict about these forms, so they are hostnames, not addresses —
-        // the point is that they can no longer be *mistaken* for a public dotted quad.
+    @Test func legacyIPv4SpellingsDoNotBypassTheCheck() {
+        // `inet_pton` rejects all of these, but `getaddrinfo` resolves every one to
+        // 127.0.0.1, so treating them as hostnames would have handed the fetcher a
+        // loopback connection.
+        #expect(!fetchable("http://2130706433/"))     // 32-bit decimal
+        #expect(!fetchable("http://0x7f.0.0.1/"))     // hex first octet
+        #expect(!fetchable("http://127.1/"))          // two-part "a.b"
+        #expect(!fetchable("http://0177.0.0.1/"))     // octal first octet
+        #expect(fetchable("http://0x08080808/"))      // 8.8.8.8, still public
+    }
+    @Test func leadingZeroSpellingsBlockedUnderEitherReading() {
+        // Darwin's parsers disagree on leading zeros: inet_pton reads `0177` as decimal 177
+        // and `010` as decimal 10; inet_aton reads them as octal 127 and 8. Either reading
+        // landing in private space is enough to refuse the fetch.
+        #expect(!fetchable("http://0177.0.0.1/"))   // octal 127.0.0.1 per inet_aton
+        #expect(!fetchable("http://010.0.0.1/"))    // decimal 10.0.0.1 per inet_pton
+    }
+    @Test func ipv4MappedMetadataAddressIsBlocked() {
         #expect(!fetchable("http://[::ffff:169.254.169.254]/latest/meta-data/"))
+    }
+    @Test func numericLookingHostnamesAreStillHostnames() {
+        #expect(fetchable("https://1e100.net/a"))
     }
 }
