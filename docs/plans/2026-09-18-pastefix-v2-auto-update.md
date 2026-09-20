@@ -1,6 +1,6 @@
 # Pastefix v2 Auto-update & Release Pipeline (Plan 2c) — Implementation Plan
 
-> ## 🟡 STATUS: IN REVIEW — implemented on `feat/auto-update` 2026-09-19/20; [PR #5](https://github.com/bnaylor/pastefix/pull/5) open. All tasks done, including the notarized dry run (2026-09-20).
+> ## ✅ STATUS: COMPLETE — merged to `main` as [PR #5](https://github.com/bnaylor/pastefix/pull/5) (`0cc1082`), 2026-09-20. All tasks done, including the notarized dry run.
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 >

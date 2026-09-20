@@ -184,7 +184,7 @@ When you **significantly expand the project** — a new target, subsystem, scrip
 | Transform Engine | `PastefixCore` | ✅ merged, PR #1 (`9fc68ee`) |
 | 2a — App Core | menu-bar app, hotkey, panel | ✅ merged, PR #2 (`12b3cdd`) |
 | 2b — Settings & Prefs | Settings window, rebindable hotkey, live reload | ✅ merged, PR #3 (`4380489`) + 5 follow-up fixes |
-| 2c — Auto-update | Sparkle, hardened runtime, release script | 🟡 in review, [PR #5](https://github.com/bnaylor/pastefix/pull/5) |
+| 2c — Auto-update | Sparkle, hardened runtime, release script | ✅ merged, [PR #5](https://github.com/bnaylor/pastefix/pull/5) (`0cc1082`) |
 
 Historical reference material for the 2007 and 2019 incarnations is vendored under [`docs/inputs/legacy/`](docs/inputs/legacy/).
 
