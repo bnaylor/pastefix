@@ -18,4 +18,11 @@ import Foundation
         let bytes: [UInt8] = Array("<title>caf".utf8) + [0xE9] + Array("</title>".utf8)   // é in ISO-8859-1
         #expect(URLSessionTitleFetcher.parseTitle(data: Data(bytes)) == "café")
     }
+    @Test func doubleEncodedAmpersandDecodesOnce() { #expect(URLSessionTitleFetcher.decodeEntities("&amp;lt;") == "&lt;") }
+    @Test func uppercaseHexEntity() { #expect(URLSessionTitleFetcher.decodeEntities("&#X2014;") == "—") }
+    @Test func utf8TruncatedMidCharacterStillDecodesAsUTF8() {
+        var bytes = Array("<title>café — page</title><p>".utf8)
+        bytes.append(contentsOf: [0xE2, 0x80])   // first two bytes of a 3-byte sequence, cut by the cap
+        #expect(URLSessionTitleFetcher.parseTitle(data: Data(bytes)) == "café — page")
+    }
 }

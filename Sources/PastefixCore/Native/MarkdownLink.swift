@@ -21,7 +21,7 @@ public struct URLSessionTitleFetcher: TitleFetcher {
         config.timeoutIntervalForRequest = timeout
         config.timeoutIntervalForResource = timeout
         let session = URLSession(configuration: config)
-        defer { session.finishTasksAndInvalidate() }
+        defer { session.invalidateAndCancel() }
         do {
             let (bytes, response) = try await session.bytes(for: request)
             guard let http = response as? HTTPURLResponse,
@@ -38,8 +38,18 @@ public struct URLSessionTitleFetcher: TitleFetcher {
         }
     }
 
+    /// Decodes a byte-capped HTML buffer as UTF-8, retrying after dropping up to 3 trailing
+    /// bytes in case the cap severed a multi-byte sequence, before falling back to Latin-1.
+    static func decodeHTML(_ data: Data) -> String {
+        if let s = String(data: data, encoding: .utf8) { return s }
+        for drop in 1...3 where data.count > drop {
+            if let s = String(data: data.dropLast(drop), encoding: .utf8) { return s }
+        }
+        return String(data: data, encoding: .isoLatin1) ?? ""
+    }
+
     static func parseTitle(data: Data) -> String? {
-        let html = String(data: data, encoding: .utf8) ?? String(data: data, encoding: .isoLatin1) ?? ""
+        let html = decodeHTML(data)
         guard let open = html.range(of: "<title[^>]*>", options: [.regularExpression, .caseInsensitive]),
               let close = html.range(of: "</title>", options: .caseInsensitive, range: open.upperBound..<html.endIndex)
         else { return nil }
@@ -52,7 +62,8 @@ public struct URLSessionTitleFetcher: TitleFetcher {
         var out = s
         // Numeric references first so "&amp;#39;" style double-encoding isn't mis-decoded.
         for pattern in ["&#x([0-9A-Fa-f]+);", "&#([0-9]+);"] {
-            guard let re = try? NSRegularExpression(pattern: pattern) else { continue }
+            let options: NSRegularExpression.Options = pattern.contains("x") ? [.caseInsensitive] : []
+            guard let re = try? NSRegularExpression(pattern: pattern, options: options) else { continue }
             let ns = out as NSString
             var result = out
             for m in re.matches(in: out, range: NSRange(location: 0, length: ns.length)).reversed() {
@@ -64,7 +75,10 @@ public struct URLSessionTitleFetcher: TitleFetcher {
             }
             out = result
         }
-        let named = ["&lt;": "<", "&gt;": ">", "&quot;": "\"", "&apos;": "'", "&nbsp;": " ", "&amp;": "&"]
+        // Named references in a fixed order, with "&amp;" last, so "&amp;lt;" decodes to the
+        // literal text "&lt;" rather than "<" — Dictionary iteration order would make this
+        // nondeterministic.
+        let named: [(String, String)] = [("&lt;", "<"), ("&gt;", ">"), ("&quot;", "\""), ("&apos;", "'"), ("&nbsp;", " "), ("&amp;", "&")]
         for (k, v) in named { out = out.replacingOccurrences(of: k, with: v) }
         return out
     }
@@ -82,6 +96,10 @@ public struct MarkdownLink: Transformer {
     private let fetcher: any TitleFetcher
     private let fetchTimeout: TimeInterval
     private static let maxConcurrentFetches = 8
+    /// Caps total wall-clock time: worst case is ceil(maxFetchedURLs / maxConcurrentFetches)
+    /// batches, each bounded by fetchTimeout. Any URL beyond this count falls back to
+    /// `host/path` without ever being fetched.
+    private static let maxFetchedURLs = 16
 
     public init(fetcher: any TitleFetcher = URLSessionTitleFetcher(), fetchTimeout: TimeInterval = 4) {
         self.fetcher = fetcher
@@ -94,20 +112,21 @@ public struct MarkdownLink: Transformer {
         var unique: [URL] = []
         var seen = Set<URL>()
         for c in candidates where seen.insert(c.url).inserted { unique.append(c.url) }
+        let toFetch = Array(unique.prefix(Self.maxFetchedURLs))
 
         let fetcher = self.fetcher
         let timeout = self.fetchTimeout
         var titles: [URL: String] = [:]
         await withTaskGroup(of: (URL, String?).self) { group in
             var next = 0
-            while next < unique.count, next < Self.maxConcurrentFetches {
-                let url = unique[next]; next += 1
+            while next < toFetch.count, next < Self.maxConcurrentFetches {
+                let url = toFetch[next]; next += 1
                 group.addTask { (url, await Self.fetchBounded(url, fetcher: fetcher, timeout: timeout)) }
             }
             for await (url, title) in group {
                 if let title { titles[url] = title }
-                if next < unique.count {
-                    let url = unique[next]; next += 1
+                if next < toFetch.count {
+                    let url = toFetch[next]; next += 1
                     group.addTask { (url, await Self.fetchBounded(url, fetcher: fetcher, timeout: timeout)) }
                 }
             }
@@ -115,7 +134,12 @@ public struct MarkdownLink: Transformer {
         return Self.render(input.text, titles: titles)
     }
 
-    /// Races the fetcher against a sleep so a hung fetcher cannot hang the app.
+    /// Races the fetcher against a sleep and returns whichever finishes first. The bound is
+    /// hard only for fetchers that honor cancellation: `withTaskGroup` still awaits the losing
+    /// child before returning, so a fetcher that ignores `Task.isCancelled`/cancellation can
+    /// keep running past `timeout` (it just can't delay this function's result).
+    /// `URLSessionTitleFetcher` does honor cancellation and is separately capped by its own
+    /// 3s `timeout`/`timeoutIntervalForResource`, so in practice it returns promptly either way.
     static func fetchBounded(_ url: URL, fetcher: any TitleFetcher, timeout: TimeInterval) async -> String? {
         await withTaskGroup(of: String?.self) { group in
             group.addTask { await fetcher.title(for: url) }
@@ -148,9 +172,12 @@ public struct MarkdownLink: Transformer {
         var out = text
         for found in linkable(in: text).reversed() {
             let title = (titles[found.url] ?? fallbackTitle(for: found.url))
+                .replacingOccurrences(of: "\\", with: "\\\\")
                 .replacingOccurrences(of: "[", with: "\\[")
                 .replacingOccurrences(of: "]", with: "\\]")
-            let target = String(found.original)
+            // `found.url.absoluteString`, not `found.original`: schemeless input like
+            // "www.example.com" must still render with the scheme URLFinder detected.
+            let target = found.url.absoluteString
                 .replacingOccurrences(of: "(", with: "%28")
                 .replacingOccurrences(of: ")", with: "%29")
             out.replaceSubrange(found.range, with: "[\(title)](\(target))")

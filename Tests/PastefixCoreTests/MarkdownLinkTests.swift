@@ -3,9 +3,9 @@ import Foundation
 @testable import PastefixCore
 
 /// Offline fetcher: returns canned titles; optional delay; records calls.
-actor CallLog { var urls: [URL] = []; func add(_ u: URL) { urls.append(u) } }
+private actor CallLog { var urls: [URL] = []; func add(_ u: URL) { urls.append(u) } }
 
-struct StubTitleFetcher: TitleFetcher {
+private struct StubTitleFetcher: TitleFetcher {
     var titles: [String: String] = [:]
     var delay: Duration = .zero
     var log = CallLog()
@@ -65,5 +65,24 @@ struct StubTitleFetcher: TitleFetcher {
         #expect(t.id == "builtin.markdownlink")
         #expect(t.name == "URL → Markdown Link")
         #expect(t.applicableKinds == [.url])
+    }
+    @Test func schemelessURLGetsSchemeInTarget() {
+        let u = URL(string: "http://www.example.com/p")!
+        #expect(MarkdownLink.render("see www.example.com/p", titles: [u: "Ex"]) == "see [Ex](http://www.example.com/p)")
+    }
+    @Test func escapesBackslashBeforeBrackets() {
+        let u = URL(string: "https://ex.com/x")!
+        let out = MarkdownLink.render("https://ex.com/x", titles: [u: "a\\b [c]"])
+        #expect(out == "[a\\\\b \\[c\\]](https://ex.com/x)")
+    }
+    @Test func fetchCountBoundedAtSixteen() async throws {
+        let urls = (1...20).map { "https://host\($0).test/p\($0)" }
+        let titles = Dictionary(uniqueKeysWithValues: urls.map { ($0, "Title-\($0)") })
+        let stub = StubTitleFetcher(titles: titles)
+        let t = MarkdownLink(fetcher: stub)
+        let out = try await t.apply(.init(text: urls.joined(separator: " ")))
+        #expect(await stub.log.urls.count == 16)
+        let fetchedTitleCount = urls.filter { out.contains("[Title-\($0)]") }.count
+        #expect(fetchedTitleCount == 16)
     }
 }
