@@ -5,5 +5,14 @@
     <link>https://github.com/bnaylor/pastefix</link>
     <description>Pastefix updates</description>
     <language>en</language>
+    <item>
+      <title>Version 1.0.0</title>
+      <pubDate>Sun, 20 Sep 2026 18:36:34 +0000</pubDate>
+      <sparkle:version>87</sparkle:version>
+      <sparkle:shortVersionString>1.0.0</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>14.6</sparkle:minimumSystemVersion>
+      <sparkle:releaseNotesLink>https://github.com/bnaylor/pastefix/releases/tag/v1.0.0</sparkle:releaseNotesLink>
+      <enclosure url="https://github.com/bnaylor/pastefix/releases/download/v1.0.0/Pastefix-1.0.0.dmg" type="application/octet-stream" sparkle:edSignature="SBXiwV3YILI45QwrimExaWp/BYXnu8xc14FN8aQ16+owHJ5HjvwVHuT6EEUOrO1OuJPhBOsui1c59fkU8FCrCA==" length="1907309"/>
+    </item>
   </channel>
 </rss>
