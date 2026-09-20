@@ -32,15 +32,18 @@ struct PanelView: View {
     private var toolbar: some View {
         HStack {
             Button("Undo") { model.undo() }
-                .disabled(model.document?.canUndo != true)
+                .disabled(model.isApplying || model.document?.canUndo != true)
             Button("Redo") { model.redo() }
-                .disabled(model.document?.canRedo != true)
+                .disabled(model.isApplying || model.document?.canRedo != true)
             Button("Refresh") { model.refresh() }
+                .disabled(model.isApplying)
             Spacer()
+            // Cancel stays enabled: abandoning a slow transform must always be possible.
             Button("Cancel") { model.cancel() }
                 .keyboardShortcut(.cancelAction)
             Button("Save") { model.save() }
                 .keyboardShortcut("s", modifiers: .command)
+                .disabled(model.isApplying)
         }
         .padding(8)
     }
@@ -66,6 +69,11 @@ struct PanelView: View {
                         .foregroundStyle(.secondary)
                         .padding(.trailing, 4)
                         .accessibilityLabel("Detected content: \(summary)")
+                }
+                if model.isApplying {
+                    ProgressView()
+                        .controlSize(.small)
+                        .accessibilityLabel("Applying transform")
                 }
                 ForEach(model.enabledTransformers(), id: \.id) { transformer in
                     Button(transformer.name) { model.apply(transformer) }

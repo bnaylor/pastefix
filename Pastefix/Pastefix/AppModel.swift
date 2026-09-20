@@ -63,6 +63,10 @@ final class AppModel: ObservableObject {
         isApplying = true
         Task {
             let (updated, outcome) = await TransformCoordinator.apply(transformer, to: current)
+            // The session can end (Save/Cancel/auto-hide) while a slow transform is in
+            // flight. Drop the result rather than resurrecting a dead document — and
+            // never leave `isApplying` stuck true for the next summon.
+            guard self.document != nil else { self.isApplying = false; return }
             self.document = updated
             switch outcome {
             case .applied, .unchanged: self.errorMessage = nil
@@ -98,6 +102,7 @@ final class AppModel: ObservableObject {
     private func endSession() {
         document = nil
         errorMessage = nil
+        isApplying = false
         onEndSession?()
     }
 }
