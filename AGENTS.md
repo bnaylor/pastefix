@@ -4,7 +4,7 @@ Guidance for AI coding agents (Claude Code, Codex, Gemini CLI, etc.) working in 
 
 ## What this project is
 
-Pastefix v2 is a macOS clipboard utility: a menu-bar app with a global hotkey that summons an editable panel, applies text transforms (clean up for IRC/chat, reflow, rich→plain, user scripts), and writes the result back to the clipboard. It is the modern Swift rewrite of a 2007 Objective-C app.
+Pastefix v2 is a macOS clipboard utility: a menu-bar app with a global hotkey that summons an editable panel, applies text transforms (clean up for IRC/chat, reflow, rich→plain, user scripts, URL cleanup, Markdown links, case conversion), detects URL/JSON content to surface applicable transforms first, and writes the result back to the clipboard. It is the modern Swift rewrite of a 2007 Objective-C app.
 
 The repo has three components:
 
@@ -72,6 +72,13 @@ Sources/PastefixCore/
     Transliterate.swift               #   builtin.transliterate (order 20)
     WrapReflow.swift                  #   builtin.wrapreflow   (order 30, init(width:))
     WhitespaceCleanup.swift           #   builtin.whitespace   (order 40)
+    URLCleaner.swift                  #   builtin.urlclean     (order 50, kinds [url])
+    MarkdownLink.swift                #   builtin.markdownlink (order 60, kinds [url]) + TitleFetcher (the engine's only network access)
+    CaseConvert.swift                 #   builtin.case.{camel,snake,kebab,constant} (70–73)
+  Detection/
+    ContentKind.swift                 # url | json (+ displayName)
+    ContentDetector.swift             # detect(_:) -> Set<ContentKind>, 1 MB guard
+    URLFinder.swift                   # internal http(s) link ranges (NSDataDetector)
   Scripting/
     ScriptMetadata.swift              # magic-comment header parser
     ShellRunner.swift / ShellTransformer.swift   # stdin->stdout process engine
@@ -88,6 +95,7 @@ Sources/PastefixAppCore/              # app pure model (depends on PastefixCore,
   TransformCoordinator.swift          # apply(transformer, to: document) + isEnabled
   SettingsStore.swift                 # UserDefaults persistence (wrap width, auto-hide, scripts folder, per-transform enable/order)
   TransformOverrides.swift            # per-transform enable/disable + drag-reordering
+  PaletteOrdering.swift               # applicable-first stable partition on top of TransformOverrides
 Tests/PastefixAppCoreTests/           # swift-test suites for the model
 Pastefix/                             # the Xcode app (KeyboardShortcuts + Sparkle dependencies only)
   Pastefix.xcodeproj                  # ENABLE_APP_SANDBOX = NO, ENABLE_HARDENED_RUNTIME = YES
@@ -118,7 +126,7 @@ These are load-bearing; most were established the hard way (see "Things that hav
 5. **Shell contract:** working text on **stdin → stdout**; the script file is executed directly so its shebang is honored; minimal scrubbed env; cwd = the script's directory. Drain stdout **and** stderr **concurrently** (`async let`) before `waitUntilExit()` — sequential draining deadlocks on >64KB stderr. The timeout is a **hard bound**: the child runs in its own process group and gets SIGTERM then SIGKILL after a short grace. `kill(-pid)` always uses the child's own positive PID — it must never be able to become `kill(0)` (caller's group) or `kill(-1)` (broadcast). `.nonZeroExit` stderr is truncated to a bounded tail.
 6. **JS contract:** the script defines `function transform(text)`, run in a **fresh `JSContext` per call**; exceptions (read via `context.exception`) or a non-string return are errors. The eval/timeout race is guarded so the continuation resumes **exactly once**. JavaScriptCore cannot be interrupted, so a runaway script is abandoned best-effort on timeout (its thread runs until process exit) — this is documented, not a bug to "fix" by weakening the timeout.
 7. **FSEvents lifetime:** the stream owns a **retained `WatcherContext` box** (via `passRetained`, balanced by the context `release` callback) — never `passUnretained(self)`, which is a use-after-free. `ScriptWatcher.stream` access is `NSLock`-guarded; `deinit` calls `stop()`.
-8. **Transformer identities are stable and typed:** `builtin.<name>`, `shell:<filename>`, `js:<filename>`. Built-ins occupy orders 10/20/30/40; discovered scripts default to 1000; the registry sorts by `(order, name)` and returns only enabled transforms. Missing/unreadable script dirs are tolerated (built-ins still load).
+8. **Transformer identities are stable and typed:** `builtin.<name>`, `shell:<filename>`, `js:<filename>`. Built-ins occupy orders 10/20/30/40/50/60/70–73; discovered scripts default to 1000; the registry sorts by `(order, name)` and returns only enabled transforms. Missing/unreadable script dirs are tolerated (built-ins still load).
 9. **The app is NON-SANDBOXED (`ENABLE_APP_SANDBOX = NO`).** By design (direct-download, notarized). The sandbox would block reading `~/.config/pastefix/scripts/` and executing shell/JS scripts — i.e. it kills the entire user-scripts pipeline, the heart of the product. Xcode's app template re-enables the sandbox on a whim; if you regenerate or reconfigure the target, re-verify it stays off (`codesign -d --entitlements - <app>` must not show `com.apple.security.app-sandbox`).
 10. **A slow transform must not lose the user's edit.** `AppModel.apply` is gated by `isApplying`: while an async transform (shell/JS, up to 3s) runs, the editor + palette are disabled so nothing mutates the document underneath the in-flight apply, and the result can't overwrite a newer edit. Don't remove the gate without a replacement that closes the same race.
 11. **Hardened runtime + notarization are release requirements, and the Sparkle key is the root of trust.** `ENABLE_HARDENED_RUNTIME = YES` with `Pastefix.entitlements` carrying `com.apple.security.cs.allow-jit` (JavaScriptCore) and never `app-sandbox`. Sparkle lives only in the app target. The EdDSA private key in the maintainer's login keychain signs every update; a release signed with a different key is rejected by every installed copy, so the key is backed up and never regenerated, and `scripts/release.sh` refuses to ship if the keychain key does not match `SUPublicEDKey`. The `CFBundleVersion` Sparkle compares is `git rev-list --count HEAD` at release time — never hand-edit it in the pbxproj.
@@ -130,6 +138,8 @@ These are load-bearing; most were established the hard way (see "Things that hav
 - **New script engine or metadata key** → extend `ScriptMetadata` / the runner protocol symmetrically with shell and JS; keep the magic-comment format (`# pastefix: key = value`, keys scanned in the first 30 lines, comment lead-ins `#`/`//`/`*`/`/*` tolerated).
 - **Tests** live under `Tests/PastefixCoreTests/`, one suite per component, no mocking framework — real fixture scripts and real `NSAttributedString`/`JSContext` where needed.
 - **Concurrency:** favor `async`/`async let` and small `@unchecked Sendable` lock boxes (see `Debouncer`, `ResumeGuard`) over ad-hoc threads; if you write `@unchecked Sendable`, the synchronization must actually exist.
+- **Network in a transform** happens only through an injected protocol (`TitleFetcher`) with a hard timeout and a byte cap, and the transform races it against its own bound so a hung fetcher cannot hang the app. `TransformCoordinator` has no timeout of its own for native transforms, so any transform that can block must bound itself (as `MarkdownLink` does). Tests inject a stub; no test opens a socket.
+- **Content kinds:** a transform that is *meant for* a kind sets `applicableKinds`; the palette promotes it, never hides others. Detection heuristics live only in `ContentDetector`.
 
 ## Things that have bitten us
 
@@ -162,6 +172,12 @@ Preserve these — each was a real defect caught in review or manual testing:
 
 Note: Sparkle's scheduled (non-user-initiated) update alert brought itself to the front for this `LSUIElement` app with no `SPUStandardUserDriverDelegate` foregrounding fallback needed (verified 2026-09-20 with a 1.0.1 → 1.0.2 scheduled check). User-initiated checks still need the explicit `NSApp.activate` in `UpdaterController.checkForUpdates()`.
 
+*Engine (Plan 3):*
+- **NSDataDetector over-matches trailing punctuation and the URL must be rebuilt from the trimmed text** (`763dc8d`): the detector's `match.url` includes a trailing `:` `'` `?` or unbalanced `)`; only its scheme is trustworthy. `URLFinder` takes the scheme from the detector and builds the URL from the trimmed range so `url` always corresponds to `original`. Tests must use inputs the detector genuinely over-matches, or the trimming loop is untested.
+- **Dictionary iteration order is not a spec** (`29c1d02`): entity decoding iterated a `Dictionary`, so `&amp;lt;` decoded differently per process launch. Ordered replacement lists must be arrays.
+
+Also caught in review on `29c1d02`: a page truncated at the byte cap mid-character fell back to Latin-1 and garbled titles; `decodeHTML` retries UTF-8 after dropping up to 3 trailing bytes.
+
 ## Definition of Done
 
 Before opening or updating a PR:
@@ -185,6 +201,7 @@ When you **significantly expand the project** — a new target, subsystem, scrip
 | 2a — App Core | menu-bar app, hotkey, panel | ✅ merged, PR #2 (`12b3cdd`) |
 | 2b — Settings & Prefs | Settings window, rebindable hotkey, live reload | ✅ merged, PR #3 (`4380489`) + 5 follow-up fixes |
 | 2c — Auto-update | Sparkle, hardened runtime, release script | ✅ merged, [PR #5](https://github.com/bnaylor/pastefix/pull/5) (`0cc1082`) |
+| 3 — Content transforms | URL cleanup, Markdown link, case conversion, detection | 🟡 in review on `feat/content-transforms`, PR pending |
 
 Historical reference material for the 2007 and 2019 incarnations is vendored under [`docs/inputs/legacy/`](docs/inputs/legacy/).
 
