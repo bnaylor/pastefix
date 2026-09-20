@@ -148,7 +148,8 @@ Steps:
 2. `xcodebuild archive` — scheme `Pastefix`, Release, `MARKETING_VERSION=<version>
    CURRENT_PROJECT_VERSION=<BUILD>`, `CODE_SIGN_IDENTITY="Developer ID
    Application" DEVELOPMENT_TEAM=RMKGLPG4K4 CODE_SIGN_STYLE=Manual`, into a
-   temp directory.
+   temp directory (universal, `-destination 'generic/platform=macOS'`:
+   `minimumSystemVersion` 14.6 includes Intel Macs).
 3. `xcodebuild -exportArchive` with `scripts/ExportOptions.plist` (method
    `developer-id`, `signingStyle manual`, `teamID RMKGLPG4K4`).
 4. `xcrun notarytool submit --wait` on a zip of the app; on success `xcrun

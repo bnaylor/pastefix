@@ -10,11 +10,9 @@ The repo has three components:
 
 - **`PastefixCore`** — the transform *engine*, a standalone, dependency-free Swift 6 SwiftPM package (macOS 14+). No UI. It defines a unified `Transformer` protocol over three engines (native Swift, shell, JavaScript), a registry that discovers user scripts, and an FSEvents watcher.
 - **`PastefixAppCore`** — the app's *pure model* layer, a second SwiftPM library target (depends on `PastefixCore`). Holds the testable logic that must NOT live in the Xcode target: `ClipboardSnapshot`, `PasteDocument` (undo/redo history), `TransformCoordinator` (bridges engine → document). Unit-tested via `swift test`.
-- **`Pastefix`** — the macOS menu-bar app, an **Xcode** target (SwiftUI `MenuBarExtra` + AppKit glue) that links both packages. Global hotkey (rebindable via KeyboardShortcuts, default ⌘⇧C) → floating `NSPanel` editor + transform palette → Save writes back to the pasteboard. Includes a Settings window for configurable wrap width, auto-hide-on-blur, custom scripts folder, hotkey rebinding, and per-transform enable/disable + reordering. Built via `xcodebuild`, verified manually. **Third-party dependency:** KeyboardShortcuts (sindresorhus); both packages remain dependency-free.
+- **`Pastefix`** — the macOS menu-bar app, an **Xcode** target (SwiftUI `MenuBarExtra` + AppKit glue) that links both packages. Global hotkey (rebindable via KeyboardShortcuts, default ⌘⇧C) → floating `NSPanel` editor + transform palette → Save writes back to the pasteboard. Includes a Settings window for configurable wrap width, auto-hide-on-blur, custom scripts folder, hotkey rebinding, and per-transform enable/disable + reordering. Sparkle 2 provides auto-update (daily check, Check for Updates… menu item, Settings toggle). Built via `xcodebuild`, verified manually. **Third-party dependencies:** KeyboardShortcuts (sindresorhus) and Sparkle, both app-target only; both packages remain dependency-free.
 
 **Testability rule:** pure logic belongs in `PastefixAppCore` (fast, headless `swift test`), NOT the Xcode target. The Xcode target is system glue only (hotkey, pasteboard, panel, SwiftUI views) and is not unit-tested. If you find yourself wanting to unit-test something in `Pastefix/`, it belongs in `PastefixAppCore`.
-
-**Still forthcoming (Plan 2c):** Sparkle auto-update delivery.
 
 The authoritative design lives in `docs/specs/2026-08-11-pastefix-v2-foundation-pipeline.md`; per-increment plans under `docs/plans/`. Read the relevant one before non-trivial changes.
 
@@ -37,6 +35,8 @@ xcodebuild build -project Pastefix/Pastefix.xcodeproj -scheme Pastefix \
   -destination 'platform=macOS,arch=arm64' -configuration Debug   # build only
 ```
 
+**Release (maintainers):** `scripts/release.sh X.Y.Z [--dry-run]` — notarized DMG to GitHub Releases + Sparkle appcast on `gh-pages`. Setup and recovery: `docs/RELEASING.md`.
+
 ### Fresh clone on a new machine
 
 Everything needed to build is committed — the shared `Pastefix.xcscheme`, the SPM
@@ -45,9 +45,10 @@ open or `xcodebuild`, and the KeyboardShortcuts dependency resolves on its own.
 Two caveats:
 
 - **Signing:** `CODE_SIGN_STYLE = Automatic` with no team set signs locally for
-  development. Shipping (the notarized direct-download model in the spec, and all
-  of Plan 2c) needs a real Developer ID — an unresolved decision, not a setting to
-  guess at.
+  development. Releases are signed with the Developer ID for team `RMKGLPG4K4`
+  and notarized by `scripts/release.sh`; that needs the certificate, the
+  `pastefix-notary` keychain profile, and the Sparkle EdDSA private key on the
+  machine (see `docs/RELEASING.md`).
 - **Agent tooling:** this file and the plans under `docs/plans/` reference skills
   (`superpowers:*`, `swift-testing-pro`, `swiftui-pro`, `swift-concurrency-pro`)
   that may not be installed in every environment. They are conveniences, not
@@ -88,8 +89,8 @@ Sources/PastefixAppCore/              # app pure model (depends on PastefixCore,
   SettingsStore.swift                 # UserDefaults persistence (wrap width, auto-hide, scripts folder, per-transform enable/order)
   TransformOverrides.swift            # per-transform enable/disable + drag-reordering
 Tests/PastefixAppCoreTests/           # swift-test suites for the model
-Pastefix/                             # the Xcode app (KeyboardShortcuts dependency only)
-  Pastefix.xcodeproj                  # ENABLE_APP_SANDBOX = NO (non-sandboxed by design)
+Pastefix/                             # the Xcode app (KeyboardShortcuts + Sparkle dependencies only)
+  Pastefix.xcodeproj                  # ENABLE_APP_SANDBOX = NO, ENABLE_HARDENED_RUNTIME = YES
   launch.sh                           # build Debug + open the .app
   Pastefix/                           # app sources (system glue only, no unit tests)
     PastefixApp.swift                 # @main MenuBarExtra + NSApplicationDelegateAdaptor
@@ -99,6 +100,10 @@ Pastefix/                             # the Xcode app (KeyboardShortcuts depende
     ClipboardBridge.swift             # NSPasteboard <-> ClipboardSnapshot
     PanelController.swift             # floating NSPanel host
     PanelView.swift                   # SwiftUI editor + palette + toolbar + error banner
+    UpdaterController.swift           # Sparkle SPUStandardUpdaterController wrapper (+ Debug feed override)
+    Info.plist                        # SUFeedURL, SUPublicEDKey, SUEnableAutomaticChecks, SUScheduledCheckInterval
+    Pastefix.entitlements             # com.apple.security.cs.allow-jit only; NEVER app-sandbox
+scripts/release.sh, scripts/ExportOptions.plist   # release pipeline (see docs/RELEASING.md)
 docs/specs/  docs/plans/  docs/reviews/   # dated design docs (see below)
 ```
 
@@ -116,6 +121,7 @@ These are load-bearing; most were established the hard way (see "Things that hav
 8. **Transformer identities are stable and typed:** `builtin.<name>`, `shell:<filename>`, `js:<filename>`. Built-ins occupy orders 10/20/30/40; discovered scripts default to 1000; the registry sorts by `(order, name)` and returns only enabled transforms. Missing/unreadable script dirs are tolerated (built-ins still load).
 9. **The app is NON-SANDBOXED (`ENABLE_APP_SANDBOX = NO`).** By design (direct-download, notarized). The sandbox would block reading `~/.config/pastefix/scripts/` and executing shell/JS scripts — i.e. it kills the entire user-scripts pipeline, the heart of the product. Xcode's app template re-enables the sandbox on a whim; if you regenerate or reconfigure the target, re-verify it stays off (`codesign -d --entitlements - <app>` must not show `com.apple.security.app-sandbox`).
 10. **A slow transform must not lose the user's edit.** `AppModel.apply` is gated by `isApplying`: while an async transform (shell/JS, up to 3s) runs, the editor + palette are disabled so nothing mutates the document underneath the in-flight apply, and the result can't overwrite a newer edit. Don't remove the gate without a replacement that closes the same race.
+11. **Hardened runtime + notarization are release requirements, and the Sparkle key is the root of trust.** `ENABLE_HARDENED_RUNTIME = YES` with `Pastefix.entitlements` carrying `com.apple.security.cs.allow-jit` (JavaScriptCore) and never `app-sandbox`. Sparkle lives only in the app target. The EdDSA private key in the maintainer's login keychain signs every update; a release signed with a different key is rejected by every installed copy, so the key is backed up and never regenerated, and `scripts/release.sh` refuses to ship if the keychain key does not match `SUPublicEDKey`. The `CFBundleVersion` Sparkle compares is `git rev-list --count HEAD` at release time — never hand-edit it in the pbxproj.
 
 ## Patterns and conventions
 
@@ -148,6 +154,14 @@ Preserve these — each was a real defect caught in review or manual testing:
 - **Disabling a transform made it unre-enableable** (`25b3511`): the Settings Transforms tab rendered from the same enable-filtered list as the palette, so a disabled transform vanished from the UI that was supposed to toggle it — a one-way door. `AppModel` now exposes `allTransformers` (order-applied, enable-*unfiltered*) for Settings; the palette keeps using the filtered `transformers`. **A control surface must never be filtered by the state it controls.**
 - **Scripts-folder picker couldn't get home** (`3610f31`, with `57c3d6a`): `NSOpenPanel` hides dotfiles, so once a user navigated away from `~/.config/pastefix/scripts` they could not navigate back to a path inside `~/.config`. Fixed with `showsHiddenFiles = true` plus a **Use Default** button backed by `SettingsStore.resetScriptsDirectoryToDefault()`. Any picker defaulting into a dot-directory needs both.
 
+*App (Plan 2c):*
+- **Ad-hoc Debug builds silently run without the hardened runtime.** With `CODE_SIGN_STYLE = Automatic` and no team, `launch.sh` builds are ad-hoc signed, and Xcode disables the hardened runtime for ad-hoc signing ("Disabling hardened runtime with ad-hoc codesigning" in the build log) — so `codesign -dv` shows no `runtime` flag even though `ENABLE_HARDENED_RUNTIME = YES`. Anything that must be verified under the hardened runtime (JavaScriptCore with `allow-jit`, shell spawning) has to be checked on a Developer-ID-signed build: `xcodebuild build … CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM=RMKGLPG4K4 CODE_SIGN_IDENTITY="Developer ID Application"`. Verified this way on 2026-09-20: shell and JS transforms both run under the hardened runtime with `com.apple.security.cs.allow-jit`; the entitlement was kept.
+- **A synchronized group auto-adds Info.plist to Copy Bundle Resources** (`1692d10`): adding `Pastefix/Pastefix/Info.plist` made Xcode's filesystem-synchronized group treat it as a resource and warn; fixed with a `PBXFileSystemSynchronizedBuildFileExceptionSet` that excludes it from the target. Any non-source file dropped into `Pastefix/Pastefix/` needs the same thought.
+- **zsh special parameters in the release script** (`67a341c`): the first draft of `scripts/release.sh` used `local path` and `status` inside `notarize()`; in zsh `path` is the array tied to `PATH` and `status` is read-only, so the function couldn't run a single external command and would have failed only after a full archive + export. Caught in review before the first dry run. In zsh scripts never name variables `path`, `status`, `argv`, `options`, or `cdpath`.
+- **`SPUUpdater.delegate` is read-only in Sparkle 2** (`ccedec7`): the delegate has to be passed at `SPUStandardUpdaterController` init, which needs `self`, hence the implicitly-unwrapped `controller` property in `UpdaterController` assigned after `super.init()`. Do not "clean it up" into a `let`.
+
+Note: Sparkle's scheduled (non-user-initiated) update alert brought itself to the front for this `LSUIElement` app with no `SPUStandardUserDriverDelegate` foregrounding fallback needed (verified 2026-09-20 with a 1.0.1 → 1.0.2 scheduled check). User-initiated checks still need the explicit `NSApp.activate` in `UpdaterController.checkForUpdates()`.
+
 ## Definition of Done
 
 Before opening or updating a PR:
@@ -170,7 +184,7 @@ When you **significantly expand the project** — a new target, subsystem, scrip
 | Transform Engine | `PastefixCore` | ✅ merged, PR #1 (`9fc68ee`) |
 | 2a — App Core | menu-bar app, hotkey, panel | ✅ merged, PR #2 (`12b3cdd`) |
 | 2b — Settings & Prefs | Settings window, rebindable hotkey, live reload | ✅ merged, PR #3 (`4380489`) + 5 follow-up fixes |
-| 2c — Auto-update | Sparkle delivery | ⬜ not started, no plan written |
+| 2c — Auto-update | Sparkle, hardened runtime, release script | 🟡 in review on `feat/auto-update`, PR pending |
 
 Historical reference material for the 2007 and 2019 incarnations is vendored under [`docs/inputs/legacy/`](docs/inputs/legacy/).
 
