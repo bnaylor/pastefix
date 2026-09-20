@@ -17,9 +17,15 @@ set -euo pipefail
 # --- arguments -----------------------------------------------------------------------------
 VERSION="${1:-}"
 DRY_RUN=0
-[[ "${2:-}" == "--dry-run" ]] && DRY_RUN=1
+usage() { echo "usage: scripts/release.sh MAJOR.MINOR.PATCH [--dry-run]" >&2; exit 64; }
+(( $# > 2 )) && usage
+case "${2:-}" in
+  "") ;;
+  --dry-run) DRY_RUN=1 ;;
+  *) usage ;;
+esac
 if [[ ! "$VERSION" =~ '^[0-9]+\.[0-9]+\.[0-9]+$' ]]; then
-  echo "usage: scripts/release.sh MAJOR.MINOR.PATCH [--dry-run]" >&2; exit 64
+  usage
 fi
 
 # --- constants -----------------------------------------------------------------------------
@@ -45,9 +51,13 @@ EXPORT_DIR="$WORK/export"
 APP="$EXPORT_DIR/Pastefix.app"
 DMG="$WORK/$DMG_NAME"
 ITEM_FILE="$WORK/item.xml"
+PAGES_WT="$WORK/gh-pages"
 
-step() { print -P "%F{cyan}==> $*%f"; }
-die()  { print -P "%F{red}error: $*%f" >&2; exit 1; }
+# A registered worktree must never leak, even on an early failure/exit.
+trap 'git -C "$REPO_ROOT" worktree remove --force "$PAGES_WT" 2>/dev/null || true' EXIT
+
+step() { print -P "%F{cyan}==> ${*//\%/%%}%f"; }
+die()  { print -P "%F{red}error: ${*//\%/%%}%f" >&2; exit 1; }
 
 cd "$REPO_ROOT"
 
@@ -97,8 +107,10 @@ KEYCHAIN_PUBLIC_KEY=$("$SPARKLE_BIN/generate_keys" -p 2>/dev/null || true)
 
 # --- archive + export ----------------------------------------------------------------------
 step "Archiving $VERSION ($BUILD)"
+# Universal binary: the appcast's minimumSystemVersion 14.6 includes Intel Macs and Sparkle has
+# no per-arch filter.
 xcodebuild archive -project "$PROJECT" -scheme "$SCHEME" -configuration Release \
-  -destination 'platform=macOS,arch=arm64' -derivedDataPath "$DERIVED" -archivePath "$ARCHIVE" \
+  -destination 'generic/platform=macOS' -derivedDataPath "$DERIVED" -archivePath "$ARCHIVE" \
   MARKETING_VERSION="$VERSION" CURRENT_PROJECT_VERSION="$BUILD" \
   CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM="$TEAM_ID" CODE_SIGN_IDENTITY="$IDENTITY" \
   -quiet
@@ -117,15 +129,15 @@ codesign -d --entitlements - "$APP" 2>/dev/null | grep -q "com.apple.security.ap
 codesign --verify --deep --strict "$APP" || die "code signature invalid"
 
 # --- notarize + staple the app -------------------------------------------------------------
-notarize() {  # notarize <path>
-  local path="$1" out id status
-  out=$(xcrun notarytool submit "$path" --keychain-profile "$NOTARY_PROFILE" --wait 2>&1) || true
+notarize() {  # notarize <artifact>
+  local artifact="$1" out id result
+  out=$(xcrun notarytool submit "$artifact" --keychain-profile "$NOTARY_PROFILE" --wait 2>&1) || true
   echo "$out"
   id=$(echo "$out" | awk '/^ *id:/{print $2; exit}')
-  status=$(echo "$out" | awk '/^ *status:/{print $2}' | tail -1)
-  if [[ "$status" != "Accepted" ]]; then
+  result=$(echo "$out" | awk '/^ *status:/{print $2}' | tail -1)
+  if [[ "$result" != "Accepted" ]]; then
     [[ -n "$id" ]] && xcrun notarytool log "$id" --keychain-profile "$NOTARY_PROFILE" || true
-    die "notarization of $(basename "$path") was not accepted (status: ${status:-unknown})"
+    die "notarization of $(basename "$artifact") was not accepted (status: ${result:-unknown})"
   fi
 }
 
@@ -171,7 +183,8 @@ step "Appcast item"
 cat "$ITEM_FILE"
 
 if (( DRY_RUN )); then
-  print -P "%F{yellow}dry run: not tagging, publishing, or updating the appcast.%f"
+  DRY_RUN_MSG="dry run: not tagging, publishing, or updating the appcast."
+  print -P "%F{yellow}${DRY_RUN_MSG//\%/%%}%f"
   echo "artifacts left in: $WORK"
   echo "  app:  $APP"
   echo "  dmg:  $DMG"
@@ -186,16 +199,21 @@ git push origin "$TAG"
 
 step "Creating GitHub release"
 gh release create "$TAG" "$DMG" --repo "$GH_REPO" --title "Pastefix $VERSION" --generate-notes --verify-tag
-# Fail fast if the asset URL Sparkle will fetch is not actually there.
-curl -fsSLI -o /dev/null "$ENCLOSURE_URL" || die "release asset not reachable at $ENCLOSURE_URL"
+# Fail fast if the asset URL Sparkle will fetch is not actually there. GitHub's CDN can take a
+# few seconds to make a freshly-uploaded release asset reachable, so retry briefly.
+ASSET_OK=0
+for _ in 1 2 3; do
+  if curl -fsSLI -o /dev/null "$ENCLOSURE_URL"; then ASSET_OK=1; break; fi
+  sleep 5
+done
+(( ASSET_OK )) || die "release asset not reachable at $ENCLOSURE_URL"
 
 step "Updating appcast on gh-pages"
-PAGES_WT="$WORK/gh-pages"
-git worktree add -q "$PAGES_WT" origin/gh-pages
+git worktree add -q --detach "$PAGES_WT" origin/gh-pages
 (
   cd "$PAGES_WT"
-  git checkout -q -B gh-pages origin/gh-pages
   [[ -f appcast.xml ]] || die "appcast.xml missing on gh-pages"
+  [[ -r "$ITEM_FILE" ]] || die "appcast item missing: $ITEM_FILE"
   # Insert the new item before the first existing <item>, or before </channel> if none.
   awk -v itemfile="$ITEM_FILE" '
     !done && ($0 ~ /<item>/ || $0 ~ /<\/channel>/) {
@@ -208,7 +226,7 @@ git worktree add -q "$PAGES_WT" origin/gh-pages
   xmllint --noout appcast.xml
   git add appcast.xml
   git commit -q -m "appcast: $VERSION (build $BUILD)"
-  git push -q origin gh-pages
+  git push -q origin HEAD:gh-pages
 )
 git worktree remove --force "$PAGES_WT"
 
