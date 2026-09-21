@@ -107,7 +107,7 @@ Sources/PastefixAppCore/              # app pure model (depends on PastefixCore,
   PasteDocument.swift                 # origin + history/cursor undo/redo/refresh + outputMode (default .plain, reset on refresh)
   TransformCoordinator.swift          # apply(transformer, to: document) + isEnabled; sets document.outputMode from an OutputModeTransformer, reports .applied even when text is unchanged
   RichOutputRenderer.swift            # @MainActor render(markdown:) -> RichOutput{html,rtf}: MarkdownHTML.render then NSAttributedString(html:) -> RTF; <img> stripped from the RTF conversion input only
-  MarkdownPreview.swift               # @MainActor attributedString(markdown:) -> NSAttributedString for the panel's Preview toggle: MarkdownHTML.render -> RichOutputRenderer.htmlForRTF (<img> stripped) -> stylesheet -> NSAttributedString(html:) -> foreground colours stripped except .link runs; 64 KB cap returns a notice string
+  MarkdownPreview.swift               # @MainActor attributedString(markdown:) -> NSAttributedString for the panel's Preview toggle: MarkdownHTML.render -> RichOutputRenderer.htmlForRTF (<img> stripped) -> stylesheet -> NSAttributedString(html:) -> foreground colours stripped except .link runs; 16 KB / 200 `<li>` caps return a notice string (the importer is main-thread-only, so work, not just bytes, has to be capped)
   SettingsStore.swift                 # UserDefaults persistence (wrap width, auto-hide, sidebar, scripts folder, per-transform enable/order, historyEnabled, historyMaxItems)
   TransformOverrides.swift            # per-transform enable/disable + drag-reordering
   PaletteOrdering.swift               # applicable-first stable partition on top of TransformOverrides
@@ -277,6 +277,8 @@ Also caught in review on `29c1d02`: a page truncated at the byte cap mid-charact
 - **The HTML importer writes list markers twice** (`385579f`): literal "\t•\t" text *and* an `NSTextList`, which a TextKit 2 `NSTextView` draws again → double bullets. Clear `textLists` after import.
 - **Setting `textColor` on an `NSTextView` rewrites the storage** (`385579f`): an `isEqual(to:)` guard against the storage never fires afterwards; compare against a last-applied copy held in the coordinator or every re-render drops selection and scroll.
 - **The importer ignores `blockquote` margins** (`385579f`): no style boundary survives, so a post-pass cannot find the quote either. Accepted limitation.
+- **A byte cap is not a cost cap** (PR #40 review): the importer's cost tracks list structure, not size, so `MarkdownPreview` caps `<li>` count as well as bytes. Anything main-actor and synchronous needs the cap on the work.
+- **`#expect` on an optional-chained receiver can never fail** (PR #40 review): `#expect((f?.familyName ?? "").contains("Menlo"))` expands to a call check whose result is discarded (the compiler says "result of call to 'contains' is unused") and passes on any input. Bind to a local first — and treat that warning as a broken test, not noise.
 
 ## Definition of Done
 

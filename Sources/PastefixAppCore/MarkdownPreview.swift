@@ -6,8 +6,15 @@ import PastefixCore
 /// pipeline: same HTML renderer, same `<img>` stripping (no network), plus a stylesheet and a
 /// colour strip so the text follows the system appearance.
 public enum MarkdownPreview {
-    public static let maxBytes = 65_536
-    static let notice = "Preview is limited to 64 KB of Markdown."
+    public static let maxBytes = 16_384
+    /// Bytes bound the input; list items bound the *work*. The same byte count costs wildly
+    /// different amounts depending on structure — review measured 64 KB of list-heavy Markdown
+    /// at ~1.1 s against ~0.4 s for prose — and both the ⌘⇧M toggle and every debounced
+    /// re-render pay it synchronously, because `NSAttributedString(html:)` is main-thread-only.
+    /// So the cap is the only lever, and it has to be a cap on work. At these two limits the
+    /// worst cases here measured ~21 ms (16 KB prose) and ~18 ms (200-item list).
+    public static let maxListItems = 200
+    static let notice = "Preview is limited to 16 KB and 200 list items of Markdown."
     // Known limitation: the importer drops every form of blockquote inset we can express here
     // (`margin-left`, `padding-left`, the `margin` shorthand below) — a quoted paragraph comes
     // back with `firstLineHeadIndent == headIndent == 0`, indistinguishable from body text. Only
@@ -20,6 +27,7 @@ public enum MarkdownPreview {
     public static func attributedString(markdown: String) -> NSAttributedString {
         guard markdown.utf8.count <= maxBytes else { return plain(notice) }
         guard let html = try? MarkdownHTML.render(markdown) else { return plain(markdown, mono: true) }
+        guard listItemCount(html) <= maxListItems else { return plain(notice) }
         let body = RichOutputRenderer.htmlForRTF(html)
         guard let imported = NSMutableAttributedString(html: Data((stylesheet + body).utf8),
                                                        options: [.documentType: NSAttributedString.DocumentType.html,
@@ -28,6 +36,18 @@ public enum MarkdownPreview {
         stripForegroundColors(imported)
         stripTextLists(imported)
         return imported
+    }
+
+    /// Counts `<li>` in the HTML we just emitted — a closed tag set we generate ourselves, so a
+    /// literal substring scan is exact, and it is far cheaper than the import it guards.
+    static func listItemCount(_ html: String) -> Int {
+        var count = 0
+        var from = html.startIndex
+        while let found = html.range(of: "<li>", range: from..<html.endIndex) {
+            count += 1
+            from = found.upperBound
+        }
+        return count
     }
 
     static func stripForegroundColors(_ s: NSMutableAttributedString) {

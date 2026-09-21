@@ -20,8 +20,10 @@ Source: [issue #15](https://github.com/bnaylor/pastefix/issues/15). Builds on Pl
 - `MarkdownPreview.attributedString(markdown:)` in `PastefixAppCore`: Markdown → HTML
   (existing renderer) → images stripped (existing helper) → a prepended stylesheet →
   `NSAttributedString(html:)` → foreground colours stripped (link colour kept) so the view
-  follows the system appearance. Input capped at 64 KB; over the cap returns a notice
-  attributed string instead of rendering.
+  follows the system appearance. Two caps, both returning a notice attributed string instead
+  of rendering: input over 16 KB, and more than 200 `<li>` in the rendered HTML (counted by a
+  substring scan before the import). Bytes bound the input; list items bound the work, which is
+  what actually costs time.
 - A read-only, selectable preview view (`MarkdownPreviewView`, `NSViewRepresentable` over
   `NSTextView`) that replaces the editor area while previewing.
 - Toolbar **Preview** toggle, **⌘⇧M**; tinted when `.markdown` is detected; disabled while an
@@ -42,7 +44,7 @@ as for RTF); syntax highlighting in code blocks; a WebKit view.
 | Layout | Toggle replacing the editor; no split | 560 pt minimum width (plus a 220 pt sidebar) can't hold two readable columns; the issue asks for read-only. |
 | Prominence | Button always enabled; tinted (accent) when `.markdown` detected | Any text can be previewed; detection makes it a suggestion, not a gate. |
 | Appearance | Strip `.foregroundColor` from the imported string except on `.link` runs; text view uses `labelColor`; stylesheet sets `-apple-system` 13 pt body, Menlo 12 pt code, heading sizes 22/18/15, blockquote left inset | The importer bakes black text; without stripping, dark mode shows black-on-dark. |
-| Cost | Debounce 150 ms; cap 64 KB (notice above); render on the main actor (importer requirement) | Clipboard sizes are instant; 200 KB measured ~2.8 s in Plan 8, so cap well below. |
+| Cost | Debounce 150 ms; caps 16 KB **and** 200 list items (notice above either); render on the main actor (importer requirement) | The importer is main-thread-only and both the ⌘⇧M toggle and every debounced re-render pay it synchronously, so the cap is the only lever. A byte cap alone bounds input, not work: review measured 64 KB list-heavy at ~1.1 s against ~0.4 s for the same size of prose. At these caps 16 KB of prose measured ~21 ms and a 200-item list ~18 ms, inside a 150 ms budget. |
 | Keys | ⌘⇧M toggle; Esc closes the preview first | Consistent with the other Esc arbitration (palette → history → preview → cancel). |
 | Focus | Closing the preview returns focus to the editor | Same rule as the overlays. |
 
@@ -52,15 +54,17 @@ as for RTF); syntax highlighting in code blocks; a WebKit view.
 
 ```swift
 public enum MarkdownPreview {
-    public static let maxBytes = 65_536
+    public static let maxBytes = 16_384
+    public static let maxListItems = 200
     /// Main actor: AppKit's HTML importer is WebKit-backed.
     @MainActor public static func attributedString(markdown: String) -> NSAttributedString
     static let stylesheet: String            // <style>…</style> prepended to the fragment
+    static func listItemCount(_ html: String) -> Int   // `<li>` substring scan, run before the import
     static func stripForegroundColors(_ s: NSMutableAttributedString)   // keeps colour on runs with .link
 }
 ```
-`attributedString` returns a plain notice ("Preview is limited to 64 KB of Markdown.") when
-over the cap, and a plain rendering of the raw text when `MarkdownHTML.render` throws or the
+`attributedString` returns a plain notice ("Preview is limited to 16 KB and 200 list items of
+Markdown.") when over either cap, and a plain rendering of the raw text when `MarkdownHTML.render` throws or the
 importer returns nil.
 
 ### Pastefix app
@@ -100,7 +104,7 @@ open); second Esc cancels; ⌘K still opens over the preview; new summon starts 
 ## Documentation
 
 - README: one paragraph under "Markdown and rich text": Preview button / ⌘⇧M, read-only,
-  images not shown, 64 KB cap.
+  images not shown, 16 KB / 200 list-item caps.
 - AGENTS.md: layout entries (`MarkdownPreview.swift`, `MarkdownPreviewView.swift`); a
   Patterns note that the preview shares the RTF pipeline's image stripping and must keep it;
   status row.

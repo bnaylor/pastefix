@@ -13,17 +13,26 @@ import AppKit
     }
     private func font(_ attrs: [NSAttributedString.Key: Any]) -> NSFont? { attrs[.font] as? NSFont }
 
+    // The size assertions pin the *stylesheet*, not the importer: h1 is larger than body text
+    // even unstyled, so a test that only compares the two stays green with `stylesheet = ""`.
     @Test func headingIsLargerThanBody() {
         let s = MarkdownPreview.attributedString(markdown: "# Title\n\nbody text")
         let all = runs(s)
         let h = all.first { $0.0.contains("Title") }.flatMap { font($0.1) }
         let b = all.first { $0.0.contains("body") }.flatMap { font($0.1) }
         #expect(h != nil && b != nil && h!.pointSize > b!.pointSize)
+        #expect(h?.pointSize == 22, "h1 should come from the stylesheet, not the importer's default")
     }
+    // Likewise: `<code>` imports as Courier carrying `.monoSpace` with no stylesheet at all, so
+    // the family name is what proves our `code{font-family:Menlo}` rule survived the import.
     @Test func inlineCodeIsMonospaced() {
         let s = MarkdownPreview.attributedString(markdown: "call `foo()` now")
         let code = runs(s).first { $0.0 == "foo()" }.flatMap { font($0.1) }
-        #expect(code != nil && (code!.fontDescriptor.symbolicTraits.contains(.monoSpace) || (code!.familyName ?? "").contains("Menlo")))
+        #expect(code != nil && code!.fontDescriptor.symbolicTraits.contains(.monoSpace))
+        // Bound to a local first: `#expect` on an optional-chained receiver expands to a call
+        // check whose result is discarded, and the expectation then never fails.
+        let family = code?.familyName ?? "nil"
+        #expect(family.contains("Menlo"), "expected the stylesheet's Menlo, got \(family)")
     }
     @Test func foregroundColoursStrippedExceptLinks() {
         let s = MarkdownPreview.attributedString(markdown: "plain **bold** and [site](https://a.b)")
@@ -31,11 +40,25 @@ import AppKit
             if attrs[.link] != nil { #expect(text == "site") }
             else { #expect(attrs[.foregroundColor] == nil, "run \(text) still carries a colour") }
         }
-        #expect(runs(s).contains { $0.1[.link] != nil })
+        // The exception half of the name: without the carve-out in `stripForegroundColors` the
+        // link run comes back colourless like everything else.
+        let link = runs(s).first { $0.1[.link] != nil }
+        #expect(link != nil)
+        #expect(link?.1[.foregroundColor] != nil, "the link run should keep its colour")
     }
     @Test func overCapReturnsNotice() {
         let s = MarkdownPreview.attributedString(markdown: String(repeating: "a", count: MarkdownPreview.maxBytes + 1))
-        #expect(s.string == "Preview is limited to 64 KB of Markdown.")
+        #expect(s.string == MarkdownPreview.notice)
+        #expect(MarkdownPreview.notice.contains("16 KB") && MarkdownPreview.notice.contains("200 list items"))
+    }
+    // Bytes are not the cost driver — list structure is, and a list can blow the time budget
+    // well inside the byte cap.
+    @Test func overListCapReturnsNotice() {
+        let list = (1...(MarkdownPreview.maxListItems + 1)).map { "- item \($0)" }.joined(separator: "\n")
+        #expect(list.utf8.count <= MarkdownPreview.maxBytes, "this case must be under the byte cap to test the list cap")
+        #expect(MarkdownPreview.attributedString(markdown: list).string == MarkdownPreview.notice)
+        let justUnder = (1...MarkdownPreview.maxListItems).map { "- item \($0)" }.joined(separator: "\n")
+        #expect(MarkdownPreview.attributedString(markdown: justUnder).string != MarkdownPreview.notice)
     }
     @Test func malformedStillRendersSomething() {
         let s = MarkdownPreview.attributedString(markdown: "[unclosed(\n\n**bold")

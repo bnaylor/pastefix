@@ -282,11 +282,17 @@ struct PanelView: View {
     private func scheduleRender(immediate: Bool = false) {
         previewTask?.cancel()
         let text = model.document?.working ?? ""
+        // The session the render belongs to. The `sessionGeneration` handler also cancels this
+        // task, but that only wins if it runs first — `onChange` order is a property of the
+        // modifier stack, not something this function can rely on. Checking the generation at
+        // the end makes the drop independent of who ran when: a render scheduled into a session
+        // that has since ended never reaches `previewText`.
+        let generation = model.sessionGeneration
         previewTask = Task { @MainActor in
             if !immediate { try? await Task.sleep(for: .milliseconds(150)) }
             // Both paths check: a cancelled immediate render would still import the old buffer
             // on the main actor and write it back over a newer one (or into a dead session).
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, model.sessionGeneration == generation else { return }
             previewText = MarkdownPreview.attributedString(markdown: text)
         }
     }
