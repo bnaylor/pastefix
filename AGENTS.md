@@ -217,7 +217,7 @@ When you **significantly expand the project** — a new target, subsystem, scrip
 | 2b — Settings & Prefs | Settings window, rebindable hotkey, live reload | ✅ merged, PR #3 (`4380489`) + 5 follow-up fixes |
 | 2c — Auto-update | Sparkle, hardened runtime, release script | ✅ merged, [PR #5](https://github.com/bnaylor/pastefix/pull/5) (`0cc1082`) |
 | 3 — Content transforms | URL cleanup, Markdown link, case conversion, detection | ✅ merged, [PR #6](https://github.com/bnaylor/pastefix/pull/6) (`113bf42`) |
-| 4 — Action bar | ⌘K palette, sidebar, categories | 🟡 in review, [PR #8](https://github.com/bnaylor/pastefix/pull/8) |
+| 4 — Action bar | ⌘K palette, sidebar, categories | ✅ merged, [PR #8](https://github.com/bnaylor/pastefix/pull/8) (`ff9c7b3`) |
 
 Historical reference material for the 2007 and 2019 incarnations is vendored under [`docs/inputs/legacy/`](docs/inputs/legacy/).
 
