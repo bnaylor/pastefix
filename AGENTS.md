@@ -273,6 +273,11 @@ Also caught in review on `29c1d02`: a page truncated at the byte cap mid-charact
 - **Ad-hoc Debug signatures lose TCC grants on every rebuild** (controller pass): Accessibility trust keys on the designated requirement, which for ad-hoc is the cdhash. Re-sign the Debug app with the Developer ID identity before permission-dependent tests.
 - **KeyboardShortcuts names must not contain dots** (`1b11b99`) and `removeHandler(for:)` exists — don't work around a limitation the library doesn't have.
 
+*Markdown preview (Plan 10):*
+- **The HTML importer writes list markers twice** (`385579f`): literal "\t•\t" text *and* an `NSTextList`, which a TextKit 2 `NSTextView` draws again → double bullets. Clear `textLists` after import.
+- **Setting `textColor` on an `NSTextView` rewrites the storage** (`385579f`): an `isEqual(to:)` guard against the storage never fires afterwards; compare against a last-applied copy held in the coordinator or every re-render drops selection and scroll.
+- **The importer ignores `blockquote` margins** (`385579f`): no style boundary survives, so a post-pass cannot find the quote either. Accepted limitation.
+
 ## Definition of Done
 
 Before opening or updating a PR:

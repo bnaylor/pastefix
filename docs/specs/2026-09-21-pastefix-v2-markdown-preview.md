@@ -139,3 +139,7 @@ Two places where the shipped `PanelView.swift` refines what's written above:
   the preview is shown again — but worth noting since nothing resets it explicitly except a new
   session (`sessionGeneration` change resets `isPreviewing`, not `previewText`, though the same
   immediate re-render on next open covers it).
+- **Lists and blockquotes.** The importer emits list markers twice (literal "•" text plus an
+  `NSTextList` that TextKit 2 draws again), so `MarkdownPreview` clears `textLists` after
+  import. It also discards `blockquote` margins entirely (no style boundary survives), so
+  blockquotes render flush with body text — a known limitation of this renderer.
