@@ -220,4 +220,31 @@ import Foundation
             #expect(s.items.count == 3 && s.items[0].plainText == "t4")
         }
     }
+    @Test func loweringLimitsIsDurableWithoutFlush() throws {
+        try withDir { dir in
+            let s = HistoryStore(directory: dir)
+            for i in 0..<5 { s.record(text("t\(i)")) }
+            s.limits.maxItems = 3
+            // No flush() here: a crash right now must not resurrect the shed items.
+            let s2 = HistoryStore(directory: dir)
+            #expect(s2.items.map(\.plainText) == ["t4", "t3", "t2"])
+        }
+    }
+    @Test func quarantineKeepsBlobsForRecovery() throws {
+        try withDir { dir in
+            let img: HistoryItem = {
+                let s = HistoryStore(directory: dir)
+                let i = s.record(CaptureCandidate(imagePNG: png(6)))!
+                s.flush()
+                return i
+            }()
+            try Data("not json".utf8).write(to: dir.appendingPathComponent("index.json"))
+            let s2 = HistoryStore(directory: dir)
+            #expect(s2.items.isEmpty)
+            // The sweep must not delete the payloads the quarantined index referenced.
+            #expect(FileManager.default.fileExists(atPath: dir.appendingPathComponent(img.imageFile!).path))
+            let names = try FileManager.default.contentsOfDirectory(atPath: dir.path)
+            #expect(names.contains { $0.hasPrefix("index.json.corrupt-") })
+        }
+    }
 }

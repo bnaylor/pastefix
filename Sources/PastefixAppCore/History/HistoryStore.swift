@@ -45,7 +45,10 @@ public struct CaptureCandidate: Sendable {
 @MainActor
 public final class HistoryStore: ObservableObject {
     @Published public private(set) var items: [HistoryItem] = []
-    public var limits: HistoryLimits { didSet { enforceLimits(); scheduleWrite() } }
+    /// Lowering a limit sheds items and deletes their blobs immediately, so that trim is
+    /// flushed rather than debounced: a crash inside the debounce window would otherwise
+    /// bring the shed items back as text-only entries on the next launch.
+    public var limits: HistoryLimits { didSet { if enforceLimits() { flush() } else { scheduleWrite() } } }
     public let directory: URL
 
     /// Last index-write failure, or nil after a success.
@@ -53,7 +56,7 @@ public final class HistoryStore: ObservableObject {
     /// Eventually consistent: index writes run off the main actor, so this is updated on a
     /// later main-actor turn than the mutation that triggered the write. Do not read it
     /// synchronously after `record`/`flush` and expect the outcome of that write.
-    public private(set) var lastWriteError: String?
+    @Published public private(set) var lastWriteError: String?
 
     private let indexURL: URL
     private var pendingWrite: Task<Void, Never>?
@@ -68,12 +71,15 @@ public final class HistoryStore: ObservableObject {
         self.limits = limits
         self.indexURL = directory.appendingPathComponent("index.json")
         Self.ensureDirectory(directory)
-        let repaired = load()
+        let outcome = load()
         let evicted = enforceLimits()
-        sweepOrphanBlobs()
+        // A quarantined index is the only remaining record of which blob belongs to which
+        // item, so sweeping against an empty `items` would delete exactly the payloads the
+        // quarantine exists to preserve. Skip the sweep on that launch only.
+        if !outcome.quarantined { sweepOrphanBlobs() }
         // Load-time repair and trimming delete blobs immediately; the index has to follow
         // synchronously or a crash resurrects items whose payloads are already gone.
-        if repaired || evicted { flush() }
+        if outcome.needsRewrite || evicted { flush() }
     }
 
     // MARK: Recording
@@ -241,17 +247,23 @@ public final class HistoryStore: ObservableObject {
 
     // MARK: Index persistence
 
+    /// What `load()` found: whether the in-memory index now differs from the file (so it must
+    /// be rewritten), and whether an unreadable index was moved aside.
+    private struct LoadOutcome {
+        var needsRewrite = false
+        var quarantined = false
+    }
+
     /// Loads `index.json`, dropping references that are missing or not the exact name this
     /// store would have written, and recomputing `byteCount` from what is actually on disk.
-    /// Returns true when the result differs from the file, i.e. the index must be rewritten.
-    private func load() -> Bool {
-        guard let data = try? Data(contentsOf: indexURL) else { return false }
+    private func load() -> LoadOutcome {
+        guard let data = try? Data(contentsOf: indexURL) else { return LoadOutcome() }
         let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
         guard let loaded = try? decoder.decode([HistoryItem].self, from: data) else {
             let quarantine = directory.appendingPathComponent("index.json.corrupt-\(Int(Date().timeIntervalSince1970))")
             try? FileManager.default.moveItem(at: indexURL, to: quarantine)
             historyLog.error("history index unreadable; moved aside")
-            return false
+            return LoadOutcome(quarantined: true)
         }
         let fm = FileManager.default
         var repaired = false
@@ -277,7 +289,7 @@ public final class HistoryStore: ObservableObject {
             if it != item { repaired = true }
             return it
         }
-        return repaired
+        return LoadOutcome(needsRewrite: repaired)
     }
 
     private func scheduleWrite() {
