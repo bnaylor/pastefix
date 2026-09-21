@@ -8,12 +8,16 @@ public struct PasteDocument: Sendable {
     public private(set) var history: [String]
     public private(set) var cursor: Int
     public private(set) var detectedKinds: Set<ContentKind>
+    /// How Save should write the buffer. Set by an `OutputModeTransformer`; reset to
+    /// `.plain` whenever the document is re-armed for a new summon (`refresh`).
+    public var outputMode: OutputMode = .plain
 
     public init(origin: ClipboardSnapshot) {
         self.origin = origin
         self.history = [origin.plainText ?? ""]
         self.cursor = 0
         self.detectedKinds = ContentDetector.detect(history[0])
+        self.outputMode = .plain
     }
 
     public var working: String { history[cursor] }
