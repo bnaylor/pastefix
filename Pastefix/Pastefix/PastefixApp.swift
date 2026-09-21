@@ -94,7 +94,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.summonHistory()
         }
         // `history` is already constructed with this cap; no need to reassert it here.
-        settings.$historyMaxItems.dropFirst().removeDuplicates().receive(on: DispatchQueue.main)
+        settings.$historyMaxItems
+            .dropFirst()
+            // Every in-range intermediate otherwise applies immediately: holding the Settings
+            // stepper's down arrow walks 200→20 in about a second, evicting and deleting blobs
+            // at each step along the way. Debounce so only the value the user settles on lands.
+            .debounce(for: .milliseconds(400), scheduler: DispatchQueue.main)
+            .removeDuplicates()
             .sink { [weak self] n in
                 MainActor.assumeIsolated {
                     guard let self else { return }
