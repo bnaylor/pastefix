@@ -33,12 +33,20 @@ Pastefix runs as a macOS menu-bar app. A clipboard icon sits in the menu bar; pr
 4. **Save (⌘S)** — writes the working text back to the clipboard and dismisses the panel.
 5. **Cancel (Esc)** — discards changes and dismisses the panel.
 
+## Clipboard history (Plan 6)
+
+Pastefix remembers what you copy: plain text, formatted (rich) text, and images, up to 200 items and 50 MB total (256 KB per text item, 1 MB per rich item, 5 MB per image; oversize items are dropped, not truncated). Press **⌘⇧V** anywhere, or **⌘Y** inside the panel, to open the history overlay and search it — type to filter, ↑↓ to choose. **↵** loads a text or rich item into the editor as a new session (formatting preserved for the Rich → Plain Text transform); since an image can't be edited yet, ↵ on an image item puts it straight back on the clipboard instead. **⌘↵** puts any item back on the clipboard and dismisses the panel; **⌘⌫** forgets the selected item; Esc closes the overlay.
+
+Copying the same thing again moves it back to the top of the list rather than adding a duplicate, and keeps crediting the app that originally put it on the clipboard — reusing an item from history doesn't relabel it as coming from Pastefix. Items that password managers and similar tools mark as concealed, transient, or auto-generated are never recorded, including a few legacy marker conventions older apps still use.
+
+History lives in `~/Library/Application Support/Pastefix/history/`, readable only by your user account. **Settings → General** has a History section to turn capture off, change how many items are kept, or clear everything; **Settings → Shortcut** rebinds ⌘⇧V. Note that ⌘⇧V is also "Paste and Match Style" in some apps — that conflict is a deliberate tradeoff for the more memorable default, and the hotkey is rebindable if it collides with something you use.
+
 ## Settings (Plan 2b)
 
 Pastefix includes a Settings window (⌘, or "Settings…" in the menu) with three tabs:
 
-- **General:** Configure wrap width (default 400 columns), toggle auto-hide-on-blur (dismisses the panel when focus leaves), and choose a custom folder for user scripts (default `~/.config/pastefix/scripts/`).
-- **Shortcut:** Rebind the global hotkey (default ⌘⇧C) using an interactive keyboard recorder.
+- **General:** Configure wrap width (default 400 columns), toggle auto-hide-on-blur (dismisses the panel when focus leaves), choose a custom folder for user scripts (default `~/.config/pastefix/scripts/`), and a **History** section (remember-history toggle, item-count stepper, Clear History).
+- **Shortcut:** Rebind the global hotkey (default ⌘⇧C) and the history hotkey (default ⌘⇧V), each using an interactive keyboard recorder.
 - **Transforms:** Enable/disable individual transforms and drag to reorder them in the palette.
 
 All settings persist via `UserDefaults`. User scripts are watched for changes; editing a script under `~/.config/pastefix/scripts/` updates the palette instantly without relaunch.
