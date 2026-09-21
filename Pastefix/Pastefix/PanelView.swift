@@ -7,7 +7,11 @@ struct PanelView: View {
     @ObservedObject var settings: SettingsStore
     @State private var isPaletteOpen = false
     @State private var isHistoryOpen = false
+    @State private var showPinPopover = false
+    @State private var pinTitle = ""
+    @State private var pinError: String?
     @FocusState private var editorFocused: Bool
+    @FocusState private var pinTitleFocused: Bool
 
     private var workingBinding: Binding<String> {
         Binding(
@@ -99,6 +103,36 @@ struct PanelView: View {
                 .disabled(model.isApplying || model.document?.canRedo != true)
             Button("Refresh") { model.refresh() }
                 .disabled(model.isApplying)
+            Button { showPinPopover = true } label: {
+                Image(systemName: "pin")
+            }
+            .help("Pin this text as a snippet (⌘⇧P)")
+            .accessibilityLabel("Pin this text as a snippet")
+            .keyboardShortcut(isPaletteOpen || isHistoryOpen ? nil : KeyboardShortcut("p", modifiers: [.command, .shift]))
+            .disabled(model.document == nil || isPaletteOpen || isHistoryOpen)
+            .popover(isPresented: $showPinPopover, arrowEdge: .bottom) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Pin as snippet").font(.headline)
+                    TextField("Title (optional)", text: $pinTitle)
+                        .frame(width: 260)
+                        .focused($pinTitleFocused)
+                        .onSubmit(commitPin)
+                    if pinError != nil {
+                        Text(pinError!).font(.caption).foregroundStyle(.red)
+                    }
+                    HStack {
+                        Spacer()
+                        Button("Cancel") { cancelPin() }
+                        Button("Pin", action: commitPin).keyboardShortcut(.defaultAction)
+                    }
+                }
+                .padding()
+                .onAppear { pinTitleFocused = true }
+                // Clicking away dismisses the popover without going through Cancel, so the
+                // reset has to live here as well or the next ⌘⇧P reopens on a stale title and a
+                // stale error.
+                .onDisappear { pinTitle = ""; pinError = nil }
+            }
             Spacer()
             Button { toggleHistory() } label: {
                 Image(systemName: "clock.arrow.circlepath")
@@ -214,6 +248,27 @@ struct PanelView: View {
     private func closeHistory() {
         isHistoryOpen = false
         editorFocused = true
+    }
+
+    private func cancelPin() {
+        pinTitle = ""
+        pinError = nil
+        showPinPopover = false
+    }
+
+    private func commitPin() {
+        switch model.pinCurrentBuffer(title: pinTitle) {
+        case .pinned:
+            pinTitle = ""
+            pinError = nil
+            showPinPopover = false
+        // Two different refusals, and the wrong one is actively misleading: a user who pressed
+        // ⌘⇧P on an empty buffer and reads "Too large to pin" has no idea what to do next.
+        case .nothingToPin:
+            pinError = "Nothing to pin"
+        case .tooLarge:
+            pinError = "Too large to pin"
+        }
     }
 
     private func errorBanner(_ text: String) -> some View {

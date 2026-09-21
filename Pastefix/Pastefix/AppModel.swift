@@ -19,6 +19,11 @@ final class AppModel: ObservableObject {
     let history: HistoryStore
     var onEndSession: (() -> Void)?
 
+    /// The app to paste a snippet into once Pastefix hides, supplied by the delegate from
+    /// `FrontmostAppTracker`. A closure rather than a stored app so the value is read at paste
+    /// time, not at whatever moment the model happened to be wired up.
+    var previousAppProvider: () -> NSRunningApplication? = { nil }
+
     /// Bumped on every summon and every dismissal. An in-flight transform captures the
     /// value it started under, so a result from a session the user has since dismissed
     /// can't land in a newer one — `document != nil` alone doesn't catch a dismiss-then-
@@ -176,6 +181,60 @@ final class AppModel: ObservableObject {
     /// Puts the whole item back on the clipboard and ends the session.
     func copyBack(_ item: HistoryItem) {
         ClipboardBridge.write(text: item.plainText, richRTFD: history.richRTFD(for: item), imagePNG: history.imagePNG(for: item))
+        endSession()
+    }
+
+    // MARK: Pinned snippets
+
+    /// Pin or unpin from a browse surface (the history overlay). The store publishes the
+    /// change, so the overlay's items observer re-ranks and the row re-renders.
+    func togglePin(_ item: HistoryItem) {
+        item.pinned ? history.unpin(item.id) : history.pin(item.id)
+    }
+
+    /// Why a pin didn't happen. The store returns one nil for two very different refusals, and
+    /// the popover has to tell the user which: "Nothing to pin" is a state they can see, "Too
+    /// large" is one they can't.
+    enum PinOutcome: Equatable { case pinned, nothingToPin, tooLarge }
+
+    /// Pins the editor buffer, carrying the origin's rich data so a pinned snippet pastes back
+    /// with its formatting.
+    @discardableResult
+    func pinCurrentBuffer(title: String?) -> PinOutcome {
+        // No session at all, or a buffer that is empty or all whitespace: `HistoryStore.record`
+        // refuses both, so rule them out here rather than reporting them as a size problem.
+        guard let doc = document,
+              !doc.working.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return .nothingToPin }
+        return history.pinText(doc.working, richRTFD: doc.origin.richRTFD, title: title) != nil
+            ? .pinned : .tooLarge
+    }
+
+    /// Copies the item, pastes it into the app the user came from, and hides the panel.
+    ///
+    /// Both the target read and the paste happen *before* `endSession()`, and the order is
+    /// load-bearing rather than tidy. `endSession()` hides the panel synchronously, so afterwards
+    /// the provider would report whatever the window server promoted in our place, and — the part
+    /// that actually breaks — `SnippetPaster` would be asking for cooperative activation as a
+    /// background agent that no longer owns it, which macOS 14+ is entitled to refuse. Hiding
+    /// after is safe: `paste` only requests activation and schedules the ⌘V, which re-checks the
+    /// frontmost app before it fires.
+    ///
+    /// The `.copiedOnly` outcome is deliberately ignored — without Accessibility the snippet is
+    /// still on the clipboard, which is a silent fallback by design; Settings shows the permission
+    /// state rather than interrupting the paste. `onGaveUp` is different, and gets the same beep
+    /// `SnippetHotkeys.fire` uses: a chain that expires after `paste` already predicted `.pasted`
+    /// has closed the panel and pasted nothing, with nothing left on screen to say so. ⇧↵ is in
+    /// fact the likelier of the two paths to expire — shift is itself a blocking modifier, so the
+    /// chain cannot post until the user lets go of the very key they pressed.
+    func pasteIntoPreviousApp(_ item: HistoryItem) {
+        // Nothing to paste as text (an image-only row): behave exactly like ⌘↵. Writing an empty
+        // pasteboard would destroy whatever the user had copied, and the ⌘V that followed would
+        // replace the target's selection with nothing — a silent delete they never asked for.
+        // `copyBack` writes the image and ends the session.
+        guard item.hasText, let text = item.plainText else { copyBack(item); return }
+        let rich = history.richRTFD(for: item)
+        _ = SnippetPaster.paste(text: text, richRTFD: rich, into: previousAppProvider(),
+                                onGaveUp: { NSSound.beep() })
         endSession()
     }
 

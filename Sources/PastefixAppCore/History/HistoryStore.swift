@@ -51,6 +51,14 @@ public final class HistoryStore: ObservableObject {
     public var limits: HistoryLimits { didSet { if enforceLimits() { flush() } else { scheduleWrite() } } }
     public let directory: URL
 
+    /// True when this launch found `index.json` unreadable and moved it aside.
+    ///
+    /// Set once, in `init`, and never cleared: it describes the load, not the current contents.
+    /// Callers use it to tell "the user has no pins" from "we cannot see the user's pins" —
+    /// `items` is empty either way, but only one of those justifies discarding state keyed to
+    /// item ids (see `SnippetHotkeys`).
+    public private(set) var lastLoadQuarantined = false
+
     /// Last index-write failure, or nil after a success.
     ///
     /// Eventually consistent: index writes run off the main actor, so this is updated on a
@@ -73,6 +81,7 @@ public final class HistoryStore: ObservableObject {
         self.indexURL = directory.appendingPathComponent("index.json")
         Self.ensureDirectory(directory)
         let outcome = load()
+        lastLoadQuarantined = outcome.quarantined
         let evicted = enforceLimits()
         // A quarantined index is the only remaining record of which blob belongs to which
         // item, so sweeping against an empty `items` would delete exactly the payloads the
@@ -96,6 +105,9 @@ public final class HistoryStore: ObservableObject {
 
         let hash = image.map { SHA256.hash(data: $0).map { String(format: "%02x", $0) }.joined() }
         if let existing = items.firstIndex(where: { hash != nil ? $0.imageHash == hash : ($0.imageFile == nil && $0.plainText == text) }) {
+            // A pin holds its own place: copying it again must not drag it into the recency
+            // list or refresh `capturedAt`, which would reorder the unpinned section around it.
+            if items[existing].pinned { return items[existing] }
             if existing == 0 { return items[0] }
             var moved = items.remove(at: existing)
             moved.capturedAt = now
@@ -140,14 +152,92 @@ public final class HistoryStore: ObservableObject {
         flush()   // user-initiated deletion: durable immediately, debounce buys nothing
     }
 
+    /// Drops every unpinned item and its blobs. Pins survive: they are saved snippets, not
+    /// history, and "clear history" is not "delete my snippets". Use `clearAll` to drop those too.
     public func clear() {
+        let victims = items.filter { !$0.pinned }
+        items.removeAll { !$0.pinned }
+        victims.forEach { deleteBlobs(ofItemWith: $0.id) }
+        // A quarantined index is a verbatim plaintext copy of the history it described, so
+        // "removes every remembered item and its files from disk" has to cover it.
+        removeQuarantinedIndexes()
+        flush()
+    }
+
+    /// The panic button: removes every item including pins, every blob, and every quarantined
+    /// index. Nothing a user could call "remembered" is left in `directory` but `index.json`.
+    public func clearAll() {
         let ids = items.map(\.id)
         items.removeAll()
         ids.forEach(deleteBlobs(ofItemWith:))
-        // A quarantined index is a verbatim plaintext copy of the history it described, so
-        // Settings' "removes every remembered item and its files from disk" has to cover it.
         removeQuarantinedIndexes()
         flush()
+    }
+
+    // MARK: Pinning
+
+    /// Pinned items, newest pin first. Independent of `items` order, which stays recency.
+    public var pinnedItems: [HistoryItem] {
+        items.filter(\.pinned).sorted { ($0.pinnedAt ?? .distantPast) > ($1.pinnedAt ?? .distantPast) }
+    }
+    public var unpinnedItems: [HistoryItem] { items.filter { !$0.pinned } }
+
+    /// Pin mutations flush like `remove`: a pin the user just made must survive a crash inside
+    /// the debounce window, and an unpin can evict blobs that are already gone from disk.
+    public func pin(_ id: UUID, title: String? = nil, now: Date = Date()) {
+        guard let i = items.firstIndex(where: { $0.id == id }) else { return }
+        items[i].pinned = true
+        items[i].pinnedAt = now
+        items[i].title = Self.cleanTitle(title) ?? items[i].title
+        flush()
+    }
+
+    /// Unpinning rejoins the capped section as the NEWEST entry, not at the item's original
+    /// capture position: a long-lived pin is the oldest thing in `items`, so re-applying the
+    /// limits against its old `capturedAt` would evict the item the user just unpinned. It
+    /// behaves like a fresh capture instead.
+    ///
+    /// The `title` is deliberately kept. Unpinning is one unconfirmed keystroke (⌘P toggles), and
+    /// the title is text the user typed — clearing it would make a mis-hit destructive rather than
+    /// reversible, and re-pinning the same item is far more likely to be an undo than a fresh
+    /// start. Only the pin state itself is cleared; surfaces show the label for pinned rows only,
+    /// so a retained title is invisible until the item is pinned again. `rename(_:title:)` with a
+    /// blank string is how a user actually clears one.
+    public func unpin(_ id: UUID, now: Date = Date()) {
+        guard let i = items.firstIndex(where: { $0.id == id }) else { return }
+        var item = items.remove(at: i)
+        item.pinned = false
+        item.pinnedAt = nil
+        item.capturedAt = now
+        items.insert(item, at: 0)
+        // The item rejoins the capped section, which may now be over its limits.
+        _ = enforceLimits()
+        flush()
+    }
+
+    /// Sets or clears the label. A blank title clears it.
+    public func rename(_ id: UUID, title: String?) {
+        guard let i = items.firstIndex(where: { $0.id == id }) else { return }
+        items[i].title = Self.cleanTitle(title)
+        flush()
+    }
+
+    /// Pins `text`, promoting an existing identical text item rather than duplicating it.
+    /// Returns nil when `record` refuses the text (over `maxTextBytes`, or empty).
+    @discardableResult
+    public func pinText(_ text: String, richRTFD: Data?, title: String?, now: Date = Date()) -> HistoryItem? {
+        if let i = items.firstIndex(where: { $0.imageFile == nil && $0.plainText == text }) {
+            pin(items[i].id, title: title, now: now)
+            return items[i]
+        }
+        guard let created = record(CaptureCandidate(plainText: text, richRTFD: richRTFD), now: now) else { return nil }
+        pin(created.id, title: title, now: now)
+        return items.first { $0.id == created.id }
+    }
+
+    private static func cleanTitle(_ t: String?) -> String? {
+        let s = t?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return s.isEmpty ? nil : s
     }
 
     public func richRTFD(for item: HistoryItem) -> Data? {
@@ -168,18 +258,23 @@ public final class HistoryStore: ObservableObject {
     @discardableResult
     private func enforceLimits() -> Bool {
         var evicted = false
+        // Pins are exempt from both budgets: the victim is always the oldest UNPINNED item,
+        // and a history of nothing but pins never evicts anything.
+        func evictOldestUnpinned() -> Bool {
+            guard let i = items.lastIndex(where: { !$0.pinned }) else { return false }
+            let victim = items.remove(at: i)
+            deleteBlobs(ofItemWith: victim.id)
+            return true
+        }
         // Floor of 1: the cap must never evict the item `record` just inserted and is about
         // to return, even if a caller sets `maxItems` to zero or a negative number.
         let cap = max(1, limits.maxItems)
-        while items.count > cap, let last = items.popLast() {
-            deleteBlobs(ofItemWith: last.id); evicted = true
-        }
-        // `items.count > 1` deliberately leaves a single item that is on its own larger than
-        // maxTotalBytes in place, over budget, rather than evicting what was just recorded.
-        // Unreachable with the shipped defaults (5 MB + 256 KB per item vs 50 MB total).
-        while totalBytes > limits.maxTotalBytes, items.count > 1, let last = items.popLast() {
-            deleteBlobs(ofItemWith: last.id); evicted = true
-        }
+        while unpinnedItems.count > cap, evictOldestUnpinned() { evicted = true }
+        // `unpinnedItems.count > 1` deliberately leaves a single unpinned item that is on its
+        // own larger than maxTotalBytes in place, over budget, rather than evicting what was
+        // just recorded. Unreachable with the shipped defaults (5 MB + 256 KB per item vs 50 MB
+        // total) unless pins alone already exceed them.
+        while totalBytes > limits.maxTotalBytes, unpinnedItems.count > 1, evictOldestUnpinned() { evicted = true }
         return evicted
     }
 

@@ -3,17 +3,29 @@ import Foundation
 @testable import PastefixAppCore
 
 @MainActor
-@Suite struct SettingsStoreTests {
-    /// Runs `body` against an empty, uniquely-named UserDefaults suite and tears the
-    /// suite down afterwards. Without the teardown every test run leaves a stray
-    /// `pastefix.test.<UUID>.plist` behind in ~/Library/Preferences — 30+ of them had
-    /// accumulated before this was fixed.
+// `.serialized` because every test now shares one UserDefaults suite. Synchronous
+// `@MainActor` bodies already cannot interleave, but the marker is what keeps that true
+// if a test ever gains an `await`.
+@Suite(.serialized) struct SettingsStoreTests {
+    /// The one defaults suite these tests use. Deliberately a fixed name rather than a
+    /// per-test UUID: a UUID suite is a new domain that `cfprefsd` flushes to
+    /// ~/Library/Preferences, so every run left another `pastefix.test.<UUID>.plist`
+    /// behind (hundreds had accumulated). One name means at most one file, and the
+    /// teardown below removes that.
+    private static let suiteName = "pastefix.test"
+
+    /// Runs `body` against an empty suite, clearing the domain before *and* after so
+    /// tests cannot see each other's writes. Safe because the tests share one suite
+    /// that is both `@MainActor` and `.serialized`, so no two of them are ever inside
+    /// this helper at once.
     ///
-    /// Clearing the domain alone is not enough: `cfprefsd` still flushes an empty
-    /// plist to disk for a suite it has seen, so the backing file is unlinked too.
-    /// Both cleanup steps are best-effort and must never fail a test.
+    /// Clearing the domain alone is not enough: `cfprefsd` still flushes an empty plist
+    /// to disk for a suite it has seen, so the backing file is unlinked too. Every
+    /// cleanup step is best-effort and must never fail a test. `cfprefsd` can still win
+    /// the last race and re-flush an empty `pastefix.test.plist` after the final
+    /// teardown; with a fixed name that is one reused file rather than one per test.
     private func withFreshDefaults(_ body: @MainActor (UserDefaults) -> Void) {
-        let suite = "pastefix.test.\(UUID().uuidString)"
+        let suite = Self.suiteName
         let d = UserDefaults(suiteName: suite)!
         d.removePersistentDomain(forName: suite)
         defer {

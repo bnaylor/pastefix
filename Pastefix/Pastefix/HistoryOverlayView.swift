@@ -45,6 +45,9 @@ struct HistoryOverlayView: View {
     /// Search row (46) + two dividers (2) + footer (32), rounded up. Only has to be an
     /// over-estimate: the list gets an exact height, so anything left over is margin.
     private static let cardChromeHeight: CGFloat = 84
+    /// One plain-list section header. An estimate, like `cardChromeHeight`; two of them come to
+    /// the single row's worth the sectioned case used to deduct wholesale.
+    private static let sectionHeaderHeight: CGFloat = 26
 
     init(model: AppModel, onClose: @escaping () -> Void) {
         _model = ObservedObject(wrappedValue: model)
@@ -66,7 +69,7 @@ struct HistoryOverlayView: View {
                     .onTapGesture { onClose() }
                     .accessibilityLabel("Close clipboard history")
                     .accessibilityAddTraits(.isButton)
-                card(visibleRows: Self.visibleRows(forHeight: geometry.size.height))
+                card(visibleRows: Self.visibleRows(forHeight: geometry.size.height, headers: headerCount))
                     .frame(maxWidth: PanelMetrics.paletteCardWidth)
                     // maxWidth + horizontal padding rather than a fixed width: on a panel narrower
                     // than the card, the card shrinks instead of overflowing off both edges.
@@ -86,15 +89,39 @@ struct HistoryOverlayView: View {
         .onDisappear { thumbnails.removeAll(); thumbnailOrder.removeAll() }
     }
 
-    /// How many rows fit above the footer at this panel height.
-    private static func visibleRows(forHeight height: CGFloat) -> Int {
+    /// How many rows fit above the footer at this panel height, given the number of section
+    /// headers the list will actually draw — without that deduction the footer, with its key
+    /// hints, is pushed off the bottom of the minimum-height panel (the Plan 6 lesson). Deducting
+    /// for two headers when only one is shown (every result pinned, so there is no History
+    /// section) costs a row the panel had room for.
+    private static func visibleRows(forHeight height: CGFloat, headers: Int) -> Int {
         let available = height - cardTopPadding - cardBottomMargin - cardChromeHeight
+            - CGFloat(headers) * sectionHeaderHeight
         return min(maxVisibleRows, max(1, Int(available / rowHeight)))
+    }
+
+    /// Headers the list renders: none when flat, one when every result is pinned (no History
+    /// section to head), two when both sections show.
+    private var headerCount: Int {
+        guard isSectioned else { return 0 }
+        let pinned = results.prefix { $0.item.pinned }.count
+        return pinned == results.count ? 1 : 2
+    }
+
+    /// Pins get their own section only on an empty query: with a query the list is one ranked
+    /// run (pins merely sort ahead at equal tier), and splitting it would imply a grouping the
+    /// ranking doesn't have.
+    private var isSectioned: Bool {
+        query.trimmingCharacters(in: .whitespaces).isEmpty && results.contains { $0.item.pinned }
     }
 
     private func card(visibleRows: Int) -> some View {
         let items = results
         let selected = clampedSelection(in: items)
+        // `HistorySearch.rank` puts pins first on an empty query, so the split is the first
+        // unpinned result and every row keeps its index in `results` — `selection` stays a
+        // single global index across both sections.
+        let pinnedCount = isSectioned ? items.prefix { $0.item.pinned }.count : 0
         return VStack(spacing: 0) {
             HStack(spacing: 8) {
                 Image(systemName: "clock.arrow.circlepath").foregroundStyle(.secondary)
@@ -118,15 +145,14 @@ struct HistoryOverlayView: View {
                     .frame(maxWidth: .infinity, minHeight: 120)
             } else {
                 ScrollViewReader { proxy in
-                    List(Array(items.enumerated()), id: \.element.id) { index, result in
-                        row(result, isSelected: index == selected)
-                            .contentShape(Rectangle())
-                            .onTapGesture { open(items, index) }
-                            .listRowBackground(index == selected ? Color.accentColor.opacity(0.25) : Color.clear)
-                    }
-                    .listStyle(.plain)
-                    .scrollContentBackground(.hidden)
-                    .frame(height: CGFloat(min(items.count, visibleRows)) * Self.rowHeight)
+                    list(items, selected: selected, pinnedCount: pinnedCount)
+                        .listStyle(.plain)
+                        .scrollContentBackground(.hidden)
+                        // The headers' height is exactly what `visibleRows` already gave up for
+                        // them, so the list still occupies at most the budget the footer was
+                        // measured against.
+                        .frame(height: CGFloat(min(items.count, visibleRows)) * Self.rowHeight
+                               + CGFloat(headerCount) * Self.sectionHeaderHeight)
                     .onChange(of: selected) { _, new in
                         guard items.indices.contains(new) else { return }
                         proxy.scrollTo(items[new].id)
@@ -135,12 +161,9 @@ struct HistoryOverlayView: View {
             }
             Divider()
             HStack(spacing: 12) {
-                Label("Open", systemImage: "return")
-                Label("Choose", systemImage: "arrow.up.arrow.down")
-                Text("⌘↵ Copy")
-                Text("⌘⌫ Remove")
-                Text("esc Close")
-                Spacer()
+                Text("↵ Open   ⌘↵ Copy   ⇧↵ Paste   ⌘P Pin   ⌘⌫ Remove   esc Close")
+                    .lineLimit(1)
+                Spacer(minLength: 8)
                 Text("\(history.items.count) items · \(HistoryFormatting.byteLabel(history.totalBytes))")
             }
             .font(.caption).foregroundStyle(.secondary)
@@ -161,6 +184,19 @@ struct HistoryOverlayView: View {
             // ⌘⌫ handler in the view — two would risk removing two items on one press.
             Button("Remove from clipboard history", action: removeSelection)
                 .keyboardShortcut(.delete, modifiers: .command)
+                .frame(width: 0, height: 0)
+                .opacity(0)
+                .accessibilityHidden(true)
+            // ⌘P and ⇧↵ are key equivalents for the same reason ⌘⌫ is (`0966c97`): the search
+            // field is first responder, and `performKeyEquivalent:` runs before the field editor
+            // sees the key. Both handlers read the live `@State results` through `selectedItem()`.
+            Button("Pin or unpin", action: togglePinSelected)
+                .keyboardShortcut("p", modifiers: .command)
+                .frame(width: 0, height: 0)
+                .opacity(0)
+                .accessibilityHidden(true)
+            Button("Paste into the previous app", action: pasteSelected)
+                .keyboardShortcut(.return, modifiers: .shift)
                 .frame(width: 0, height: 0)
                 .opacity(0)
                 .accessibilityHidden(true)
@@ -197,9 +233,45 @@ struct HistoryOverlayView: View {
         }
     }
 
+    /// Sectioned when there are pins and no query, flat otherwise. Both paths render the same
+    /// `results` in the same order, so a row's index — and therefore `selection` — means the
+    /// same thing either way.
+    @ViewBuilder
+    private func list(_ items: [HistorySearchResult], selected: Int, pinnedCount: Int) -> some View {
+        let indexed = Array(items.enumerated())
+        List {
+            if pinnedCount > 0 {
+                Section("Pinned") { rows(indexed.prefix(pinnedCount), items: items, selected: selected) }
+                if pinnedCount < items.count {
+                    Section("History") { rows(indexed.dropFirst(pinnedCount), items: items, selected: selected) }
+                }
+            } else {
+                rows(indexed[...], items: items, selected: selected)
+            }
+        }
+    }
+
+    private func rows(
+        _ indexed: ArraySlice<(offset: Int, element: HistorySearchResult)>,
+        items: [HistorySearchResult],
+        selected: Int
+    ) -> some View {
+        ForEach(indexed, id: \.element.id) { index, result in
+            row(result, isSelected: index == selected)
+                .contentShape(Rectangle())
+                .onTapGesture { open(items, index) }
+                .listRowBackground(index == selected ? Color.accentColor.opacity(0.25) : Color.clear)
+        }
+    }
+
     private func row(_ result: HistorySearchResult, isSelected: Bool) -> some View {
         let item = result.item
         return HStack(spacing: 10) {
+            if item.pinned {
+                Image(systemName: "pin.fill")
+                    .foregroundStyle(Color.accentColor)
+                    .accessibilityHidden(true)
+            }
             if item.kind == .image {
                 thumbnail(for: item)
                     .frame(width: Self.thumbnailSide, height: Self.thumbnailSide)
@@ -207,7 +279,14 @@ struct HistoryOverlayView: View {
                     .accessibilityHidden(true)
             }
             VStack(alignment: .leading, spacing: 2) {
-                Text(highlightedPreview(result)).lineLimit(2)
+                // A titled pin spends one of the row's two text lines on the label, so the
+                // preview drops to one line and the row keeps its height. Pinned rows only: an
+                // unpinned item keeps its title (unpin is reversible, see `HistoryStore.unpin`)
+                // but a label is a property of a snippet, not of a history entry.
+                if let title = rowTitle(for: item) {
+                    Text(title).fontWeight(.semibold).lineLimit(1)
+                }
+                Text(highlightedPreview(result)).lineLimit(rowTitle(for: item) == nil ? 2 : 1)
                 HStack(spacing: 6) {
                     if item.kind == .richText {
                         Text("rich")
@@ -231,6 +310,10 @@ struct HistoryOverlayView: View {
             }
         }
         .padding(.vertical, 4)
+    }
+
+    private func rowTitle(for item: HistoryItem) -> String? {
+        item.pinned ? item.title : nil
     }
 
     private func trailingLabel(for item: HistoryItem) -> String {
@@ -320,7 +403,13 @@ struct HistoryOverlayView: View {
         selection = ((current + delta) % count + count) % count
     }
 
+    /// `.onSubmit` is plain Return's handler. The hidden ⇧↵ button is a key *equivalent*, so it
+    /// consumes the shifted press before the field editor's `insertNewline:` can turn it into a
+    /// submit — but if it ever doesn't, submitting would silently open the item instead of
+    /// pasting it, so route a shifted submit to the paste it was meant to be rather than
+    /// letting the two keys do the same thing.
     private func openSelection() {
+        if NSApp.currentEvent?.modifierFlags.contains(.shift) == true { pasteSelected(); return }
         guard let item = selectedItem() else { return }
         open(item)
     }
@@ -352,5 +441,37 @@ struct HistoryOverlayView: View {
     private func removeSelection() {
         guard let item = selectedItem() else { return }
         history.remove(item.id)
+    }
+
+    /// The overlay stays open: pinning is a curation gesture, and the row re-ranks under the
+    /// cursor (the store publishes, `onChange(of: history.items)` re-ranks) so the user can see
+    /// it land in the Pinned section.
+    /// Pinning re-ranks the list under the highlight, so the selection has to follow the item.
+    /// Left where it was, `selection` would designate a *different* row: a second ⌘P — the natural
+    /// "undo that" — would then pin an unrelated item, or unpin whichever pin slid into its place.
+    /// ⌘P⌘P on one row is a no-op by design (unpin keeps the title, and `SnippetHotkeys` keeps the
+    /// recorded shortcut); ⌘P on the *wrong* row still is not, hence following the item.
+    /// The store mutates synchronously, so the new order is readable immediately; the later
+    /// `onChange(of: history.items)` refresh re-ranks to the same value and is a no-op.
+    private func togglePinSelected() {
+        guard let item = selectedItem() else { return }
+        // An image cannot *become* a pin (spec, README): it would get a hotkey recorder whose
+        // shortcut could never paste anything, and pinned bytes are exempt from eviction, so a
+        // handful of screenshot pins can starve history. An image pinned before this guard
+        // existed must still be un-pinnable from here, hence `|| item.pinned`. The UI is the
+        // gate — `HistoryStore.pin` stays policy-free.
+        guard item.hasText || item.pinned else { NSSound.beep(); return }
+        model.togglePin(item)
+        refreshResults()
+        selection = results.firstIndex { $0.item.id == item.id } ?? clampedSelection(in: results)
+    }
+
+    /// Dismisses the overlay first — `onClose` only collapses the overlay within the panel, it
+    /// does not hide the panel or change activation, so the ⇧↵ paste that follows still runs while
+    /// Pastefix is the active app (which is what `SnippetPaster` needs to hand over activation).
+    private func pasteSelected() {
+        guard let item = selectedItem() else { return }
+        onClose()
+        model.pasteIntoPreviousApp(item)
     }
 }

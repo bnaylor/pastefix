@@ -283,4 +283,126 @@ import Foundation
             #expect(names.contains { $0.hasPrefix("index.json.corrupt-") })
         }
     }
+    @Test func quarantinedLoadIsFlaggedAndANormalOneIsNot() throws {
+        try withDir { dir in
+            let s = HistoryStore(directory: dir)
+            s.record(text("keep")); s.flush()
+            #expect(!s.lastLoadQuarantined)                              // fresh directory
+            #expect(!HistoryStore(directory: dir).lastLoadQuarantined)   // readable index
+            try Data("not json".utf8).write(to: dir.appendingPathComponent("index.json"))
+            // The flag distinguishes "no items" from "cannot read the items": callers key state
+            // to item ids and must not discard it on the second one.
+            let corrupt = HistoryStore(directory: dir)
+            #expect(corrupt.items.isEmpty && corrupt.lastLoadQuarantined)
+            // It describes the load, so the *next* launch (index rewritten) is clean again.
+            corrupt.flush()
+            #expect(!HistoryStore(directory: dir).lastLoadQuarantined)
+        }
+    }
+    // MARK: Pinned snippets
+
+    @Test func pinUnpinRenameAndOrdering() throws {
+        try withDir { dir in
+            let s = HistoryStore(directory: dir)
+            let a = s.record(text("a"))!; let b = s.record(text("b"))!; s.record(text("c"))
+            // Explicit `now:` on both pins: `sorted(by:)` is not stable, so two pins made in the
+            // same instant could order either way and the assertion below would flake.
+            s.pin(a.id, title: "  Alpha ", now: Date(timeIntervalSince1970: 1_000))
+            s.pin(b.id, now: Date(timeIntervalSince1970: 2_000))
+            #expect(s.pinnedItems.map(\.id) == [b.id, a.id])            // newest pinned first
+            #expect(s.pinnedItems.last?.title == "Alpha")
+            s.rename(b.id, title: "  "); #expect(s.pinnedItems.first?.title == nil)
+            s.unpin(a.id)
+            #expect(s.pinnedItems.map(\.id) == [b.id] && s.unpinnedItems.count == 2)
+            #expect(s.items.first { $0.id == a.id }?.pinnedAt == nil)
+            // Unpin keeps the user's label: a mis-hit ⌘P must be undoable, and a re-pin restores
+            // the title rather than making the user type it again.
+            #expect(s.items.first { $0.id == a.id }?.title == "Alpha")
+        }
+    }
+    @Test func pinTextCreatesOrPromotes() throws {
+        try withDir { dir in
+            let s = HistoryStore(directory: dir)
+            let existing = s.record(text("boiler"))!
+            let promoted = s.pinText("boiler", richRTFD: nil, title: "B")!
+            #expect(promoted.id == existing.id && promoted.pinned && promoted.title == "B")
+            let fresh = s.pinText("new snippet", richRTFD: Data([1]), title: nil)!
+            #expect(fresh.pinned && fresh.kind == .richText && fresh.sourceAppName == nil)
+            #expect(s.pinText(String(repeating: "x", count: 300_000), richRTFD: nil, title: nil) == nil)
+        }
+    }
+    @Test func copyingAPinIsANoOp() throws {
+        try withDir { dir in
+            let s = HistoryStore(directory: dir)
+            let p = s.record(text("pin me"))!; s.pin(p.id); s.record(text("later"))
+            let before = s.items.map(\.id)
+            let r = s.record(text("pin me"), now: Date(timeIntervalSince1970: 2_000_000_000))
+            #expect(r?.id == p.id && s.items.map(\.id) == before && s.items.first { $0.id == p.id }?.capturedAt == p.capturedAt)
+        }
+    }
+    @Test func pinsAreExemptFromCapAndByteEviction() throws {
+        try withDir { dir in
+            let s = HistoryStore(directory: dir, limits: .init(maxItems: 2, maxImageBytes: 100, maxTotalBytes: 150))
+            let p = s.record(text("keep"))!; s.pin(p.id)
+            s.record(text("1")); s.record(text("2")); s.record(text("3"))
+            #expect(s.items.contains { $0.id == p.id } && s.unpinnedItems.count == 2)
+            let img = s.record(CaptureCandidate(imagePNG: png(1, size: 90)))!; s.pin(img.id)
+            s.record(CaptureCandidate(imagePNG: png(2, size: 90))); s.record(CaptureCandidate(imagePNG: png(3, size: 90)))
+            #expect(s.items.contains { $0.id == img.id })
+        }
+    }
+    @Test func clearKeepsPinsAndTheirBlobs() throws {
+        try withDir { dir in
+            let s = HistoryStore(directory: dir)
+            let p = s.pinText("rich pin", richRTFD: Data([7]), title: nil)!; s.record(text("gone"))
+            s.clear()
+            #expect(s.items.map(\.id) == [p.id] && s.richRTFD(for: p) == Data([7]))
+        }
+    }
+    @Test func unpinReappliesCap() throws {
+        try withDir { dir in
+            let s = HistoryStore(directory: dir, limits: .init(maxItems: 1))
+            let p = s.record(text("p"))!; s.pin(p.id); s.record(text("q"))
+            s.unpin(p.id)
+            // The cap is enforced again (2 unpinned -> 1), and the survivor is the item that
+            // just rejoined: unpinning must never be a disguised delete.
+            #expect(s.items.count == 1 && s.items[0].plainText == "p")
+        }
+    }
+    @Test func unpinnedItemBecomesNewestNotTheNextVictim() throws {
+        try withDir { dir in
+            let s = HistoryStore(directory: dir, limits: .init(maxItems: 5))
+            let p = s.record(text("p"))!; s.pin(p.id)
+            for i in 0..<5 { s.record(text("t\(i)")) }
+            s.unpin(p.id)
+            #expect(s.items.count == 5 && s.items[0].id == p.id)          // rejoins as the newest
+            #expect(!s.items.contains { $0.plainText == "t0" })           // the oldest capture goes instead
+            #expect(s.items[0].capturedAt > p.capturedAt)
+        }
+    }
+    @Test func clearAllWipesPinsAndBlobsToo() throws {
+        try withDir { dir in
+            let s = HistoryStore(directory: dir)
+            let p = s.pinText("rich pin", richRTFD: Data([7]), title: "T")!
+            s.record(CaptureCandidate(imagePNG: png(3))); s.record(text("gone"))
+            try Data("x".utf8).write(to: dir.appendingPathComponent("index.json.corrupt-1"))
+            s.clearAll()
+            #expect(s.items.isEmpty && s.richRTFD(for: p) == nil)
+            let names = try FileManager.default.contentsOfDirectory(atPath: dir.path)
+            #expect(names == ["index.json"])
+        }
+    }
+    @Test func pinFieldsPersistAndOldIndexesLoad() throws {
+        try withDir { dir in
+            let s = HistoryStore(directory: dir)
+            let p = s.record(text("x"))!; s.pin(p.id, title: "T"); s.flush()
+            let s2 = HistoryStore(directory: dir)
+            #expect(s2.items[0].pinned && s2.items[0].title == "T" && s2.items[0].pinnedAt != nil)
+            // Pre-Plan-9 index: no pinned/pinnedAt/title keys.
+            let legacy = #"[{"id":"00000000-0000-0000-0000-000000000001","capturedAt":"2026-09-01T00:00:00Z","plainText":"old","byteCount":3}]"#
+            try Data(legacy.utf8).write(to: dir.appendingPathComponent("index.json"))
+            let s3 = HistoryStore(directory: dir)
+            #expect(s3.items.count == 1 && s3.items[0].pinned == false && s3.items[0].title == nil)
+        }
+    }
 }

@@ -15,15 +15,33 @@ final class FrontmostAppTracker {
     private let workspace: NSWorkspace
     private let retention: TimeInterval = 5
 
+    /// The app that was frontmost before the current one: the app to paste into after Pastefix
+    /// hides. Pastefix's own activations are skipped, so summoning the panel (or the menu bar)
+    /// never overwrites the user's real target.
+    private(set) var previousApp: NSRunningApplication?
+    /// The newest activation seen, kept as a running application (not just an id) so it can
+    /// become `previousApp` on the next switch.
+    private var currentApp: NSRunningApplication?
+
     init(workspace: NSWorkspace = .shared) {
         self.workspace = workspace
+        currentApp = workspace.frontmostApplication
         if let app = workspace.frontmostApplication { record(app, at: Date()) }
         // The returned token is deliberately not stored: the notification center owns it, and
         // this observer is never removed (see the class note above).
         _ = workspace.notificationCenter.addObserver(forName: NSWorkspace.didActivateApplicationNotification,
                                                      object: workspace, queue: .main) { [weak self] note in
             guard let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication else { return }
-            MainActor.assumeIsolated { self?.record(app, at: Date()) }
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                if let cur = self.currentApp,
+                   cur.bundleIdentifier != Bundle.main.bundleIdentifier,
+                   cur.processIdentifier != app.processIdentifier {
+                    self.previousApp = cur
+                }
+                self.currentApp = app
+                self.record(app, at: Date())
+            }
         }
     }
 

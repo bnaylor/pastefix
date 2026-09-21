@@ -75,6 +75,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         directory: Self.historyDirectory,
         limits: HistoryLimits(maxItems: settings.historyMaxItems))
     private(set) lazy var model = AppModel(settings: settings, history: history)
+    private(set) lazy var snippetHotkeys = SnippetHotkeys(history: history)
     let updater = UpdaterController()
     private var panel: PanelController?
     private var scriptWatcher: ScriptWatcher?
@@ -154,6 +155,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // synchronously here would hand the monitor the list from *before* the edit.
         settings.$historyExcludedBundleIDs.dropFirst().removeDuplicates().receive(on: DispatchQueue.main)
             .sink { [weak self] _ in MainActor.assumeIsolated { self?.rebuildMonitor() } }
+            .store(in: &cancellables)
+
+        // Pasting a snippet targets the app the user was in before Pastefix took focus — but only
+        // while we actually hold the front. A click onto the floating panel makes it key without
+        // activating us (`.nonactivatingPanel`, so no activation notification), which would leave
+        // the tracker reporting the app from before the user's last detour. When we are not the
+        // active app the frontmost one is, by definition, what the user is typing into — the same
+        // rule `SnippetHotkeys.fire` uses.
+        model.previousAppProvider = { [weak self] in
+            NSApp.isActive ? self?.frontmostTracker.previousApp : NSWorkspace.shared.frontmostApplication
+        }
+
+        // One global shortcut per pinned snippet, re-synced whenever the pin set changes.
+        snippetHotkeys.sync()
+        history.$items
+            .map { Set($0.filter(\.pinned).map(\.id)) }
+            .removeDuplicates()
+            // Pin/unpin arrives one item at a time, but a clear() or a cap trim can republish
+            // `items` repeatedly in a single pass; coalesce so the shortcuts are rebuilt once.
+            .debounce(for: .milliseconds(200), scheduler: DispatchQueue.main)
+            .sink { [weak self] _ in MainActor.assumeIsolated { self?.snippetHotkeys.sync() } }
             .store(in: &cancellables)
 
         // Live-reload the palette when the user's scripts directory changes.

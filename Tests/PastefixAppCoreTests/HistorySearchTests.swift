@@ -28,4 +28,12 @@ import Foundation
         let preview = HistoryFormatting.previewText(for: r.item)
         #expect(r.matchedRanges.map { String(preview[$0]) } == ["notes"])
     }
+    @Test func pinsComeFirstAndTitlesMatch() {
+        var pinned = HistoryItem(plainText: "zeta body", sourceAppName: "Notes"); pinned.pinned = true; pinned.pinnedAt = Date(); pinned.title = "Signature"
+        let plain = HistoryItem(plainText: "alpha body")
+        let items = [plain, pinned]                                   // capture order: plain newest
+        #expect(HistorySearch.rank(query: "", in: items).map(\.id) == [pinned.id, plain.id])
+        #expect(HistorySearch.rank(query: "signat", in: items).first?.id == pinned.id)
+        #expect(HistorySearch.rank(query: "body", in: items).map(\.id) == [pinned.id, plain.id])   // tie -> pin first
+    }
 }
