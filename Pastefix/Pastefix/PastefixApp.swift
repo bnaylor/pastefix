@@ -45,7 +45,9 @@ struct CheckForUpdatesButton: View {
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private(set) var settings = SettingsStore()
-    private(set) lazy var history = HistoryStore(directory: Self.historyDirectory)
+    private(set) lazy var history = HistoryStore(
+        directory: Self.historyDirectory,
+        limits: HistoryLimits(maxItems: settings.historyMaxItems))
     private(set) lazy var model = AppModel(settings: settings, history: history)
     let updater = UpdaterController()
     private var panel: PanelController?
@@ -91,9 +93,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         KeyboardShortcuts.onKeyUp(for: .summonHistory) { [weak self] in
             self?.summonHistory()
         }
-        history.limits.maxItems = settings.historyMaxItems
+        // `history` is already constructed with this cap; no need to reassert it here.
         settings.$historyMaxItems.dropFirst().removeDuplicates().receive(on: DispatchQueue.main)
-            .sink { [weak self] n in MainActor.assumeIsolated { self?.history.limits.maxItems = n } }
+            .sink { [weak self] n in
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    // @Published emits from willSet, before SettingsStore's own didSet clamp —
+                    // an in-range value can arrive here still raw (e.g. a live-typed "2" before
+                    // "20" lands), and assigning it straight through would evict and permanently
+                    // delete blobs for a value the setting itself never actually holds.
+                    let clamped = min(max(n, 20), 1000)
+                    guard clamped != self.history.limits.maxItems else { return }
+                    self.history.limits.maxItems = clamped
+                }
+            }
             .store(in: &cancellables)
         updateMonitor(enabled: settings.historyEnabled)
         settings.$historyEnabled.dropFirst().removeDuplicates().receive(on: DispatchQueue.main)
@@ -146,7 +159,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func updateMonitor(enabled: Bool) {
         if enabled {
             if pasteboardMonitor == nil {
-                pasteboardMonitor = PasteboardMonitor(filters: [ConcealedTypeFilter()]) { [weak self] candidate in
+                pasteboardMonitor = PasteboardMonitor(filters: [ConcealedTypeFilter()], maxImageBytes: history.limits.maxImageBytes) { [weak self] candidate in
                     self?.history.record(candidate)
                 }
             }

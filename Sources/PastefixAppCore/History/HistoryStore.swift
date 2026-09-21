@@ -98,8 +98,9 @@ public final class HistoryStore: ObservableObject {
             if existing == 0 { return items[0] }
             var moved = items.remove(at: existing)
             moved.capturedAt = now
-            moved.sourceBundleID = candidate.sourceBundleID
-            moved.sourceAppName = candidate.sourceAppName
+            // Keep the ORIGINAL source: re-copying an item (e.g. AppModel.copyBack) re-writes
+            // the pasteboard, which the monitor then records as coming from Pastefix itself —
+            // relabeling every reused item would erase where it actually came from.
             items.insert(moved, at: 0)
             scheduleWrite()
             return moved

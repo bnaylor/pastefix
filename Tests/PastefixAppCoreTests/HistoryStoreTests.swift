@@ -49,14 +49,19 @@ import Foundation
         try withDir { dir in
             let s = HistoryStore(directory: dir)
             let a = s.record(text("a"))!; s.record(text("b"))
-            let again = s.record(text("a"), now: Date(timeIntervalSince1970: 2_000_000_000))!
+            // Promote "a" with a different source (simulating AppModel.copyBack re-writing the
+            // pasteboard, which the monitor then attributes to Pastefix itself) — the original
+            // source must survive the promotion, only capturedAt refreshes.
+            let again = s.record(text("a", app: "Pastefix"), now: Date(timeIntervalSince1970: 2_000_000_000))!
             #expect(again.id == a.id && s.items.count == 2 && s.items[0].id == a.id)
             #expect(s.items[0].capturedAt == Date(timeIntervalSince1970: 2_000_000_000))
+            #expect(s.items[0].sourceAppName == "Notes")
             // Re-recording the top item is a no-op: a distinct `now:` must not be applied.
             let top = s.record(text("a"), now: Date(timeIntervalSince1970: 2_100_000_000))
             #expect(top?.id == a.id && s.items.count == 2)
             #expect(top?.capturedAt == Date(timeIntervalSince1970: 2_000_000_000))
             #expect(s.items[0].capturedAt == Date(timeIntervalSince1970: 2_000_000_000))
+            #expect(s.items[0].sourceAppName == "Notes")
         }
     }
     @Test func imageDeduplicatesByHash() throws {

@@ -136,6 +136,9 @@ final class AppModel: ObservableObject {
 
     /// Starts a new session from a history item (rich data attached when present).
     func load(_ item: HistoryItem) {
+        // An image-only item has no text to edit; opening a session would silently discard the
+        // image. Put it straight back on the clipboard instead of opening an empty editor.
+        guard item.hasText else { copyBack(item); return }
         errorMessage = nil
         sessionGeneration &+= 1
         document = PasteDocument(origin: ClipboardSnapshot(plainText: item.plainText ?? "", richRTFD: history.richRTFD(for: item)))
