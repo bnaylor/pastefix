@@ -187,12 +187,18 @@ public final class HistoryStore: ObservableObject {
     /// capture position: a long-lived pin is the oldest thing in `items`, so re-applying the
     /// limits against its old `capturedAt` would evict the item the user just unpinned. It
     /// behaves like a fresh capture instead.
+    ///
+    /// The `title` is deliberately kept. Unpinning is one unconfirmed keystroke (⌘P toggles), and
+    /// the title is text the user typed — clearing it would make a mis-hit destructive rather than
+    /// reversible, and re-pinning the same item is far more likely to be an undo than a fresh
+    /// start. Only the pin state itself is cleared; surfaces show the label for pinned rows only,
+    /// so a retained title is invisible until the item is pinned again. `rename(_:title:)` with a
+    /// blank string is how a user actually clears one.
     public func unpin(_ id: UUID, now: Date = Date()) {
         guard let i = items.firstIndex(where: { $0.id == id }) else { return }
         var item = items.remove(at: i)
         item.pinned = false
         item.pinnedAt = nil
-        item.title = nil
         item.capturedAt = now
         items.insert(item, at: 0)
         // The item rejoins the capped section, which may now be over its limits.

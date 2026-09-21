@@ -45,6 +45,9 @@ struct HistoryOverlayView: View {
     /// Search row (46) + two dividers (2) + footer (32), rounded up. Only has to be an
     /// over-estimate: the list gets an exact height, so anything left over is margin.
     private static let cardChromeHeight: CGFloat = 84
+    /// One plain-list section header. An estimate, like `cardChromeHeight`; two of them come to
+    /// the single row's worth the sectioned case used to deduct wholesale.
+    private static let sectionHeaderHeight: CGFloat = 26
 
     init(model: AppModel, onClose: @escaping () -> Void) {
         _model = ObservedObject(wrappedValue: model)
@@ -66,7 +69,7 @@ struct HistoryOverlayView: View {
                     .onTapGesture { onClose() }
                     .accessibilityLabel("Close clipboard history")
                     .accessibilityAddTraits(.isButton)
-                card(visibleRows: Self.visibleRows(forHeight: geometry.size.height, sectioned: isSectioned))
+                card(visibleRows: Self.visibleRows(forHeight: geometry.size.height, headers: headerCount))
                     .frame(maxWidth: PanelMetrics.paletteCardWidth)
                     // maxWidth + horizontal padding rather than a fixed width: on a panel narrower
                     // than the card, the card shrinks instead of overflowing off both edges.
@@ -86,13 +89,23 @@ struct HistoryOverlayView: View {
         .onDisappear { thumbnails.removeAll(); thumbnailOrder.removeAll() }
     }
 
-    /// How many rows fit above the footer at this panel height. `sectioned` costs one row's
-    /// worth of height for the two section headers — without that the footer, with its key
-    /// hints, is pushed off the bottom of the minimum-height panel (the Plan 6 lesson).
-    private static func visibleRows(forHeight height: CGFloat, sectioned: Bool) -> Int {
-        var available = height - cardTopPadding - cardBottomMargin - cardChromeHeight
-        if sectioned { available -= rowHeight }
+    /// How many rows fit above the footer at this panel height, given the number of section
+    /// headers the list will actually draw — without that deduction the footer, with its key
+    /// hints, is pushed off the bottom of the minimum-height panel (the Plan 6 lesson). Deducting
+    /// for two headers when only one is shown (every result pinned, so there is no History
+    /// section) costs a row the panel had room for.
+    private static func visibleRows(forHeight height: CGFloat, headers: Int) -> Int {
+        let available = height - cardTopPadding - cardBottomMargin - cardChromeHeight
+            - CGFloat(headers) * sectionHeaderHeight
         return min(maxVisibleRows, max(1, Int(available / rowHeight)))
+    }
+
+    /// Headers the list renders: none when flat, one when every result is pinned (no History
+    /// section to head), two when both sections show.
+    private var headerCount: Int {
+        guard isSectioned else { return 0 }
+        let pinned = results.prefix { $0.item.pinned }.count
+        return pinned == results.count ? 1 : 2
     }
 
     /// Pins get their own section only on an empty query: with a query the list is one ranked
@@ -135,11 +148,11 @@ struct HistoryOverlayView: View {
                     list(items, selected: selected, pinnedCount: pinnedCount)
                         .listStyle(.plain)
                         .scrollContentBackground(.hidden)
-                        // The headers' height is the row `visibleRows` already gave up for them,
-                        // so the list still occupies at most the budget the footer was measured
-                        // against.
+                        // The headers' height is exactly what `visibleRows` already gave up for
+                        // them, so the list still occupies at most the budget the footer was
+                        // measured against.
                         .frame(height: CGFloat(min(items.count, visibleRows)) * Self.rowHeight
-                               + (pinnedCount > 0 ? Self.rowHeight : 0))
+                               + CGFloat(headerCount) * Self.sectionHeaderHeight)
                     .onChange(of: selected) { _, new in
                         guard items.indices.contains(new) else { return }
                         proxy.scrollTo(items[new].id)
@@ -267,11 +280,13 @@ struct HistoryOverlayView: View {
             }
             VStack(alignment: .leading, spacing: 2) {
                 // A titled pin spends one of the row's two text lines on the label, so the
-                // preview drops to one line and the row keeps its height.
-                if let title = item.title {
+                // preview drops to one line and the row keeps its height. Pinned rows only: an
+                // unpinned item keeps its title (unpin is reversible, see `HistoryStore.unpin`)
+                // but a label is a property of a snippet, not of a history entry.
+                if let title = rowTitle(for: item) {
                     Text(title).fontWeight(.semibold).lineLimit(1)
                 }
-                Text(highlightedPreview(result)).lineLimit(item.title == nil ? 2 : 1)
+                Text(highlightedPreview(result)).lineLimit(rowTitle(for: item) == nil ? 2 : 1)
                 HStack(spacing: 6) {
                     if item.kind == .richText {
                         Text("rich")
@@ -295,6 +310,10 @@ struct HistoryOverlayView: View {
             }
         }
         .padding(.vertical, 4)
+    }
+
+    private func rowTitle(for item: HistoryItem) -> String? {
+        item.pinned ? item.title : nil
     }
 
     private func trailingLabel(for item: HistoryItem) -> String {
@@ -429,8 +448,9 @@ struct HistoryOverlayView: View {
     /// it land in the Pinned section.
     /// Pinning re-ranks the list under the highlight, so the selection has to follow the item.
     /// Left where it was, `selection` would designate a *different* row: a second ⌘P — the natural
-    /// "undo that" — would then pin an unrelated item, or unpin whichever pin slid into its place,
-    /// and `HistoryStore.unpin` clears the title, so two taps could silently destroy a label.
+    /// "undo that" — would then pin an unrelated item, or unpin whichever pin slid into its place.
+    /// ⌘P⌘P on one row is a no-op by design (unpin keeps the title, and `SnippetHotkeys` keeps the
+    /// recorded shortcut); ⌘P on the *wrong* row still is not, hence following the item.
     /// The store mutates synchronously, so the new order is readable immediately; the later
     /// `onChange(of: history.items)` refresh re-ranks to the same value and is a no-op.
     private func togglePinSelected() {

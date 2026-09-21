@@ -192,13 +192,21 @@ final class AppModel: ObservableObject {
         item.pinned ? history.unpin(item.id) : history.pin(item.id)
     }
 
+    /// Why a pin didn't happen. The store returns one nil for two very different refusals, and
+    /// the popover has to tell the user which: "Nothing to pin" is a state they can see, "Too
+    /// large" is one they can't.
+    enum PinOutcome: Equatable { case pinned, nothingToPin, tooLarge }
+
     /// Pins the editor buffer, carrying the origin's rich data so a pinned snippet pastes back
-    /// with its formatting. Returns false when the store refuses the text (empty, or over the
-    /// per-item byte cap).
+    /// with its formatting.
     @discardableResult
-    func pinCurrentBuffer(title: String?) -> Bool {
-        guard let doc = document else { return false }
+    func pinCurrentBuffer(title: String?) -> PinOutcome {
+        // No session at all, or a buffer that is empty or all whitespace: `HistoryStore.record`
+        // refuses both, so rule them out here rather than reporting them as a size problem.
+        guard let doc = document,
+              !doc.working.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return .nothingToPin }
         return history.pinText(doc.working, richRTFD: doc.origin.richRTFD, title: title) != nil
+            ? .pinned : .tooLarge
     }
 
     /// Copies the item, pastes it into the app the user came from, and hides the panel.
@@ -211,9 +219,13 @@ final class AppModel: ObservableObject {
     /// after is safe: `paste` only requests activation and schedules the ⌘V, which re-checks the
     /// frontmost app before it fires.
     ///
-    /// The outcome is deliberately ignored — without Accessibility the snippet is still on the
-    /// clipboard (`.copiedOnly`), which is a silent fallback by design; Settings shows the
-    /// permission state rather than interrupting the paste.
+    /// The `.copiedOnly` outcome is deliberately ignored — without Accessibility the snippet is
+    /// still on the clipboard, which is a silent fallback by design; Settings shows the permission
+    /// state rather than interrupting the paste. `onGaveUp` is different, and gets the same beep
+    /// `SnippetHotkeys.fire` uses: a chain that expires after `paste` already predicted `.pasted`
+    /// has closed the panel and pasted nothing, with nothing left on screen to say so. ⇧↵ is in
+    /// fact the likelier of the two paths to expire — shift is itself a blocking modifier, so the
+    /// chain cannot post until the user lets go of the very key they pressed.
     func pasteIntoPreviousApp(_ item: HistoryItem) {
         // Nothing to paste as text (an image-only row): behave exactly like ⌘↵. Writing an empty
         // pasteboard would destroy whatever the user had copied, and the ⌘V that followed would
@@ -221,7 +233,8 @@ final class AppModel: ObservableObject {
         // `copyBack` writes the image and ends the session.
         guard item.hasText, let text = item.plainText else { copyBack(item); return }
         let rich = history.richRTFD(for: item)
-        _ = SnippetPaster.paste(text: text, richRTFD: rich, into: previousAppProvider())
+        _ = SnippetPaster.paste(text: text, richRTFD: rich, into: previousAppProvider(),
+                                onGaveUp: { NSSound.beep() })
         endSession()
     }
 

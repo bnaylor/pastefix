@@ -257,11 +257,16 @@ struct PanelView: View {
     }
 
     private func commitPin() {
-        if model.pinCurrentBuffer(title: pinTitle) {
+        switch model.pinCurrentBuffer(title: pinTitle) {
+        case .pinned:
             pinTitle = ""
             pinError = nil
             showPinPopover = false
-        } else {
+        // Two different refusals, and the wrong one is actively misleading: a user who pressed
+        // ⌘⇧P on an empty buffer and reads "Too large to pin" has no idea what to do next.
+        case .nothingToPin:
+            pinError = "Nothing to pin"
+        case .tooLarge:
             pinError = "Too large to pin"
         }
     }

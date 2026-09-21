@@ -26,6 +26,14 @@ enum SnippetPaster {
     /// wait window cannot both be right: the newest wins and older chains stop without posting.
     private static var pendingGeneration = 0
 
+    /// Supersedes every paste chain currently in flight.
+    ///
+    /// Called by `ClipboardBridge` on every write to the general pasteboard, because a chain's
+    /// whole premise is "the clipboard holds *my* text". Save, copy-back and the ⌘K palette all
+    /// write through that one door, so a chain that is still waiting when any of them fires would
+    /// otherwise go on to post whatever they left behind into its target.
+    static func invalidatePending() { pendingGeneration &+= 1 }
+
     static var isTrusted: Bool { AXIsProcessTrusted() }
 
     /// Shows the system prompt at most once per launch. Returns the current trust state.
@@ -73,25 +81,24 @@ enum SnippetPaster {
     /// `.pasted` means activation succeeded and a post is scheduled — the post itself is still
     /// conditional on the frontmost re-check in `postWhenReady`, so it remains a prediction.
     /// `onGaveUp` is how a caller hears about that prediction failing: it runs once, on the main
-    /// actor, if the chain reaches its deadline without posting. A `.copiedOnly` return and an
-    /// `onGaveUp` call are mutually exclusive, so a caller can treat them as the same signal.
+    /// actor, if the chain ends without posting — its deadline expires, or the post itself cannot
+    /// be built. A `.copiedOnly` return and an `onGaveUp` call are mutually exclusive, so a caller
+    /// can treat them as the same signal.
     static func paste(text: String,
                       richRTFD: Data?,
                       into app: NSRunningApplication?,
                       onGaveUp: (() -> Void)? = nil) -> Outcome {
+        // The write itself invalidates every older chain (`ClipboardBridge` calls
+        // `invalidatePending`), which is what makes the ordering here load-bearing: capture the
+        // generation *after* the write, so this chain is the current one and the chains it
+        // superseded stay quiet. That also covers the early returns below — a request refused
+        // after this point still overwrote the clipboard.
         ClipboardBridge.write(text: text, richRTFD: richRTFD, imagePNG: nil)
-        // Bump before any early return: the clipboard is one slot, so *any* write invalidates a
-        // pending chain whose whole premise is "the clipboard holds my text". A request that is
-        // refused below still overwrote the clipboard, and an older chain left generation-current
-        // would go on to post someone else's snippet into its target.
-        //
-        // This does not close the boundary entirely: `AppModel.save`, `copyBack` and the ⌘K
-        // palette also write `NSPasteboard.general`, and a chain in flight across one of those
-        // will still post whatever they left behind. Closing that means invalidating from inside
-        // `ClipboardBridge.write`.
-        pendingGeneration &+= 1
         let generation = pendingGeneration
         guard ensureTrusted() else { return .copiedOnly }
+        // No resolvable "v" on this layout (an input source with no `uchr` data) means there is
+        // no chord we are willing to post; the snippet is on the clipboard either way.
+        guard keyCodeForV() != nil else { return .copiedOnly }
         // No target, a dead target, or ourselves: never post. Pastefix as the target means the
         // hotkey fired while our own panel was key, and a ⌘V would land in the editor or a search
         // field — a silent edit to a session the user may then Save.
@@ -140,7 +147,7 @@ enum SnippetPaster {
         // wait still lets the paste through.
         let ready = NSApp.keyWindow == nil
             && NSEvent.modifierFlags.intersection(blockingModifiers).isEmpty
-            && NSWorkspace.shared.frontmostApplication?.processIdentifier == targetPID
+            && focusedPID() == targetPID
         guard ready else {
             guard Date() < deadline else { onGaveUp?(); return }
             DispatchQueue.main.asyncAfter(deadline: .now() + readyPoll) {
@@ -148,24 +155,65 @@ enum SnippetPaster {
             }
             return
         }
-        postCommandV()
+        // Key resolution can still fail here (the input source changed during the wait), and a
+        // CGEvent can fail to allocate. Both mean nothing was posted, which for the caller is the
+        // same outcome as running out of deadline.
+        if !postCommandV() { onGaveUp?() }
     }
 
-    private static func postCommandV() {
+    /// The pid of the application that currently has keyboard focus, read through Accessibility
+    /// with `NSWorkspace` as the fallback.
+    ///
+    /// `NSWorkspace.shared.frontmostApplication` is an asynchronously updated cache — the same
+    /// property `FrontmostAppTracker` documents as unreliable — so under a main-thread stall it
+    /// can still name the previous app at the moment we post. The system-wide AX element answers
+    /// synchronously from the window server's own focus state, and we already hold Accessibility
+    /// for this feature, so this is strictly the better question to ask.
+    ///
+    /// Be honest about what it buys: this *narrows* the window between the check and the post, it
+    /// cannot close it. Nothing can — focus can change in the microseconds after any check. The
+    /// fallback is deliberate too: an AX call that fails should not silently turn every paste into
+    /// a copy, so a failure leaves us exactly where this code was before.
+    private static func focusedPID() -> pid_t? {
+        var value: CFTypeRef?
+        let status = AXUIElementCopyAttributeValue(systemWideElement,
+                                                   kAXFocusedApplicationAttribute as CFString,
+                                                   &value)
+        if status == .success, let raw = value, CFGetTypeID(raw) == AXUIElementGetTypeID() {
+            // Forced, but guarded: `CFGetTypeID` above has already established the type, and the
+            // attribute is documented to be an AXUIElement.
+            let element = raw as! AXUIElement
+            var pid: pid_t = 0
+            if AXUIElementGetPid(element, &pid) == .success { return pid }
+        }
+        return NSWorkspace.shared.frontmostApplication?.processIdentifier
+    }
+
+    /// Kept rather than created per call, because the messaging timeout is a property of the
+    /// element. The readiness loop runs on the main thread every 20 ms, so cap what one AX call
+    /// can cost: the focused-application query is answered by the accessibility runtime rather
+    /// than by the target app, but the default timeout is measured in seconds and a hung app must
+    /// never be able to freeze our main thread. A timeout reads as a failure and falls back.
+    private static let systemWideElement: AXUIElement = {
+        let element = AXUIElementCreateSystemWide()
+        AXUIElementSetMessagingTimeout(element, 0.05)
+        return element
+    }()
+
+    /// Returns false when nothing was posted.
+    private static func postCommandV() -> Bool {
         // `.privateState`, not `.combinedSessionState`: the combined source merges live hardware
         // modifiers into the event we are building.
         let source = CGEventSource(stateID: .privateState)
-        let key = keyCodeForV()
-        guard let down = CGEvent(keyboardEventSource: source, virtualKey: key, keyDown: true),
-              let up = CGEvent(keyboardEventSource: source, virtualKey: key, keyDown: false) else { return }
+        guard let key = keyCodeForV(),
+              let down = CGEvent(keyboardEventSource: source, virtualKey: key, keyDown: true),
+              let up = CGEvent(keyboardEventSource: source, virtualKey: key, keyDown: false) else { return false }
         down.flags = .maskCommand
         up.flags = .maskCommand
         down.post(tap: .cghidEventTap)
         up.post(tap: .cghidEventTap)
+        return true
     }
-
-    /// ANSI "v". The fallback, and the answer on every QWERTY-derived layout.
-    private static let ansiVKeyCode: CGKeyCode = 9
 
     /// The virtual key that produces "v" on the *current* keyboard layout.
     ///
@@ -176,10 +224,15 @@ enum SnippetPaster {
     /// something other than "paste". Resolved by translating each key code through the layout's
     /// `uchr` data — in the Command state the event is actually posted in — and taking the first
     /// that yields "v".
-    private static func keyCodeForV() -> CGKeyCode {
+    ///
+    /// Nil means "we don't know", and the caller must then post nothing: everywhere else this file
+    /// prefers copy-only to a guess, and caching a guess would be worse still — one transient
+    /// `TISCopyCurrentKeyboardLayoutInputSource` failure would pin ANSI 9 until the next layout
+    /// change, which on Dvorak is ⌘K. Only a successful resolution is cached.
+    private static func keyCodeForV() -> CGKeyCode? {
         installLayoutObserverIfNeeded()
         if let cached = cachedVKeyCode { return cached }
-        let resolved = resolveKeyCodeForV() ?? ansiVKeyCode
+        guard let resolved = resolveKeyCodeForV() else { return nil }
         cachedVKeyCode = resolved
         return resolved
     }
@@ -210,8 +263,10 @@ enum SnippetPaster {
     ///    then re-reads through the command map as "." : we would post ⌘. (Cancel).
     /// 2. Scan unmodified, for a layout that carries no command map at all (most of them; the
     ///    two scans agree there, so this tier only matters if tier 1 somehow finds nothing).
-    /// 3. `ansiVKeyCode`, i.e. the behaviour before any of this existed, for an input source with
-    ///    no `uchr` data at all (CJK input methods).
+    ///
+    /// There is no third tier. An input source with no `uchr` data at all (CJK input methods)
+    /// returns nil and the paste degrades to copy-only, rather than posting an ANSI 9 that the
+    /// window server may read as some other letter entirely.
     private static func resolveKeyCodeForV() -> CGKeyCode? {
         guard let source = TISCopyCurrentKeyboardLayoutInputSource()?.takeRetainedValue(),
               let pointer = TISGetInputSourceProperty(source, kTISPropertyUnicodeKeyLayoutData)

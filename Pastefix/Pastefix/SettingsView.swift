@@ -326,9 +326,11 @@ struct SettingsView: View {
 
 /// One pinned snippet: its editable title, its global hotkey, and Unpin.
 ///
-/// Unpin does not touch the recorder — `HistoryStore.unpin` drops the pin, and the app delegate's
-/// `SnippetHotkeys.sync()` resets the recorded shortcut as it tears the handler down. Clearing it
-/// here as well would be a second writer to the same UserDefaults key.
+/// Unpin does not touch the recorder, and neither does anything else on the unpin path:
+/// `HistoryStore.unpin` drops the pin but keeps the title, and `SnippetHotkeys.sync()` removes
+/// only the handler. Re-pinning the same item restores both. The combo is forgotten only when the
+/// item leaves the store for good, which `SnippetHotkeys` sweeps — clearing it here as well would
+/// be a second writer to the same UserDefaults key.
 struct SnippetRow: View {
     let item: HistoryItem
     @ObservedObject var history: HistoryStore
@@ -356,6 +358,10 @@ struct SnippetRow: View {
                     // Clicking straight from the field to another row loses the edit otherwise:
                     // a Settings window can be closed without ever submitting.
                     .onChange(of: titleFocused) { _, focused in if !focused { commitTitle() } }
+                    // `title` is seeded once in `init`, so a rename that happens anywhere else
+                    // (a re-pin from the editor's popover, which passes a title) would leave this
+                    // field showing the old text and then write it back on the next commit.
+                    .onChange(of: item.title) { _, new in title = new ?? "" }
                 KeyboardShortcuts.Recorder("", name: SnippetHotkeys.name(for: item.id))
                     // The library only checks the shortcut against menu items and system
                     // shortcuts; two snippets sharing a combo is ours to catch.

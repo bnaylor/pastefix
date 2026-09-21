@@ -289,13 +289,19 @@ import Foundation
         try withDir { dir in
             let s = HistoryStore(directory: dir)
             let a = s.record(text("a"))!; let b = s.record(text("b"))!; s.record(text("c"))
-            s.pin(a.id, title: "  Alpha "); s.pin(b.id)
+            // Explicit `now:` on both pins: `sorted(by:)` is not stable, so two pins made in the
+            // same instant could order either way and the assertion below would flake.
+            s.pin(a.id, title: "  Alpha ", now: Date(timeIntervalSince1970: 1_000))
+            s.pin(b.id, now: Date(timeIntervalSince1970: 2_000))
             #expect(s.pinnedItems.map(\.id) == [b.id, a.id])            // newest pinned first
             #expect(s.pinnedItems.last?.title == "Alpha")
             s.rename(b.id, title: "  "); #expect(s.pinnedItems.first?.title == nil)
             s.unpin(a.id)
             #expect(s.pinnedItems.map(\.id) == [b.id] && s.unpinnedItems.count == 2)
             #expect(s.items.first { $0.id == a.id }?.pinnedAt == nil)
+            // Unpin keeps the user's label: a mis-hit ⌘P must be undoable, and a re-pin restores
+            // the title rather than making the user type it again.
+            #expect(s.items.first { $0.id == a.id }?.title == "Alpha")
         }
     }
     @Test func pinTextCreatesOrPromotes() throws {

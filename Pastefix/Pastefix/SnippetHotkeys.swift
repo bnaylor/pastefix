@@ -5,6 +5,12 @@ import PastefixAppCore
 /// One global shortcut per pinned snippet, named by the item id. `sync()` installs a handler when
 /// an item is pinned and tears it down when it is unpinned, so an id never carries two handlers
 /// (which would paste the snippet twice).
+///
+/// Unpinning takes the *handler* away and leaves the recorded combo in UserDefaults: the shortcut
+/// is keyed to the item id, so re-pinning the same item re-registers it and the chord the user
+/// chose still applies. A combo is only forgotten when its item is gone from the store entirely
+/// (evicted, removed, or cleared), which `sweepOrphanedShortcuts` handles — including at launch,
+/// for ids that disappeared while the app was not running.
 @MainActor
 final class SnippetHotkeys {
     private let history: HistoryStore
@@ -20,6 +26,9 @@ final class SnippetHotkeys {
     /// `KeyboardShortcuts_snippet-<uuid>`, so changing the format orphans every recorded shortcut.
     static func name(for id: UUID) -> KeyboardShortcuts.Name { .init("snippet-\(id.uuidString)") }
 
+    /// The `Name` prefix, and therefore the UserDefaults key prefix (`KeyboardShortcuts_` + this).
+    private static let namePrefix = "snippet-"
+
     func sync() {
         let pinned = Set(history.pinnedItems.map(\.id))
         for id in pinned.subtracting(registered) {
@@ -28,12 +37,33 @@ final class SnippetHotkeys {
             }
         }
         for id in registered.subtracting(pinned) {
-            // Reset first: `removeHandler` drops the handler but leaves the recorded shortcut in
-            // UserDefaults, so a re-pin would inherit a binding the user never re-chose.
-            KeyboardShortcuts.reset(Self.name(for: id))
+            // Handler only, deliberately no `reset`. An unpin is one unconfirmed ⌘P and the combo
+            // is something the user recorded by hand; dropping it would make a mis-hit destroy
+            // work rather than be undone by a second ⌘P. The name is derived from the item id, so
+            // a re-pin of the same item picks the recorded combo back up, and a *different* item
+            // can never inherit it.
             KeyboardShortcuts.removeHandler(for: Self.name(for: id))
         }
         registered = pinned
+        sweepOrphanedShortcuts()
+    }
+
+    /// Forgets recorded combos whose item no longer exists in the store at all — evicted by the
+    /// cap, removed with ⌘⌫, or wiped by Clear Everything. Those ids are never coming back (a new
+    /// capture of the same text gets a new UUID), so their UserDefaults keys are pure leak: the
+    /// binding is invisible in Settings, which only lists pins, yet still collides with what the
+    /// user tries to record next.
+    ///
+    /// Run on every `sync()`, which includes the one at launch, so ids that disappeared while the
+    /// app was not running (or in the gap between `unpin`'s flush and a crash) are also collected.
+    private func sweepOrphanedShortcuts() {
+        let live = Set(history.items.map(\.id.uuidString))
+        for name in KeyboardShortcuts.storedNames
+        where name.rawValue.hasPrefix(Self.namePrefix)
+            && !live.contains(String(name.rawValue.dropFirst(Self.namePrefix.count))) {
+            KeyboardShortcuts.reset(name)
+            KeyboardShortcuts.removeHandler(for: name)
+        }
     }
 
     private func fire(_ id: UUID) {
