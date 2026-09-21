@@ -482,7 +482,7 @@ Pastefix/Pastefix/
 
 ## Open questions / future increments
 
-- #10: `BundleIDExclusionFilter` + Settings list (Plan 7).
+- #10: ~~`BundleIDExclusionFilter` + Settings list (Plan 7).~~ Resolved by [Plan 7](2026-09-21-pastefix-v2-sensitive-app-exclusion.md) (`AppExclusionFilter`, `FrontmostAppTracker`, Privacy tab, menu-bar pause).
 - #17: pinned snippets in the same overlay.
 - #18/#19/#20: image viewing, OCR, and EXIF stripping on history images.
 - #16: rich → Markdown, which history now feeds.

@@ -111,21 +111,28 @@ Sources/PastefixAppCore/              # app pure model (depends on PastefixCore,
     HistoryStore.swift                # @MainActor ObservableObject: cap+budget enforcement, de-dup, index+blob persistence, quarantine
     HistorySearch.swift               # fuzzy ranking over items via FuzzyMatch (image-only items match "image <app>")
     HistoryFormatting.swift           # previewText/relativeAge/byteLabel pure helpers for the overlay row
+  Capture/
+    CaptureContext.swift              # CaptureContext (sourceBundleID/Name, recentBundleIDs) + CaptureFilter protocol (shouldRead/shouldCapture)
+    ConcealedTypeFilter.swift         # moved from the app target; ignores context
+    AppExclusionFilter.swift          # rejects if sourceBundleID or any recentBundleIDs entry is excluded (case-insensitive)
+    ExclusionSeeds.swift              # ExclusionSeeds.passwordManagers — the seeded bundle-id list
+    RecentApps.swift                  # pure windowing helper (Entry, window(entries:now:window:), trimmed(_:now:retention:))
 Tests/PastefixAppCoreTests/           # swift-test suites for the model; HistoryStoreTests write to FileManager.temporaryDirectory, not the real Application Support directory
 Pastefix/                             # the Xcode app (KeyboardShortcuts + Sparkle dependencies only)
   Pastefix.xcodeproj                  # ENABLE_APP_SANDBOX = NO, ENABLE_HARDENED_RUNTIME = YES
   launch.sh                           # build Debug + open the .app
   Pastefix/                           # app sources (system glue only, no unit tests)
-    PastefixApp.swift                 # @main MenuBarExtra + NSApplicationDelegateAdaptor; owns HistoryStore + PasteboardMonitor, second hotkey, flush on terminate
+    PastefixApp.swift                 # @main MenuBarExtra + NSApplicationDelegateAdaptor; owns HistoryStore + PasteboardMonitor + FrontmostAppTracker, menu-bar Clipboard History toggle + pause glyph, second hotkey, flush on terminate
     AppModel.swift                    # @MainActor ObservableObject: registry+document+clipboard+history; load(_:)/copyBack(_:), historyOverlayRequested
     HotkeyName.swift                  # KeyboardShortcuts recorder + display helper; summonPastefix (⌘⇧C) + summonHistory (⌘⇧V)
-    SettingsView.swift                # SwiftUI Settings window (General/Shortcut/Transforms tabs); General has a History section, Shortcut a second recorder
+    FrontmostAppTracker.swift         # @MainActor tracker fed by NSWorkspace.didActivateApplicationNotification; context(window:) -> CaptureContext (source app determined before the read, Critical Invariant 12)
+    SettingsView.swift                # SwiftUI Settings window (General/Privacy/Shortcut/Transforms tabs); Privacy has the History section (moved from General) + Excluded Apps list, Shortcut a second recorder
     ClipboardBridge.swift             # NSPasteboard <-> ClipboardSnapshot; write(text:richRTFD:imagePNG:) for multi-representation copy-back
     PanelController.swift             # floating resizable NSPanel host (+ sidebar-driven resize, sidebar-aware minSize)
     PanelMetrics.swift                # panel/sidebar/palette sizes shared by SwiftUI and AppKit
     PanelView.swift                   # editor + action bar + full-panel ⌘K/history overlay host + sidebar column + Esc owner
     CommandPaletteView.swift          # ⌘K overlay: TransformSearch-ranked list, type/↑↓/↵/Esc
-    PasteboardMonitor.swift           # polls changeCount 2x/sec; two-stage CaptureFilter chain + ConcealedTypeFilter (Critical Invariant 12)
+    PasteboardMonitor.swift           # polls changeCount 2x/sec; builds CaptureContext from FrontmostAppTracker before each read, refreshes it after; two-stage CaptureFilter chain (ConcealedTypeFilter + AppExclusionFilter) (Critical Invariant 12)
     HistoryOverlayView.swift          # ⌘⇧V/⌘Y overlay: HistorySearch-ranked list, thumbnails, ↵/⌘↵/⌘⌫/Esc
     SidebarView.swift                 # SidebarGrouping-driven, category-sectioned transform list
     UpdaterController.swift           # Sparkle SPUStandardUpdaterController wrapper (+ Debug feed override)
@@ -151,7 +158,7 @@ These are load-bearing; most were established the hard way (see "Things that hav
 10. **A slow transform must not lose the user's edit.** `AppModel.apply` is gated by `isApplying`: while an async transform (shell/JS up to 3 s; a self-bounding native transform such as `MarkdownLink` up to ~4 s) runs, the editor, palette, and sidebar are disabled so nothing mutates the document underneath the in-flight apply, and the result can't overwrite a newer edit. The apply completion also drops its result outright if the session ended meanwhile (`document == nil` after Save/Cancel/auto-hide), so a finished transform can never resurrect a dismissed panel; results are also tagged with a session generation, so a result from a dismissed session cannot land in a newer one. Don't remove the gate without a replacement that closes the same race.
 11. **Hardened runtime + notarization are release requirements, and the Sparkle key is the root of trust.** `ENABLE_HARDENED_RUNTIME = YES` with `Pastefix.entitlements` carrying `com.apple.security.cs.allow-jit` (JavaScriptCore) and never `app-sandbox`. Sparkle lives only in the app target. The EdDSA private key in the maintainer's login keychain signs every update; a release signed with a different key is rejected by every installed copy, so the key is backed up and never regenerated, and `scripts/release.sh` refuses to ship if the keychain key does not match `SUPublicEDKey`. The `CFBundleVersion` Sparkle compares is `git rev-list --count HEAD` at release time — never hand-edit it in the pbxproj.
 
-12. **Clipboard history never records items marked concealed/transient/auto-generated (including the legacy nspasteboard.org markers), never stores or deletes anything outside the owner-only history directory (blob paths derive only from the item id), and every capture passes the two-stage `CaptureFilter` chain (`shouldRead` on declared types before any content is read, `shouldCapture` on the real candidate after the change count is re-checked) — new capture sources, filters, or storage paths must keep all three.**
+12. **Clipboard history never records items marked concealed/transient/auto-generated (including the legacy nspasteboard.org markers), never stores or deletes anything outside the owner-only history directory (blob paths derive only from the item id), and every capture passes the two-stage `CaptureFilter` chain (`shouldRead` on declared types before any content is read, `shouldCapture` on the real candidate after the change count is re-checked) — new capture sources, filters, or storage paths must keep all three.** The source app is determined before the read from a notification-fed tracker (`FrontmostAppTracker`), and every app frontmost within the poll window is checked against the exclusion list; both filter stages receive that context.
 
 ## Patterns and conventions
 
@@ -163,6 +170,7 @@ These are load-bearing; most were established the hard way (see "Things that hav
 - **Network in a transform** happens only through an injected protocol (`TitleFetcher`) with a hard timeout and a byte cap, and the transform races it against its own bound so a hung fetcher cannot hang the app. `TransformCoordinator` has no timeout of its own for native transforms, so any transform that can block must bound itself (as `MarkdownLink` does). Tests inject a stub; no test opens a socket.
 - **Content kinds:** a transform that is *meant for* a kind sets `applicableKinds`; the palette promotes it, never hides others. Detection heuristics live only in `ContentDetector`.
 - **Poll the pasteboard on change, not on the tick.** `PasteboardMonitor` reads `NSPasteboard.general` at most once per `changeCount` change — never on a bare timer tick with no change — and reads rich content (RTFD) only when a rich type (`.rtf`/`.rtfd`/`.html`) is actually declared, the same Plan 2a lesson `ClipboardBridge` already relies on. Any new capture source must read the same way: sample types first, read once, and never assume a tick means new content.
+- **Capture filters get a `CaptureContext` built before the read and refreshed after it; the tracker, not `NSWorkspace.frontmostApplication`, is the source of truth for attribution and exclusion.**
 - **Browsing UIs stay dumb:** the ⌘K palette reads `enabledTransformers()` (applicable-first) and the sidebar reads `browsableTransformers()` (plain user order, no detection promotion, so a browse surface doesn't reshuffle with the clipboard); both render whatever a pure AppCore function hands back — ranking (`TransformSearch`), grouping (`SidebarGrouping`), and applicable-first ordering (`PaletteOrdering`) are pure functions in `PastefixAppCore`, not view logic. A view should never re-sort or re-filter the list itself.
 
 ## Things that have bitten us
@@ -254,6 +262,7 @@ When you **significantly expand the project** — a new target, subsystem, scrip
 | 4 — Action bar | ⌘K palette, sidebar, categories | ✅ merged, [PR #8](https://github.com/bnaylor/pastefix/pull/8) (`ff9c7b3`) |
 | 5 — Quick actions | JSON, encoders, JWT, colours, swatch | ✅ merged, [PR #30](https://github.com/bnaylor/pastefix/pull/30) (`ba0a829`) |
 | 6 — Clipboard history | `HistoryStore`, `PasteboardMonitor`, ⌘⇧V overlay, Settings | ✅ merged — PR #33 (`ba2793a`) — [spec](docs/specs/2026-09-21-pastefix-v2-clipboard-history.md), [plan](docs/plans/2026-09-21-pastefix-v2-clipboard-history.md) |
+| 7 — Sensitive-app exclusion | AppExclusionFilter, FrontmostAppTracker, Privacy tab, menu-bar pause | 🟡 in progress, branch feat/sensitive-app-exclusion — [spec](docs/specs/2026-09-21-pastefix-v2-sensitive-app-exclusion.md), [plan](docs/plans/2026-09-21-pastefix-v2-sensitive-app-exclusion.md) |
 
 Historical reference material for the 2007 and 2019 incarnations is vendored under [`docs/inputs/legacy/`](docs/inputs/legacy/).
 
