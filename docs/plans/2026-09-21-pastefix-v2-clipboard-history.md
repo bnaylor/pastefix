@@ -947,7 +947,7 @@ struct HistoryOverlayView: View {
         ZStack {
             Color.black.opacity(0.25).ignoresSafeArea().onTapGesture { onClose() }
             card
-                .frame(width: PanelMetrics.paletteWidth)
+                .frame(width: PanelMetrics.paletteCardWidth)
                 .padding(.top, 24)
                 .frame(maxHeight: .infinity, alignment: .top)
         }
@@ -1017,7 +1017,7 @@ struct HistoryOverlayView: View {
         if !model.settings.historyEnabled {
             VStack(spacing: 8) {
                 Text("Clipboard history is off").foregroundStyle(.secondary)
-                Button("Enable in Settings…") { NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil); onClose() }
+                SettingsLink { Text("Enable in Settings…") }.simultaneousGesture(TapGesture().onEnded { onClose() })
             }
         } else if history.items.isEmpty {
             Text("No clipboard history yet").foregroundStyle(.secondary)
@@ -1085,7 +1085,7 @@ struct HistoryOverlayView: View {
     private func removeSelected() { if let item = selectedItem() { history.remove(item.id) } }
 }
 ```
-If `PanelMetrics` has no `paletteWidth`, use whatever constant `CommandPaletteView` uses for its card width and name it in `PanelMetrics` so both share it. If `showSettingsWindow:` isn't how Settings opens in this app (check `PastefixApp.swift` / how the menu-bar "Settings…" item works), call the same mechanism the menu uses.
+`PanelMetrics.paletteCardWidth` already exists (520) — reuse it. `SettingsLink` is how the menu bar opens Settings (`PastefixApp.swift`), so the empty state uses it too.
 
 - [ ] **Step 2: `PanelView`** — add `@State private var isHistoryOpen = false`; in the `ZStack` after the palette branch:
 ```swift
