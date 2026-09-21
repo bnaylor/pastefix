@@ -184,6 +184,38 @@ final class AppModel: ObservableObject {
         endSession()
     }
 
+    // MARK: Pinned snippets
+
+    /// Pin or unpin from a browse surface (the history overlay). The store publishes the
+    /// change, so the overlay's items observer re-ranks and the row re-renders.
+    func togglePin(_ item: HistoryItem) {
+        item.pinned ? history.unpin(item.id) : history.pin(item.id)
+    }
+
+    /// Pins the editor buffer, carrying the origin's rich data so a pinned snippet pastes back
+    /// with its formatting. Returns false when the store refuses the text (empty, or over the
+    /// per-item byte cap).
+    @discardableResult
+    func pinCurrentBuffer(title: String?) -> Bool {
+        guard let doc = document else { return false }
+        return history.pinText(doc.working, richRTFD: doc.origin.richRTFD, title: title) != nil
+    }
+
+    /// Copies the item, hides the panel, and pastes it into the app the user came from.
+    ///
+    /// The target is resolved *before* `endSession()`: hiding the panel changes activation, so a
+    /// provider read afterwards can report whatever the window server promoted in our place. The
+    /// paste outcome is deliberately ignored — without Accessibility the snippet is still on the
+    /// clipboard (`.copiedOnly`), which is a silent fallback by design; Settings shows the
+    /// permission state rather than interrupting the paste.
+    func pasteIntoPreviousApp(_ item: HistoryItem) {
+        let text = item.plainText ?? ""
+        let rich = history.richRTFD(for: item)
+        let target = previousAppProvider()
+        endSession()
+        _ = SnippetPaster.paste(text: text, richRTFD: rich, into: target)
+    }
+
     private func endSession() {
         document = nil
         errorMessage = nil
