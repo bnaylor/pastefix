@@ -25,4 +25,10 @@ import Testing
         let out = try await subject.apply(.init(text: "already ascii"))
         #expect(out == "already ascii")
     }
+
+    @Test func metadata() {
+        #expect(subject.id == "builtin.transliterate")
+        #expect(subject.source == .builtin)
+        #expect(subject.category == TransformCategory.characters)
+    }
 }

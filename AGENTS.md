@@ -10,7 +10,7 @@ The repo has three components:
 
 - **`PastefixCore`** — the transform *engine*, a standalone, dependency-free Swift 6 SwiftPM package (macOS 14+). No UI. It defines a unified `Transformer` protocol over three engines (native Swift, shell, JavaScript), a registry that discovers user scripts, and an FSEvents watcher.
 - **`PastefixAppCore`** — the app's *pure model* layer, a second SwiftPM library target (depends on `PastefixCore`). Holds the testable logic that must NOT live in the Xcode target: `ClipboardSnapshot`, `PasteDocument` (undo/redo history), `TransformCoordinator` (bridges engine → document). Unit-tested via `swift test`.
-- **`Pastefix`** — the macOS menu-bar app, an **Xcode** target (SwiftUI `MenuBarExtra` + AppKit glue) that links both packages. Global hotkey (rebindable via KeyboardShortcuts, default ⌘⇧C) → floating `NSPanel` editor + transform palette → Save writes back to the pasteboard. Includes a Settings window for configurable wrap width, auto-hide-on-blur, custom scripts folder, hotkey rebinding, and per-transform enable/disable + reordering. Sparkle 2 provides auto-update (daily check, Check for Updates… menu item, Settings toggle). Built via `xcodebuild`, verified manually. **Third-party dependencies:** KeyboardShortcuts (sindresorhus) and Sparkle, both app-target only; both packages remain dependency-free.
+- **`Pastefix`** — the macOS menu-bar app, an **Xcode** target (SwiftUI `MenuBarExtra` + AppKit glue) that links both packages. Global hotkey (rebindable via KeyboardShortcuts, default ⌘⇧C) → floating `NSPanel` editor + ⌘K palette + sidebar → Save writes back to the pasteboard. Includes a Settings window for configurable wrap width, auto-hide-on-blur, custom scripts folder, hotkey rebinding, and per-transform enable/disable + reordering. Sparkle 2 provides auto-update (daily check, Check for Updates… menu item, Settings toggle). Built via `xcodebuild`, verified manually. **Third-party dependencies:** KeyboardShortcuts (sindresorhus) and Sparkle, both app-target only; both packages remain dependency-free.
 
 **Testability rule:** pure logic belongs in `PastefixAppCore` (fast, headless `swift test`), NOT the Xcode target. The Xcode target is system glue only (hotkey, pasteboard, panel, SwiftUI views) and is not unit-tested. If you find yourself wanting to unit-test something in `Pastefix/`, it belongs in `PastefixAppCore`.
 
@@ -93,9 +93,11 @@ Sources/PastefixAppCore/              # app pure model (depends on PastefixCore,
   ClipboardSnapshot.swift             # plainText + richRTFD (RTFD data, Sendable)
   PasteDocument.swift                 # origin + history/cursor undo/redo/refresh
   TransformCoordinator.swift          # apply(transformer, to: document) + isEnabled
-  SettingsStore.swift                 # UserDefaults persistence (wrap width, auto-hide, scripts folder, per-transform enable/order)
+  SettingsStore.swift                 # UserDefaults persistence (wrap width, auto-hide, sidebar, scripts folder, per-transform enable/order)
   TransformOverrides.swift            # per-transform enable/disable + drag-reordering
   PaletteOrdering.swift               # applicable-first stable partition on top of TransformOverrides
+  TransformSearch.swift               # ⌘K palette ranking: prefix/word-start(incl. camel)/subsequence tiers + highlight ranges
+  SidebarGrouping.swift               # groups transforms into sidebar sections by category (built-in order, then custom, then Scripts)
 Tests/PastefixAppCoreTests/           # swift-test suites for the model
 Pastefix/                             # the Xcode app (KeyboardShortcuts + Sparkle dependencies only)
   Pastefix.xcodeproj                  # ENABLE_APP_SANDBOX = NO, ENABLE_HARDENED_RUNTIME = YES
@@ -106,8 +108,11 @@ Pastefix/                             # the Xcode app (KeyboardShortcuts + Spark
     HotkeyName.swift                  # KeyboardShortcuts recorder + display helper
     SettingsView.swift                # SwiftUI Settings window (General/Shortcut/Transforms tabs)
     ClipboardBridge.swift             # NSPasteboard <-> ClipboardSnapshot
-    PanelController.swift             # floating NSPanel host
-    PanelView.swift                   # SwiftUI editor + palette + toolbar + error banner
+    PanelController.swift             # floating resizable NSPanel host (+ sidebar-driven resize, sidebar-aware minSize)
+    PanelMetrics.swift                # panel/sidebar/palette sizes shared by SwiftUI and AppKit
+    PanelView.swift                   # editor + action bar + full-panel ⌘K overlay host + sidebar column + Esc owner
+    CommandPaletteView.swift          # ⌘K overlay: TransformSearch-ranked list, type/↑↓/↵/Esc
+    SidebarView.swift                 # SidebarGrouping-driven, category-sectioned transform list
     UpdaterController.swift           # Sparkle SPUStandardUpdaterController wrapper (+ Debug feed override)
     Info.plist                        # SUFeedURL, SUPublicEDKey, SUEnableAutomaticChecks, SUScheduledCheckInterval
     Pastefix.entitlements             # com.apple.security.cs.allow-jit only; NEVER app-sandbox
@@ -128,7 +133,7 @@ These are load-bearing; most were established the hard way (see "Things that hav
 7. **FSEvents lifetime:** the stream owns a **retained `WatcherContext` box** (via `passRetained`, balanced by the context `release` callback) — never `passUnretained(self)`, which is a use-after-free. `ScriptWatcher.stream` access is `NSLock`-guarded; `deinit` calls `stop()`.
 8. **Transformer identities are stable and typed:** `builtin.<name>`, `shell:<filename>`, `js:<filename>`. Built-ins occupy orders 10/20/30/40/50/60/70–73; discovered scripts default to 1000; the registry sorts by `(order, name)` and returns only enabled transforms. Missing/unreadable script dirs are tolerated (built-ins still load).
 9. **The app is NON-SANDBOXED (`ENABLE_APP_SANDBOX = NO`).** By design (direct-download, notarized). The sandbox would block reading `~/.config/pastefix/scripts/` and executing shell/JS scripts — i.e. it kills the entire user-scripts pipeline, the heart of the product. Xcode's app template re-enables the sandbox on a whim; if you regenerate or reconfigure the target, re-verify it stays off (`codesign -d --entitlements - <app>` must not show `com.apple.security.app-sandbox`).
-10. **A slow transform must not lose the user's edit.** `AppModel.apply` is gated by `isApplying`: while an async transform (shell/JS up to 3 s; a self-bounding native transform such as `MarkdownLink` up to ~4 s) runs, the editor + palette are disabled so nothing mutates the document underneath the in-flight apply, and the result can't overwrite a newer edit. The apply completion also drops its result outright if the session ended meanwhile (`document == nil` after Save/Cancel/auto-hide), so a finished transform can never resurrect a dismissed panel; results are also tagged with a session generation, so a result from a dismissed session cannot land in a newer one. Don't remove the gate without a replacement that closes the same race.
+10. **A slow transform must not lose the user's edit.** `AppModel.apply` is gated by `isApplying`: while an async transform (shell/JS up to 3 s; a self-bounding native transform such as `MarkdownLink` up to ~4 s) runs, the editor, palette, and sidebar are disabled so nothing mutates the document underneath the in-flight apply, and the result can't overwrite a newer edit. The apply completion also drops its result outright if the session ended meanwhile (`document == nil` after Save/Cancel/auto-hide), so a finished transform can never resurrect a dismissed panel; results are also tagged with a session generation, so a result from a dismissed session cannot land in a newer one. Don't remove the gate without a replacement that closes the same race.
 11. **Hardened runtime + notarization are release requirements, and the Sparkle key is the root of trust.** `ENABLE_HARDENED_RUNTIME = YES` with `Pastefix.entitlements` carrying `com.apple.security.cs.allow-jit` (JavaScriptCore) and never `app-sandbox`. Sparkle lives only in the app target. The EdDSA private key in the maintainer's login keychain signs every update; a release signed with a different key is rejected by every installed copy, so the key is backed up and never regenerated, and `scripts/release.sh` refuses to ship if the keychain key does not match `SUPublicEDKey`. The `CFBundleVersion` Sparkle compares is `git rev-list --count HEAD` at release time — never hand-edit it in the pbxproj.
 
 ## Patterns and conventions
@@ -140,6 +145,7 @@ These are load-bearing; most were established the hard way (see "Things that hav
 - **Concurrency:** favor `async`/`async let` and small `@unchecked Sendable` lock boxes (see `Debouncer`, `ResumeGuard`) over ad-hoc threads; if you write `@unchecked Sendable`, the synchronization must actually exist.
 - **Network in a transform** happens only through an injected protocol (`TitleFetcher`) with a hard timeout and a byte cap, and the transform races it against its own bound so a hung fetcher cannot hang the app. `TransformCoordinator` has no timeout of its own for native transforms, so any transform that can block must bound itself (as `MarkdownLink` does). Tests inject a stub; no test opens a socket.
 - **Content kinds:** a transform that is *meant for* a kind sets `applicableKinds`; the palette promotes it, never hides others. Detection heuristics live only in `ContentDetector`.
+- **Browsing UIs stay dumb:** the ⌘K palette reads `enabledTransformers()` (applicable-first) and the sidebar reads `browsableTransformers()` (plain user order, no detection promotion, so a browse surface doesn't reshuffle with the clipboard); both render whatever a pure AppCore function hands back — ranking (`TransformSearch`), grouping (`SidebarGrouping`), and applicable-first ordering (`PaletteOrdering`) are pure functions in `PastefixAppCore`, not view logic. A view should never re-sort or re-filter the list itself.
 
 ## Things that have bitten us
 
@@ -183,6 +189,10 @@ Also caught in review on `29c1d02`: a page truncated at the byte cap mid-charact
 *App (Plan 3):*
 - **Save during an in-flight apply wrote the pre-transform text** (`f254e7d`): `MarkdownLink` was the first transform that can run for seconds, and it exposed that `AppModel.apply`'s completion assigned its result unconditionally — Save/Cancel/auto-hide during the apply ended the session, then the late completion either resurrected the dismissed document or left `isApplying` stuck for the next summon, while Save itself had already copied the untransformed buffer. The completion now drops its result when `document == nil`, `endSession()` clears `isApplying`, and Save/Undo/Redo/Refresh are disabled (with a spinner in the palette) while an apply is in flight. Cancel stays enabled. **Any UI affordance that commits state needs the same treatment as the editor the moment a transform can outlast a click.**
 
+*App (Plan 4):*
+- **A fixed-size, non-resizable `NSPanel` ignores SwiftUI min-width changes** (`297a618`): `PanelView`'s `minWidth` grew from 560 to 780 when the sidebar opened, but `PanelController` created the panel without `.resizable` at a hardcoded 640×460 — AppKit never grew the frame, so the sidebar just squeezed the editor into the existing width. Fixed by giving the panel `.resizable`, a sidebar-aware `minSize`, and an explicit `setSidebarVisible(_:width:)` driven from a Combine sink on `settings.$showSidebar`. **Any setting that changes the panel's size must resize it in AppKit, not just change a SwiftUI `frame` — the window manager, not SwiftUI, owns the actual frame.**
+- **A `.frame(maxWidth:)` outside a plain `Button` does not extend its hit area** (`297a618`): the sidebar rows sized only the `Text`, so a `Button` styled `.plain` was clickable just over the glyphs of the transform name, not across the row. Fixed by moving the `.frame(maxWidth: .infinity)` and `.contentShape(Rectangle())` inside the button's label. A `Button`'s tap target is exactly its label's shape — sizing has to happen there, not on a modifier chained after the button.
+
 ## Definition of Done
 
 Before opening or updating a PR:
@@ -207,6 +217,7 @@ When you **significantly expand the project** — a new target, subsystem, scrip
 | 2b — Settings & Prefs | Settings window, rebindable hotkey, live reload | ✅ merged, PR #3 (`4380489`) + 5 follow-up fixes |
 | 2c — Auto-update | Sparkle, hardened runtime, release script | ✅ merged, [PR #5](https://github.com/bnaylor/pastefix/pull/5) (`0cc1082`) |
 | 3 — Content transforms | URL cleanup, Markdown link, case conversion, detection | ✅ merged, [PR #6](https://github.com/bnaylor/pastefix/pull/6) (`113bf42`) |
+| 4 — Action bar | ⌘K palette, sidebar, categories | 🟡 in review, [PR #8](https://github.com/bnaylor/pastefix/pull/8) |
 
 Historical reference material for the 2007 and 2019 incarnations is vendored under [`docs/inputs/legacy/`](docs/inputs/legacy/).
 

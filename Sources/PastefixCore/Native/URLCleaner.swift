@@ -8,6 +8,7 @@ public struct URLCleaner: Transformer {
     public let requiresRichInput = false
     public let source: TransformerSource = .builtin
     public let applicableKinds: Set<ContentKind>? = [.url]
+    public let category: String? = TransformCategory.urls
 
     public init() {}
 

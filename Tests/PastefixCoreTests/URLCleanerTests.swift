@@ -59,5 +59,6 @@ import Foundation
         #expect(subject.applicableKinds == [.url])
         #expect(subject.source == .builtin)
         #expect(subject.requiresRichInput == false)
+        #expect(subject.category == TransformCategory.urls)
     }
 }

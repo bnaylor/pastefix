@@ -6,6 +6,7 @@ public struct ShellTransformer: Transformer {
     public let requiresRichInput = false
     public let source: TransformerSource
     public let applicableKinds: Set<ContentKind>?
+    public let category: String?
     private let url: URL
     private let timeout: TimeInterval
 
@@ -16,6 +17,7 @@ public struct ShellTransformer: Transformer {
         self.name = metadata.name ?? url.deletingPathExtension().lastPathComponent
         self.source = .shell(url)
         self.applicableKinds = metadata.kinds
+        self.category = metadata.category
     }
 
     public func apply(_ input: TransformInput) async throws -> String {

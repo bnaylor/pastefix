@@ -5,6 +5,7 @@ public struct WrapReflow: Transformer {
     public let name = "Wrap & Reflow"
     public let requiresRichInput = false
     public let source: TransformerSource = .builtin
+    public let category: String? = TransformCategory.layout
     public let width: Int
 
     public init(width: Int) {

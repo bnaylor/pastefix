@@ -255,6 +255,7 @@ public struct MarkdownLink: Transformer {
     public let requiresRichInput = false
     public let source: TransformerSource = .builtin
     public let applicableKinds: Set<ContentKind>? = [.url]
+    public let category: String? = TransformCategory.urls
 
     private let fetcher: any TitleFetcher
     private let fetchTimeout: TimeInterval

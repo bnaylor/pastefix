@@ -9,6 +9,7 @@ public final class SettingsStore: ObservableObject {
 
     @Published public var wrapWidth: Int { didSet { defaults.set(wrapWidth, forKey: Key.wrapWidth) } }
     @Published public var autoHideOnBlur: Bool { didSet { defaults.set(autoHideOnBlur, forKey: Key.autoHide) } }
+    @Published public var showSidebar: Bool { didSet { defaults.set(showSidebar, forKey: Key.showSidebar) } }
     @Published public var scriptsDirectoryPath: String { didSet { defaults.set(scriptsDirectoryPath, forKey: Key.scriptsDir) } }
     @Published public var transformEnabled: [String: Bool] { didSet { Self.writeJSON(transformEnabled, to: defaults, key: Key.enabled) } }
     @Published public var transformOrder: [String: Int] { didSet { Self.writeJSON(transformOrder, to: defaults, key: Key.order) } }
@@ -17,6 +18,7 @@ public final class SettingsStore: ObservableObject {
         self.defaults = defaults
         self.wrapWidth = (defaults.object(forKey: Key.wrapWidth) as? Int) ?? 400
         self.autoHideOnBlur = (defaults.object(forKey: Key.autoHide) as? Bool) ?? true
+        self.showSidebar = (defaults.object(forKey: Key.showSidebar) as? Bool) ?? false
         self.scriptsDirectoryPath = (defaults.string(forKey: Key.scriptsDir)) ?? Self.defaultScriptsPath
         self.transformEnabled = Self.readJSON([String: Bool].self, from: defaults, key: Key.enabled) ?? [:]
         self.transformOrder = Self.readJSON([String: Int].self, from: defaults, key: Key.order) ?? [:]
@@ -39,6 +41,7 @@ public final class SettingsStore: ObservableObject {
     private enum Key {
         static let wrapWidth = "pastefix.wrapWidth"
         static let autoHide = "pastefix.autoHideOnBlur"
+        static let showSidebar = "pastefix.showSidebar"
         static let scriptsDir = "pastefix.scriptsDirectoryPath"
         static let enabled = "pastefix.transformEnabled"
         static let order = "pastefix.transformOrder"

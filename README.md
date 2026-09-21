@@ -13,9 +13,11 @@ Pastefix runs as a macOS menu-bar app. A clipboard icon sits in the menu bar; pr
 **Core flow:**
 
 1. **Summon** — ⌘⇧C snapshots the clipboard and opens the editor panel.
-2. **Transform** — a horizontal palette of buttons along the bottom of the panel lists every enabled transformer (built-ins + user scripts). Click one to apply it; the monospaced editor updates instantly. An error banner appears in red if a transformer fails.
+2. **Transform** — a "Transform… ⌘K" bar along the bottom of the panel opens an in-panel command palette listing every enabled transformer (built-ins + user scripts). Click a result, or press ↵ on the selected one, to apply it; the monospaced editor updates instantly. An error banner appears in red if a transformer fails.
 
-   **Content detection.** When the buffer contains a URL or is valid JSON, a `Detected: URL` badge appears beside the palette and transforms that apply to that kind are listed first. Nothing is hidden; your enable/reorder settings still apply.
+   **Finding transforms.** Press ⌘K (or click the Transform… bar) for a command palette: type to filter, ↑↓ to choose, ↵ to apply, Esc to close; transforms that apply to the detected content are listed first. Typing matches a prefix, a word start, or (failing those) a loose subsequence — camel-case boundaries count as word starts too, so typing `case` finds `camelCase`. Esc closes the palette first; only a second Esc (with the palette already closed) cancels the panel. Toggle the sidebar (⌘⇧L or the toolbar button) to browse all enabled transforms grouped by category; the sidebar state is remembered. The panel window is resizable: it widens by the sidebar's width when the sidebar opens and gives that width back when it closes, so the editor doesn't get squeezed — and you can also resize the window yourself. The sidebar always keeps your configured order, so it doesn't reshuffle as you copy different things; the ⌘K palette lists transforms that apply to the detected content first.
+
+   **Content detection.** When the buffer contains a URL or is valid JSON, a `Detected: …` label appears beside the Transform… bar and transforms that apply to that kind are listed first in the ⌘K palette. (The sidebar deliberately stays in your configured order.) Nothing is hidden; your enable/reorder settings still apply.
 
 3. **Edit** — the editor is freely editable. Undo/Redo/Refresh controls are in the toolbar.
 4. **Save (⌘S)** — writes the working text back to the clipboard and dismisses the panel.
@@ -114,9 +116,18 @@ Magic comments in the first 30 lines define script behavior. Recognized keys are
 ```
 
 - **Comment syntax:** lines are tolerant of comment markers (`#`, `//`, `*`, `/*`); the parser strips leading whitespace and any run of the individual characters space, tab, `#`, `/`, `*`
-- **Keys:** `name` (display name), `enabled` (true/false; default true), `order` (integer execution order; default 1000 for scripts), `kinds` (comma-separated list of `url`, `json`; a script with `kinds` is listed first when that content is detected; unknown names ignored)
+- **Keys:** `name` (display name), `enabled` (true/false; default true), `order` (integer execution order; default 1000 for scripts), `kinds` (comma-separated list of `url`, `json`; a script with `kinds` is listed first in the ⌘K palette when that content is detected; unknown names ignored), `category` (free text, trimmed; groups the script under this heading in the sidebar; default `Scripts` when omitted; a custom category appears in the sidebar alphabetically after the built-in categories below)
 - **Built-in order:** Rich→Plain (10), Transliterate (20), Wrap (30), Whitespace (40), Clean URL Tracking (50), URL → Markdown Link (60), camelCase (70), snake_case (71), kebab-case (72), CONSTANT_CASE (73); user scripts at order 1000+ appear after built-ins unless explicitly reordered
 - **Malformed lines:** ignored silently
+
+**Built-in categories** (sidebar order):
+
+| Category | Built-in transforms |
+|---|---|
+| Layout | Wrap & Reflow, Whitespace Cleanup |
+| Characters | Rich → Plain Text, Transliterate to ASCII |
+| URLs | Clean URL Tracking, URL → Markdown Link |
+| Case | camelCase, snake_case, kebab-case, CONSTANT_CASE |
 
 ## Execution Model
 

@@ -47,15 +47,15 @@ under LAYOUT / CHARACTERS / URLS).
 
 | Decision | Choice | Why |
 |---|---|---|
-| Palette host | SwiftUI overlay inside the existing `NSPanel` (ZStack over the editor) | The panel is `.nonactivatingPanel` + `.floating`; sheets/popovers over it fight for key status. An overlay needs no new AppKit glue and matches the mockup. |
+| Palette host | SwiftUI overlay inside the existing `NSPanel` (ZStack over the whole panel — *amended in review*, it was originally over the editor alone) | The panel is `.nonactivatingPanel` + `.floating`; sheets/popovers over it fight for key status. An overlay needs no new AppKit glue and matches the mockup. |
 | Sidebar host | Conditional column in an `HStack` | `NavigationSplitView` is too heavy for a floating utility panel and brings toolbar/sidebar chrome we don't want. |
 | Grouping source | `Transformer.category: String?`; built-ins fixed; scripts via header, default "Scripts" | Mirrors how `applicableKinds` was added in Plan 3: additive, scripts can participate, no separate table to maintain. Free-form string so scripts can invent groups. |
-| Category display order | Layout, Characters, URLs, Case, then custom categories alphabetically, then Scripts | Stable, predictable; built-ins first because they are the ones everyone has. |
+| Category display order | Layout, Characters, URLs, Case, then custom categories alphabetically, then Scripts | Stable, predictable; built-ins first because they are the ones everyone has. **Amended in review:** "alphabetically" means `localizedStandardCompare`, not `<` on `String` — raw scalar ordering puts every capitalised category before every lowercase one. |
 | Sidebar persistence | `SettingsStore.showSidebar`, default `false` | User's call in the issue: persist, default closed. Same store and pattern as every other setting. |
 | Search model | Pure `TransformSearch.rank(query:in:kinds:)` returning `[SearchResult]` with matched ranges | Testable without SwiftUI; the palette just renders results. |
 | Ranking | Tier 1 name prefix; tier 2 any word start; tier 3 subsequence; within a tier: applicable-to-detected first, then user order. Case- and diacritic-insensitive. | Spotlight/Alfred expectations; Plan 3's detection keeps paying off inside the palette. |
 | Empty query | All enabled transforms in `PaletteOrdering` order (applicable first) | ⌘K then ↵ applies the most relevant transform with zero typing. |
-| Esc semantics | Esc closes the palette when open; otherwise Cancel (unchanged) | Two meanings, resolved by whichever surface is open. Cancel's `.cancelAction` binding is detached while the palette is open so one Esc can't dismiss the panel. |
+| Esc semantics | Esc closes the palette when open; otherwise Cancel (unchanged) | Two meanings, resolved by whichever surface is open. **Amended in review:** Cancel keeps `.cancelAction` attached at all times and branches in its action (`if isPaletteOpen { closePalette() } else { model.cancel() }`). Detaching the binding meant Esc briefly had no owner; a single owner that branches cannot. |
 | Sidebar shortcut | ⌘⇧L | Free in the panel; ⌘L alone is too close to "location" muscle memory. |
 | Applying while applying | ⌘K and sidebar clicks disabled while `isApplying` | Same gate as before (Critical Invariant 10). |
 
@@ -117,20 +117,29 @@ public enum TransformSearch {
 }
 ```
 
-- Normalisation: both query and name are folded with
-  `folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil)`;
-  matching is done on the folded strings and ranges mapped back to the
-  original name via `Range(nsRange, in:)` over the folded/original pair
-  (folding does not change grapheme count for the names we ship; the
-  implementation must tolerate a mismatch by falling back to no highlight,
-  never by crashing).
+- Normalisation (**amended in review**): folding whole strings and mapping
+  ranges back is unsound, because a fold can change the character count and
+  the two strings then no longer share indices. Instead the match runs over
+  index-parallel arrays: `Array(name)`, a `folded` array built by folding each
+  character *on its own* with `folding(options: [.caseInsensitive,
+  .diacriticInsensitive], locale: nil)`, and `Array(name.indices) +
+  [name.endIndex]`. Position *i* of `folded` therefore always describes
+  position *i* of the name, so every highlight range is a valid range of the
+  original string by construction and no fallback is needed. A character whose
+  fold expands to several characters ("ß" → "ss", "ﬁ" → "fi") is represented by
+  its first folded character only; matching the tail of an expanding fold is
+  not supported. The query is folded as a whole (it carries no ranges).
 - Empty or whitespace-only query → `PaletteOrdering.order(transformers, for:
   kinds)` wrapped as results with `tier = 0`, no ranges.
-- Non-empty query: tier 1 if folded name has the query as a prefix; tier 2 if
-  any word (split on whitespace, `_`, `-`, `→`, `&`) starts with it; tier 3 if
-  the query's characters appear in order (subsequence); otherwise excluded.
-  Highlight: tiers 1–2 highlight the contiguous match; tier 3 highlights each
-  matched character.
+- Non-empty query: tier 1 if the folded name has the query as a prefix; tier 2
+  if any word starts with it; tier 3 if the query's characters appear in order
+  (subsequence); otherwise excluded. Highlight: tiers 1–2 highlight the
+  contiguous match; tier 3 highlights each matched character, coalesced into
+  runs. **Amended in review:** word separators are whitespace, `_`, `-`, `→`,
+  `&` and `/` (`/` so "URL / Markdown"-style names split), and a camel-case
+  boundary — a lowercase letter or digit followed by an uppercase letter, the
+  same rule `CaseConvert.words` uses — also counts as a word start, so `case`
+  finds "camelCase".
 - Order: by tier, then applicable-first (`applicableKinds` intersects `kinds`),
   then the incoming (user) order. Stable.
 
@@ -149,7 +158,8 @@ public enum SidebarGrouping {
 
 Groups by `category ?? TransformCategory.scripts`; section order per the
 Decisions table; within a section, incoming (user) order. Empty sections are
-omitted.
+omitted. Custom categories are sorted with `localizedStandardCompare` so the
+tail reads in user-facing alphabetical order regardless of case.
 
 **`SettingsStore`** — `@Published public var showSidebar: Bool` persisted
 under `pastefix.showSidebar`, default `false`.
@@ -159,15 +169,24 @@ under `pastefix.showSidebar`, default `false`.
 **`PanelView.swift`** — restructured:
 
 ```
-VStack
-  toolbar                       Undo Redo Refresh … [sidebar toggle] Cancel Save
-  Divider
-  HStack(spacing: 0)
-    ZStack                       editor (+ error banner) with the ⌘K overlay on top
-    if settings.showSidebar { Divider; SidebarView(width: 220) }
-  Divider
-  actionBar                     [🔍 Transform…            ⌘K]  Detected: URL  ⟳
+ZStack                          (amended in review: the overlay wraps the whole panel)
+  VStack
+    toolbar                     Undo Redo Refresh … [sidebar toggle] Cancel Save
+    Divider
+    HStack(spacing: 0)
+      editor (+ error banner)
+      if settings.showSidebar { Divider; SidebarView(width: 220) }
+    Divider
+    actionBar                   [🔍 Transform…            ⌘K]  Detected: URL  ⟳
+  if isPaletteOpen { CommandPaletteView }
 ```
+
+**Amended in review:** the overlay was originally a sibling of the editor
+only, which left the toolbar, sidebar and action bar undimmed and still
+clickable around the edges of a supposedly modal palette. It is now the top
+layer of a `ZStack` wrapping the entire panel, so the backdrop dims and blocks
+every control. All shared sizes (560 / +220 / 380 / 520) live in a
+`PanelMetrics` enum that both the SwiftUI views and `PanelController` read.
 
 - **Action bar:** a `Button` styled to look like a search field (rounded
   rect, magnifying glass, secondary "Transform…" label, trailing "⌘K" caption).
@@ -178,15 +197,29 @@ VStack
   "Show/Hide Transforms Sidebar", `.keyboardShortcut("l", modifiers:
   [.command, .shift])`, bound to `settings.showSidebar`. The panel's minimum
   width grows by 220 while the sidebar is shown (`.frame(minWidth:)` computed).
+  **Amended in review:** `.frame(minWidth:)` alone cannot move an AppKit
+  window. `PastefixApp` sinks `settings.$showSidebar` into
+  `PanelController.setSidebarVisible(_:width:)`, which widens the frame by the
+  sidebar's width (and gives it back only if it was the one that took it) and
+  sets a sidebar-aware `NSPanel.minSize` on every call, so the panel can never
+  be dragged narrower than editor + sidebar.
 - **`SidebarView`** (new file): `List` with `Section(header:)` per
   `SidebarSection`, plain rows showing the name; row tap → `model.apply`.
-  Disabled while `isApplying`. Uses `.listStyle(.sidebar)`.
+  Disabled while `isApplying`. Uses `.listStyle(.sidebar)`. **Amended in
+  review:** it reads `AppModel.browsableTransformers()` — enabled transforms in
+  the user's order with *no* detection-based promotion — because a browse
+  surface that reorders itself whenever the clipboard changes cannot be learned.
+  The palette keeps `enabledTransformers()` (applicable-first).
 - **`CommandPaletteView`** (new file): shown as an overlay when
   `isPaletteOpen`. Dimmed backdrop (`Color.black.opacity(0.25)`, tap closes).
-  Card ~520 pt wide, top-aligned with 40 pt inset. Contents: `TextField`
+  Card up to 520 pt wide (a `maxWidth` with 24 pt horizontal padding, so it
+  shrinks rather than overflowing on a narrow panel), top-aligned with 40 pt
+  inset. Contents: `TextField`
   (`@FocusState` set true on appear), results `List` (max 8 visible rows,
   scrolls), each row: highlighted name (`AttributedString` built from
-  `matchedRanges`, bold + accent) and category subtitle in secondary caption;
+  `matchedRanges`, bold + accent) and category subtitle in secondary caption
+  (`category ?? TransformCategory.scripts`, so an uncategorised transform reads
+  as "Scripts" here exactly as it is bucketed in the sidebar);
   selected row highlighted with the accent tint; a ↵ glyph on the selected
   row. Footer: "↵ Apply   ↑↓ Choose   esc Close". Keyboard: `.onKeyPress(.upArrow /
   .downArrow)` move selection with wraparound; `.onSubmit` of the field or
@@ -195,18 +228,25 @@ VStack
   come from `TransformSearch.rank(query:in:kinds:)` over
   `model.enabledTransformers()` (already applicable-first) and
   `model.document?.detectedKinds ?? []`.
-- **Esc arbitration:** the Cancel button gets `.keyboardShortcut(.cancelAction)`
-  only when `!isPaletteOpen` (conditional modifier via a small
-  `ViewModifier`). While the palette is open, Esc reaches the palette's
-  `onKeyPress` handler.
+- **Esc, single owner (amended in review):** the Cancel button keeps
+  `.keyboardShortcut(.cancelAction)` permanently and branches in its action —
+  close the palette if it is open, otherwise cancel the session. The original
+  design detached the binding while the palette was open, which left Esc
+  momentarily unowned during the transition. The palette's own
+  `.onKeyPress(.escape)` stays as a harmless duplicate. ⌘K is the mirror image:
+  the action-bar button drops its binding while the palette is open and a
+  zero-sized button inside the palette card takes it over to close, so exactly
+  one ⌘K is registered at any moment.
 - **Apply from palette or sidebar:** `isPaletteOpen = false` then
   `model.apply(t)`. Focus returns to the editor after close
   (`@FocusState` on the editor set true).
 - `isPaletteOpen` is `@State` in `PanelView` (session-local; always closed on
   summon — `PanelView` resets it in `onChange(of: model.document == nil)`).
 
-**`AppModel`** — no new state. `enabledTransformers()` already provides the
-ordered list.
+**`AppModel`** — no new state. `enabledTransformers()` provides the
+applicable-first list for the palette; **amended in review**, a sibling
+`browsableTransformers()` provides the same enabled set in plain user order for
+the sidebar.
 
 ### Focus and key handling notes
 
@@ -276,7 +316,7 @@ disable/reorder is reflected in both surfaces; the old horizontal bar is gone.
   add `category` to "Script Metadata" with the built-in category table.
 - `AGENTS.md`: layout entries (`TransformSearch.swift`, `SidebarGrouping.swift`,
   `SidebarView.swift`, `CommandPaletteView.swift`); note under "Patterns":
-  *browsing UIs read `enabledTransformers()`; ordering/grouping/searching are
+  *the palette reads `enabledTransformers()` (applicable-first), the sidebar reads `browsableTransformers()` (user order); ordering/grouping/searching are
   pure functions in AppCore*; a "bitten us" entry only if something bites;
   status table row for Plan 4.
 
@@ -292,10 +332,18 @@ Sources/PastefixAppCore/
   SidebarGrouping.swift           # sections(_:) -> [SidebarSection]
   SettingsStore.swift             # + showSidebar
 Pastefix/Pastefix/
-  PanelView.swift                 # action bar, sidebar column, overlay host, Esc arbitration
+  PanelView.swift                 # action bar, sidebar column, full-panel overlay host, Esc owner
   SidebarView.swift               # grouped List
   CommandPaletteView.swift        # ⌘K overlay
+  PanelMetrics.swift              # shared sizes for the SwiftUI views and the AppKit panel
+  PanelController.swift           # resizable panel, setSidebarVisible, sidebar-aware minSize
+  PastefixApp.swift               # settings passed to the panel; $showSidebar sink drives the resize
+  AppModel.swift                  # + browsableTransformers() for the sidebar
 ```
+
+The last four are amendments from review: the plan assumed SwiftUI's
+`.frame(minWidth:)` could size the window and that only the three new views
+would change.
 
 ## Open questions / future increments
 
