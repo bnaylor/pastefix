@@ -21,7 +21,7 @@ struct PastefixApp: App {
         }
 
         Settings {
-            SettingsView(settings: delegate.settings, model: delegate.model, updater: delegate.updater)
+            SettingsView(settings: delegate.settings, model: delegate.model, updater: delegate.updater, history: delegate.history)
         }
     }
 }
@@ -45,12 +45,19 @@ struct CheckForUpdatesButton: View {
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private(set) var settings = SettingsStore()
-    private(set) lazy var model = AppModel(settings: settings)
+    private(set) lazy var history = HistoryStore(
+        directory: Self.historyDirectory,
+        limits: HistoryLimits(maxItems: settings.historyMaxItems))
+    private(set) lazy var model = AppModel(settings: settings, history: history)
     let updater = UpdaterController()
     private var panel: PanelController?
     private var scriptWatcher: ScriptWatcher?
+    private var pasteboardMonitor: PasteboardMonitor?
     private var lastSummonAt: Date = .distantPast
     private var cancellables = Set<AnyCancellable>()
+
+    static let historyDirectory: URL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        .appendingPathComponent("Pastefix/history", isDirectory: true)
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Sparkle: scheduled daily checks start here, after launch, per Sparkle's guidance.
@@ -81,6 +88,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         KeyboardShortcuts.onKeyUp(for: .summonPastefix) { [weak self] in
             self?.summon()
         }
+
+        // Clipboard history: second hotkey opens the panel straight into the overlay.
+        KeyboardShortcuts.onKeyUp(for: .summonHistory) { [weak self] in
+            self?.summonHistory()
+        }
+        // `history` is already constructed with this cap; no need to reassert it here.
+        settings.$historyMaxItems
+            .dropFirst()
+            // Every in-range intermediate otherwise applies immediately: holding the Settings
+            // stepper's down arrow walks 200→20 in about a second, evicting and deleting blobs
+            // at each step along the way. Debounce so only the value the user settles on lands.
+            .debounce(for: .milliseconds(400), scheduler: DispatchQueue.main)
+            // @Published emits from willSet, before SettingsStore's own didSet clamp — an
+            // out-of-range value can arrive here raw (e.g. a live-typed "2" before "20" lands),
+            // and applying it would evict and permanently delete blobs for a value the setting
+            // itself never actually holds. Clamp ABOVE removeDuplicates so the whole chain
+            // speaks in clamped values: two raw values that clamp to the same cap (2 then 5)
+            // are one change, not two.
+            .map { min(max($0, 20), 1000) }
+            .removeDuplicates()
+            .sink { [weak self] n in
+                MainActor.assumeIsolated {
+                    guard let self, n != self.history.limits.maxItems else { return }
+                    self.history.limits.maxItems = n
+                }
+            }
+            .store(in: &cancellables)
+        updateMonitor(enabled: settings.historyEnabled)
+        settings.$historyEnabled.dropFirst().removeDuplicates().receive(on: DispatchQueue.main)
+            .sink { [weak self] on in MainActor.assumeIsolated { self?.updateMonitor(enabled: on) } }
+            .store(in: &cancellables)
 
         // Live-reload the palette when the user's scripts directory changes.
         startWatchingScripts()
@@ -123,5 +161,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         lastSummonAt = Date()
         model.summon()
         panel?.show()
+    }
+
+    private func updateMonitor(enabled: Bool) {
+        if enabled {
+            if pasteboardMonitor == nil {
+                pasteboardMonitor = PasteboardMonitor(filters: [ConcealedTypeFilter()], maxImageBytes: history.limits.maxImageBytes) { [weak self] candidate in
+                    self?.history.record(candidate)
+                }
+            }
+            pasteboardMonitor?.start()
+        } else {
+            pasteboardMonitor?.stop()
+        }
+    }
+
+    /// ⌘⇧V: show the panel (starting a session from the current clipboard if none) with history open.
+    func summonHistory() {
+        if model.document == nil { summon() } else { lastSummonAt = Date(); panel?.show() }
+        model.historyOverlayRequested = true
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        history.flush()
     }
 }

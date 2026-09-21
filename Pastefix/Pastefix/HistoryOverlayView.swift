@@ -1,0 +1,356 @@
+import SwiftUI
+import AppKit
+import ImageIO
+import PastefixAppCore
+
+/// ⌘Y / ⌘⇧V overlay: type to filter the clipboard history, ↑↓ to choose, ↵ to open,
+/// ⌘↵ to copy back, ⌘⌫ to remove, Esc to close.
+///
+/// Deliberately shaped like `CommandPaletteView` — same backdrop, card, list metrics and
+/// footer — so the two overlays read as one surface. Its key-handling rule is also the
+/// palette's: every handler reads `@State` at call time, never a value captured while `body`
+/// ran (the ⌘K Return bug, `7f67d41`).
+struct HistoryOverlayView: View {
+    @ObservedObject var model: AppModel
+    /// The store is a separate `ObservableObject`, so it needs its own observation for
+    /// record/remove to re-render the list.
+    @ObservedObject var history: HistoryStore
+    let onClose: () -> Void
+
+    @State private var query = ""
+    @State private var selection = 0
+    /// Ranked once per query/history change, not once per `body`. Ranking is O(items x haystack)
+    /// and `body` re-runs for every arrow key and every thumbnail that lands, so recomputing it
+    /// there made each of those pay a full re-rank. Actions read this `@State` at call time
+    /// (the ⌘K Return lesson, `7f67d41`) — it is the live value, never a render-time local.
+    @State private var results: [HistorySearchResult] = []
+    /// Downsampled thumbnails, kept per item id so scrolling doesn't re-read the blob every
+    /// frame, with `thumbnailOrder` as the FIFO eviction order.
+    @State private var thumbnails: [UUID: NSImage] = [:]
+    @State private var thumbnailOrder: [UUID] = []
+    @FocusState private var fieldFocused: Bool
+
+    /// Tall enough for the 44pt image thumbnails; the palette's rows are text-only at 44.
+    private static let rowHeight: CGFloat = 52
+    /// Never more than this many rows, however tall the panel is.
+    private static let maxVisibleRows = 8
+    private static let thumbnailSide: CGFloat = 44
+    /// 2× the 44pt slot, so the cache holds Retina-sharp thumbnails and not whole bitmaps.
+    private static let thumbnailPixelSize = 88
+    /// Bounded so a long scroll through an image-heavy history can't balloon RSS.
+    private static let thumbnailCacheLimit = 64
+    private static let cardTopPadding: CGFloat = 40
+    /// Kept clear below the card so it never sits flush against the panel's bottom edge.
+    private static let cardBottomMargin: CGFloat = 24
+    /// Search row (46) + two dividers (2) + footer (32), rounded up. Only has to be an
+    /// over-estimate: the list gets an exact height, so anything left over is margin.
+    private static let cardChromeHeight: CGFloat = 84
+
+    init(model: AppModel, onClose: @escaping () -> Void) {
+        _model = ObservedObject(wrappedValue: model)
+        _history = ObservedObject(wrappedValue: model.history)
+        // Seeded here rather than left empty until `onAppear`, so the overlay's first frame
+        // already shows the history instead of the "No clipboard history yet" empty state.
+        _results = State(initialValue: HistorySearch.rank(query: "", in: model.history.items))
+        self.onClose = onClose
+    }
+
+    var body: some View {
+        // The panel is resizable and starts at 460pt of content (380 at its minimum), so the
+        // row count is derived from the height actually available rather than fixed at 8 —
+        // otherwise a full history pushes the footer, with its key hints, off the bottom.
+        GeometryReader { geometry in
+            ZStack(alignment: .top) {
+                Color.black.opacity(0.25)
+                    .ignoresSafeArea()
+                    .onTapGesture { onClose() }
+                    .accessibilityLabel("Close clipboard history")
+                    .accessibilityAddTraits(.isButton)
+                card(visibleRows: Self.visibleRows(forHeight: geometry.size.height))
+                    .frame(maxWidth: PanelMetrics.paletteCardWidth)
+                    // maxWidth + horizontal padding rather than a fixed width: on a panel narrower
+                    // than the card, the card shrinks instead of overflowing off both edges.
+                    .padding(.horizontal, 24)
+                    .padding(.top, Self.cardTopPadding)
+            }
+        }
+        .onAppear { fieldFocused = true; refreshResults() }
+        .onChange(of: query) { _, _ in
+            selection = 0
+            refreshResults()
+        }
+        // record/remove/clear all land here, including a capture arriving while the overlay is open.
+        .onChange(of: history.items) { _, _ in refreshResults() }
+        // The view is torn down on close, so this is belt-and-braces — but the cache is the one
+        // piece of state here that is worth megabytes.
+        .onDisappear { thumbnails.removeAll(); thumbnailOrder.removeAll() }
+    }
+
+    /// How many rows fit above the footer at this panel height.
+    private static func visibleRows(forHeight height: CGFloat) -> Int {
+        let available = height - cardTopPadding - cardBottomMargin - cardChromeHeight
+        return min(maxVisibleRows, max(1, Int(available / rowHeight)))
+    }
+
+    private func card(visibleRows: Int) -> some View {
+        let items = results
+        let selected = clampedSelection(in: items)
+        return VStack(spacing: 0) {
+            HStack(spacing: 8) {
+                Image(systemName: "clock.arrow.circlepath").foregroundStyle(.secondary)
+                TextField("Search clipboard history", text: $query)
+                    .textFieldStyle(.plain)
+                    .font(.title3)
+                    .focused($fieldFocused)
+                    // Plain Return only; the handler below handles the command case.
+                    .onSubmit { openSelection() }
+                if history.lastWriteError != nil {
+                    Label("History couldn't be saved", systemImage: "exclamationmark.triangle")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                        .help(history.lastWriteError ?? "")
+                }
+            }
+            .padding(12)
+            Divider()
+            if items.isEmpty {
+                emptyState
+                    .frame(maxWidth: .infinity, minHeight: 120)
+            } else {
+                ScrollViewReader { proxy in
+                    List(Array(items.enumerated()), id: \.element.id) { index, result in
+                        row(result, isSelected: index == selected)
+                            .contentShape(Rectangle())
+                            .onTapGesture { open(items, index) }
+                            .listRowBackground(index == selected ? Color.accentColor.opacity(0.25) : Color.clear)
+                    }
+                    .listStyle(.plain)
+                    .scrollContentBackground(.hidden)
+                    .frame(height: CGFloat(min(items.count, visibleRows)) * Self.rowHeight)
+                    .onChange(of: selected) { _, new in
+                        guard items.indices.contains(new) else { return }
+                        proxy.scrollTo(items[new].id)
+                    }
+                }
+            }
+            Divider()
+            HStack(spacing: 12) {
+                Label("Open", systemImage: "return")
+                Label("Choose", systemImage: "arrow.up.arrow.down")
+                Text("⌘↵ Copy")
+                Text("⌘⌫ Remove")
+                Text("esc Close")
+                Spacer()
+                Text("\(history.items.count) items · \(HistoryFormatting.byteLabel(history.totalBytes))")
+            }
+            .font(.caption).foregroundStyle(.secondary)
+            .padding(.horizontal, 12).padding(.vertical, 8)
+            // ⌘Y toggles: while the overlay is open the toolbar button is under the backdrop,
+            // so the shortcut lives here instead (PanelView drops its binding for as long as we
+            // exist, so only one ⌘Y is ever registered). Zero-sized and transparent rather than
+            // `.hidden()`, which would still reserve a button's worth of layout.
+            Button("Close clipboard history", action: onClose)
+                .keyboardShortcut("y", modifiers: .command)
+                .frame(width: 0, height: 0)
+                .opacity(0)
+                .accessibilityHidden(true)
+            // ⌘⌫ has to be a key *equivalent*, not an `onKeyPress`: the search field is first
+            // responder and its field editor implements `deleteToBeginningOfLine:`, so it would
+            // consume ⌘⌫ and truncate the query instead of forwarding it. `performKeyEquivalent:`
+            // runs before `keyDown:`, so this button sees the key first. Deliberately the only
+            // ⌘⌫ handler in the view — two would risk removing two items on one press.
+            Button("Remove from clipboard history", action: removeSelection)
+                .keyboardShortcut(.delete, modifiers: .command)
+                .frame(width: 0, height: 0)
+                .opacity(0)
+                .accessibilityHidden(true)
+        }
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+        .shadow(radius: 20)
+        .onKeyPress(.upArrow) { move(-1, count: results.count); return .handled }
+        .onKeyPress(.downArrow) { move(+1, count: results.count); return .handled }
+        // Cancel's `.cancelAction` already closes the overlay first; this is a harmless
+        // duplicate that keeps Esc working even if that button is ever disabled or removed.
+        .onKeyPress(.escape) { onClose(); return .handled }
+        // ⌘↵ is not a field-editor binding, so it reaches here; `.ignored` for the unmodified
+        // press leaves plain Return to `.onSubmit`, which is its only handler.
+        .onKeyPress(keys: [.return], phases: .down) { press in
+            guard press.modifiers.contains(.command) else { return .ignored }
+            copyBackSelection()
+            return .handled
+        }
+    }
+
+    @ViewBuilder private var emptyState: some View {
+        if !model.settings.historyEnabled {
+            VStack(spacing: 8) {
+                Text("Clipboard history is off").foregroundStyle(.secondary)
+                // Same door the menu bar uses; closing the overlay first takes the dim off the
+                // panel behind the Settings window.
+                SettingsLink { Text("Enable in Settings…") }
+                    .simultaneousGesture(TapGesture().onEnded { onClose() })
+            }
+        } else if history.items.isEmpty {
+            Text("No clipboard history yet").foregroundStyle(.secondary)
+        } else {
+            Text("No matches").foregroundStyle(.secondary)
+        }
+    }
+
+    private func row(_ result: HistorySearchResult, isSelected: Bool) -> some View {
+        let item = result.item
+        return HStack(spacing: 10) {
+            if item.kind == .image {
+                thumbnail(for: item)
+                    .frame(width: Self.thumbnailSide, height: Self.thumbnailSide)
+                    .clipShape(RoundedRectangle(cornerRadius: 4))
+                    .accessibilityHidden(true)
+            }
+            VStack(alignment: .leading, spacing: 2) {
+                Text(highlightedPreview(result)).lineLimit(2)
+                HStack(spacing: 6) {
+                    if item.kind == .richText {
+                        Text("rich")
+                            .font(.caption2)
+                            .padding(.horizontal, 4)
+                            .background(.quaternary, in: Capsule())
+                    }
+                    if item.kind == .image {
+                        Text("↵ copies").font(.caption2).foregroundStyle(.secondary)
+                    }
+                }
+            }
+            Spacer()
+            Text(trailingLabel(for: item))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            if isSelected {
+                Image(systemName: "return")
+                    .foregroundStyle(.secondary)
+                    .accessibilityHidden(true)
+            }
+        }
+        .padding(.vertical, 4)
+    }
+
+    private func trailingLabel(for item: HistoryItem) -> String {
+        [item.sourceAppName, HistoryFormatting.relativeAge(from: item.capturedAt)]
+            .compactMap { $0 }
+            .joined(separator: " · ")
+    }
+
+    /// Bolds the matched ranges in the preview. Built as an `AttributedString` (like the
+    /// palette's `highlightedName`) so an index that doesn't convert is skipped rather than
+    /// trapping on a bad slice.
+    private func highlightedPreview(_ result: HistorySearchResult) -> AttributedString {
+        let preview = HistoryFormatting.previewText(for: result.item)
+        var text = AttributedString(preview)
+        let base = Font.system(.body, design: .monospaced)
+        // Set the base font first so the bold runs differ only in weight, not in size.
+        text.font = base
+        for range in result.matchedRanges {
+            guard let lower = AttributedString.Index(range.lowerBound, within: text),
+                  let upper = AttributedString.Index(range.upperBound, within: text) else { continue }
+            text[lower..<upper].font = base.weight(.bold)
+            text[lower..<upper].foregroundColor = .accentColor
+        }
+        return text
+    }
+
+    @ViewBuilder private func thumbnail(for item: HistoryItem) -> some View {
+        if let image = thumbnails[item.id] {
+            Image(nsImage: image).resizable().scaledToFit()
+        } else {
+            Color.secondary.opacity(0.2)
+                .task(id: item.id) { cacheThumbnail(for: item) }
+        }
+    }
+
+    /// Decodes the blob straight down to thumbnail size — a 5MB PNG decoded whole would cost
+    /// tens of megabytes of bitmap to fill a 44pt slot — and evicts FIFO at the cache cap.
+    private func cacheThumbnail(for item: HistoryItem) {
+        guard thumbnails[item.id] == nil,
+              let data = history.imagePNG(for: item),
+              let image = Self.downsample(data, maxPixelSize: Self.thumbnailPixelSize) else { return }
+        while thumbnails.count >= Self.thumbnailCacheLimit, let oldest = thumbnailOrder.first {
+            thumbnailOrder.removeFirst()
+            thumbnails.removeValue(forKey: oldest)
+        }
+        thumbnails[item.id] = image
+        thumbnailOrder.append(item.id)
+    }
+
+    private static func downsample(_ data: Data, maxPixelSize: Int) -> NSImage? {
+        let sourceOptions = [kCGImageSourceShouldCache: false] as CFDictionary
+        guard let source = CGImageSourceCreateWithData(data as CFData, sourceOptions) else { return nil }
+        let options = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceThumbnailMaxPixelSize: maxPixelSize,
+        ] as CFDictionary
+        guard let thumbnail = CGImageSourceCreateThumbnailAtIndex(source, 0, options) else { return nil }
+        return NSImage(cgImage: thumbnail, size: NSSize(width: thumbnail.width, height: thumbnail.height))
+    }
+
+    // MARK: Actions (every one reads live state)
+
+    private func refreshResults() {
+        results = HistorySearch.rank(query: query, in: history.items)
+    }
+
+    /// Index the list is actually highlighting: `selection` clamped to the live result count.
+    private func clampedSelection(in items: [HistorySearchResult]) -> Int {
+        items.isEmpty ? 0 : min(selection, items.count - 1)
+    }
+
+    /// Whatever is highlighted *now*. A retained handler must not close over render-time
+    /// locals; read `@State` (which resolves through its storage box and is always current)
+    /// at call time.
+    private func selectedItem() -> HistoryItem? {
+        let items = results
+        guard !items.isEmpty else { return nil }
+        return items[clampedSelection(in: items)].item
+    }
+
+    private func move(_ delta: Int, count: Int) {
+        guard count > 0 else { return }
+        // Step from the index the list is actually showing, which is `selection` clamped
+        // to the current result count — otherwise a stale larger `selection` skips rows.
+        let current = min(selection, count - 1)
+        selection = ((current + delta) % count + count) % count
+    }
+
+    private func openSelection() {
+        guard let item = selectedItem() else { return }
+        open(item)
+    }
+
+    /// Click path: the row the user hit is unambiguous, so it acts on that index directly.
+    private func open(_ items: [HistorySearchResult], _ index: Int) {
+        guard items.indices.contains(index) else { return }
+        selection = index
+        open(items[index].item)
+    }
+
+    /// Text and rich text load into the editor; an image has nothing to edit, so ↵ puts it
+    /// straight back on the clipboard.
+    ///
+    /// Closes first, like `CommandPaletteView.apply`: `copyBack` ends the session and orders the
+    /// panel out synchronously, so the overlay must not be left relying on `PanelView`'s
+    /// session-ended `onChange` running while the window is hidden.
+    private func open(_ item: HistoryItem) {
+        onClose()
+        if item.kind == .image { model.copyBack(item) } else { model.load(item) }
+    }
+
+    private func copyBackSelection() {
+        guard let item = selectedItem() else { return }
+        onClose()
+        model.copyBack(item)
+    }
+
+    private func removeSelection() {
+        guard let item = selectedItem() else { return }
+        history.remove(item.id)
+    }
+}

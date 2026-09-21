@@ -15,6 +15,76 @@ clipboard items support (then I can delete CopyClip)", "Fuzzy search clipboard
 history"), original requirements §4. Issue #10 (sensitive-app exclusion) builds
 directly on the `CaptureFilter` hook defined here and follows as Plan 7.
 
+## Amendments (post-implementation)
+
+The sections below are updated in place to match what shipped; this list is
+the summary of what changed and why, for anyone comparing against an earlier
+read of this spec.
+
+1. **Duplicate-at-top is a true no-op.** `HistoryStore.record` returns the
+   existing item unchanged (not `nil`) when the candidate duplicates the item
+   already at index 0. A duplicate further down moves to the top with a fresh
+   `capturedAt` but **keeps its original `sourceBundleID`/`sourceAppName`**:
+   re-copying an item (e.g. `AppModel.copyBack`) re-writes the pasteboard, and
+   the monitor would otherwise relabel a reused item as coming from Pastefix
+   itself.
+2. **Index writes run on a private serial `DispatchQueue`, not a detached
+   `Task`.** The queue is FIFO, so an older snapshot can never land after a
+   newer one. `flush()` enqueues the write and blocks until the queue drains.
+   `remove`, `clear`, and any limit trim that evicts write synchronously
+   (`flush()`); only `record` debounces (250 ms). `lastWriteError` is
+   `@Published` and eventually consistent — it updates on a later main-actor
+   turn than the mutation that triggered the write.
+3. **Blob names are always derived from the item id.** At load, any
+   index-referenced name that doesn't match `<id>.<ext>`, or that names a
+   missing file, is treated as missing. Unreferenced blobs are swept at load
+   *except* on the launch that quarantines a corrupt index — that index is the
+   only record of which blob belongs to which item, so sweeping then would
+   delete the payloads the quarantine exists to let a human recover.
+   `byteCount` is always recomputed from what's actually on disk at load,
+   never trusted from the index. Item-cap eviction never evicts below one
+   item.
+4. **`CaptureFilter` is two-stage.** `shouldRead(types:)` runs on declared
+   types alone before any content is read; `shouldCapture(_:types:)` runs
+   again after the read, on the full candidate, with the pasteboard's change
+   count re-checked first — a mismatch discards the read rather than recording
+   a mixed candidate. Stage 2 sees the **union of the types sampled before and
+   after the read**: `setData`/`setString` do not bump `changeCount`, so an
+   unchanged count proves only that the change did not turn over, not that the
+   type list is unchanged, and a marker added to the same change after the
+   first sample would otherwise be invisible to both stages. The concealed
+   marker check also covers three legacy spellings still emitted by older
+   apps. A tick that sees empty declared types is retried next tick rather
+   than treated as a real (empty) change. PNG over the image budget is
+   skipped before decoding; TIFF is gated by a header-only pixel count (>25M
+   pixels skipped) before paying for a decode + PNG re-encode — that decode
+   and re-encode is the one image cost still paid on the main actor, since a
+   TIFF's PNG size is unknown until the PNG exists.
+5. **The store is constructed with the user's configured cap directly**, and
+   cap changes from Settings are clamped and debounced 400 ms in the app layer
+   before reaching `HistoryStore.limits`, so holding the Settings stepper
+   doesn't walk the store through every intermediate value.
+6. **Overlay implementation details:** ⌘⌫ is a hidden key-equivalent `Button`
+   (`onKeyPress` would be swallowed by the search field's field editor).
+   Visible rows derive from the panel's available height (4 at the panel
+   minimum, up to 8), not a fixed 8. Thumbnails are ImageIO thumbnails
+   downsampled to max 88 px, cached up to 64 with FIFO eviction. The overlay
+   closes *before* `load`/`copyBack` runs. An image-only item's ↵ copies back
+   instead of opening an empty editor; `AppModel.load` redirects image-only
+   items to `copyBack` for the same reason.
+7. **⌘⇧V shadows "Paste and Match Style"** in apps that bind that command to
+   the same combination. Kept by decision — it's the natural mnemonic and the
+   hotkey is rebindable in Settings → Shortcut.
+8. **Polling limit on the concealed guarantee.** The monitor honours a
+   concealed/transient marker that is present when it reads the item, and the
+   stage-2 filter re-samples types after the read. A marker an app adds only
+   *after* our tick has already read and recorded the item cannot be honoured;
+   real password managers write the marker in the same burst as the content,
+   which is covered. Verified in the manual pass: same-burst and legacy markers
+   are skipped; a marker delayed by 700 ms was not.
+9. **Deferred:** TIFF→PNG conversion (and the thumbnail read) still run on the
+   main actor — #32.
+
 ## Scope
 
 **In scope:**
@@ -58,15 +128,15 @@ directly on the `CaptureFilter` hook defined here and follows as Plan 7.
 | What is captured | Text, rich text (RTFD), image (PNG); at least one; within per-item and total budgets | User's call: rich text and images are valid things to revisit, and RTFD storage is what makes Markdown ↔ rich (#16) useful from history. |
 | Budgets | 200 items; 256 KB text; 1 MB RTFD; 5 MB PNG; 50 MB total; evict oldest first | Proposed and accepted. Generous for text, enough for a page of formatted content or a screenshot, bounded on disk. |
 | Storage layout | `history/index.json` (metadata + inline text) + `history/<uuid>.rtfd` / `<uuid>.png` blobs, under `~/Library/Application Support/Pastefix/` | Keeps the index small and human-inspectable; big payloads are never base64-encoded into JSON; a blob can be deleted independently. |
-| Write strategy | Atomic (`.atomic`), owner-only permissions (0600 files, 0700 directory), debounced 250 ms after the last mutation | A crash mid-write cannot corrupt the index; other local users cannot read history. |
-| De-duplication | Text items by exact plain text; image items by SHA-256 of the PNG; a duplicate moves to the top and refreshes `capturedAt` | Copying the same thing twice shouldn't consume two slots; the most recent copy is what the user expects at the top. |
+| Write strategy | Atomic (`.atomic`), owner-only permissions (0600 files, 0700 directory), on a private serial `DispatchQueue`; `record` debounces 250 ms, `remove`/`clear`/evicting trims write synchronously via `flush()` (Amendment 2) | A crash mid-write cannot corrupt the index; other local users cannot read history; a user-initiated delete or an eviction that already deleted blobs cannot be lost to a crash inside the debounce window. |
+| De-duplication | Text items by exact plain text; image items by SHA-256 of the PNG; a duplicate elsewhere moves to the top and refreshes `capturedAt` (but keeps its original source app — Amendment 1); a duplicate already at the top is a no-op | Copying the same thing twice shouldn't consume two slots; the most recent copy is what the user expects at the top. |
 | Source app | `NSWorkspace.shared.frontmostApplication` at capture time (bundle id + localized name) | Best available signal; exact for keyboard copies, approximate for background writers. Also what #10's filter keys on. |
 | Our own Save writes | Recorded like any other change | They are clipboard contents; users revisit their own edits too. |
 | Overlay host | The existing panel, an overlay shaped like the ⌘K palette | One window, one Esc model, one focus story. A second Spotlight-style window would duplicate all of that. |
 | ↵ semantics | Text/rich: load into the editor as a new session (origin = the item, with `richRTFD` attached). Image: copy back and dismiss (row says "↵ copies") | Editing is the app's core; images can't be edited until #18, so ↵ does the only useful thing. |
 | ⌘↵ semantics | Copy the whole item (all representations) to the clipboard and dismiss | The CopyClip use case: get an old item back onto the clipboard in two keystrokes. |
 | Search | Same folding/tiers as `TransformSearch`, over the first 2 KB of plain text; empty query = recency order; image-only items match on their source app name and "image" | Consistent feel with ⌘K; bounded cost per keystroke. |
-| Exclusion hook | `protocol CaptureFilter { func shouldCapture(_ candidate: CaptureCandidate) -> Bool }`; the monitor consults a list of filters; this plan ships `ConcealedTypeFilter` | #10 adds `BundleIDExclusionFilter` without touching the monitor. |
+| Exclusion hook | `protocol CaptureFilter { func shouldRead(types:) -> Bool; func shouldCapture(_ candidate:, types:) -> Bool }` (two-stage — Amendment 4); the monitor consults a list of filters at each stage; this plan ships `ConcealedTypeFilter` | #10 adds `BundleIDExclusionFilter` without touching the monitor. |
 | Invariant | New Critical Invariant: concealed/transient pasteboard items are never recorded, and nothing in history is ever written anywhere but the owner-only history directory | Load-bearing for trust; belongs in AGENTS.md. |
 
 ## Architecture
@@ -79,17 +149,19 @@ directly on the `CaptureFilter` hook defined here and follows as Plan 7.
 public struct HistoryItem: Identifiable, Codable, Equatable, Sendable {
     public let id: UUID
     public var capturedAt: Date
-    public let plainText: String?          // inline; ≤ 256 KB (UTF-8)
-    public let richRTFDFile: String?       // "<uuid>.rtfd" in the history dir, ≤ 1 MB
-    public let imageFile: String?          // "<uuid>.png", ≤ 5 MB
-    public let imagePixelSize: CGSize?     // for the row caption
-    public let imageHash: String?          // SHA-256 hex of the PNG, for de-dup
-    public let sourceBundleID: String?
-    public let sourceAppName: String?
+    public var plainText: String?          // inline; ≤ 256 KB (UTF-8)
+    public var richRTFDFile: String?       // "<uuid>.rtfd" in the history dir, ≤ 1 MB
+    public var imageFile: String?          // "<uuid>.png", ≤ 5 MB
+    public var imagePixelWidth: Int?       // for the row caption; header-derived, no CGSize (AppCore stays AppKit/CoreGraphics-free)
+    public var imagePixelHeight: Int?
+    public var imageHash: String?          // SHA-256 hex of the PNG, for de-dup
+    public var sourceBundleID: String?
+    public var sourceAppName: String?
     public var byteCount: Int              // text + blobs, for the total budget
 
     public var kind: Kind                  // .text, .richText (text + rtfd), .image (image, maybe text)
     public enum Kind: String, Codable, Sendable { case text, richText, image }
+    public var hasText: Bool               // plainText, trimmed, is non-empty
 }
 ```
 
@@ -109,46 +181,66 @@ public struct CaptureCandidate: Sendable {
     public var plainText: String?
     public var richRTFD: Data?
     public var imagePNG: Data?
+    public var imagePixelWidth: Int?
+    public var imagePixelHeight: Int?
     public var sourceBundleID: String?
     public var sourceAppName: String?
 }
 
 public final class HistoryStore: ObservableObject {
     @Published public private(set) var items: [HistoryItem]      // newest first
-    public var limits: HistoryLimits { didSet { enforceLimits() } }
+    // Lowering a limit sheds items and deletes blobs immediately, so that trim must be
+    // flushed rather than debounced (Amendment 2); otherwise it schedules the normal debounced write.
+    public var limits: HistoryLimits { didSet { if enforceLimits() { flush() } else { scheduleWrite() } } }
+    @Published public private(set) var lastWriteError: String?   // eventually consistent — see Amendment 2
+    public let directory: URL
     public init(directory: URL, limits: HistoryLimits = .init())  // loads index; quarantines a corrupt one
-    @discardableResult public func record(_ candidate: CaptureCandidate) -> HistoryItem?
+    @discardableResult public func record(_ candidate: CaptureCandidate, now: Date = Date()) -> HistoryItem?
     public func remove(_ id: UUID)
     public func clear()
     public func richRTFD(for item: HistoryItem) -> Data?
     public func imagePNG(for item: HistoryItem) -> Data?
     public var totalBytes: Int
+    public func flush()   // synchronous; tests, remove/clear, applicationWillTerminate
 }
 ```
 
 - `record` returns nil when the candidate has no usable representation after
   budget trimming (text over `maxTextBytes` is dropped, not truncated; rich
   over `maxRichBytes` is dropped while keeping the text; image over
-  `maxImageBytes` is dropped), when the text is whitespace-only and there is no
-  image, or when it duplicates the top item exactly (nothing to do). A
-  duplicate further down moves to the top with a fresh `capturedAt`.
-- `enforceLimits` trims to `maxItems`, then evicts oldest until
-  `totalBytes ≤ maxTotalBytes`, deleting blobs for evicted items.
-- Persistence: index written with `JSONEncoder` (ISO 8601 dates) to
-  `index.json` via `Data.write(options: .atomic)`, then `chmod 0600`; blobs
+  `maxImageBytes` is dropped), or when the text is whitespace-only and there is
+  no image. When it duplicates the top item exactly, `record` is a true no-op:
+  it returns the existing item, unchanged. A duplicate further down moves to
+  the top with a fresh `capturedAt` but **keeps its original source app** — see
+  Amendment 1.
+- `enforceLimits` trims to `maxItems` (never below 1 item), then evicts oldest
+  until `totalBytes ≤ maxTotalBytes`, deleting blobs for evicted items.
+- Persistence: index written with `JSONEncoder` (ISO 8601 dates, sorted keys)
+  to `index.json` via `Data.write(options: .atomic)`, then `chmod 0600`; blobs
   written atomically before the index that references them; the directory is
-  created with 0700. Writes are debounced 250 ms via a `Task` that is cancelled
-  and restarted on each mutation; `flush()` exists for tests and for
-  `applicationWillTerminate`.
+  created with 0700. A snapshot of `items` is encoded and written on a private
+  serial `DispatchQueue` (FIFO — an older snapshot can never overwrite a newer
+  one), debounced 250 ms after the last mutation from `record`. `remove`,
+  `clear`, and any limit trim that evicts write synchronously via `flush()`,
+  which enqueues the write and blocks until the queue drains — see Amendment 2.
+  `flush()` is also called from `applicationWillTerminate`.
 - Loading: a missing directory → empty store; an unreadable/undecodable index
-  → renamed to `index.json.corrupt-<timestamp>` and an empty store; blobs
-  referenced by the index but missing on disk → the item is kept with that
+  → renamed to `index.json.corrupt-<unix-seconds>` and an empty store; blobs
+  referenced by the index but missing on disk, or named anything other than
+  `<id>.<ext>`, are treated as missing and the item is kept with that
   representation cleared (a text item survives losing its RTFD; an image-only
-  item with a missing PNG is dropped).
-- I/O errors on write are logged (`os.Logger`, category "history") and the
-  store keeps running in memory; the next mutation retries.
-- Thread-safety: main-actor class; file I/O for the debounced write runs on a
-  detached task with a snapshot of the index, never touching `items` off-main.
+  item with a missing PNG is dropped). `byteCount` is always recomputed from
+  what's actually on disk, never trusted from the index. Blobs not referenced
+  by any surviving item are swept at load, except on the launch that
+  quarantines a corrupt index — see Amendment 3.
+- I/O errors on write are logged (`os.Logger`, category "history") and update
+  `@Published var lastWriteError: String?`; the store keeps running in memory
+  and the next mutation retries. `lastWriteError` is eventually consistent —
+  it lands on a later main-actor turn than the mutation that triggered the
+  write, since the write itself runs off-main.
+- Thread-safety: main-actor class; encoding and file I/O for every index write
+  run on the serial writer queue with a snapshot of `items`, never touching
+  `items` off-main.
 
 **`History/HistorySearch.swift`** (new)
 
@@ -185,39 +277,68 @@ characters, "…" when truncated; `"Image \(w)×\(h)"` for image-only items),
 
 **`PasteboardMonitor.swift`** (new) — `@MainActor final class`:
 
-- `init(pasteboard: NSPasteboard = .general, filters: [any CaptureFilter], onCapture: @escaping (CaptureCandidate) -> Void)`.
+- `init(pasteboard: NSPasteboard = .general, filters: [any CaptureFilter], maxImageBytes: Int, onCapture: @escaping (CaptureCandidate) -> Void)`.
 - `start()` / `stop()` manage a `Timer` (0.5 s, main run loop, `.common` mode
-  so it fires while menus are open). On each tick: if `changeCount` differs
-  from the last seen value, read the pasteboard **once** into a
-  `CaptureCandidate`:
-  - Skip entirely if `types` contains any of `org.nspasteboard.ConcealedType`,
-    `org.nspasteboard.TransientType`, `org.nspasteboard.AutoGeneratedType`
-    (`ConcealedTypeFilter`, first in the filter list).
-  - `plainText = string(forType: .string)`; `richRTFD` from
-    `readObjects(forClasses: [NSAttributedString.self])` **only if**
-    `availableType(from: [.rtf, .rtfd, .html]) != nil` (the Plan 2a lesson),
-    serialised to RTFD data; `imagePNG` from `.png` directly, else from `.tiff`
-    via `NSBitmapImageRep` → PNG; `imagePixelSize` from the rep.
-  - Consult every `CaptureFilter`; if all say yes, call `onCapture`.
+  so it fires while menus are open). On each tick, if `changeCount` differs
+  from the last seen value and declared `types` is non-empty (an empty read
+  means a writer is mid-`clearContents()`/`setData` sequence; retry next
+  tick without advancing `lastChangeCount`):
+  - **Stage 1 — `shouldRead(types:)`:** a cheap gate on declared types alone,
+    before any content is read, so a concealed item's bytes are never even
+    read under the guise of deciding whether they may be captured.
+    `ConcealedTypeFilter` (first in the filter list) rejects
+    `org.nspasteboard.ConcealedType`, `org.nspasteboard.TransientType`,
+    `org.nspasteboard.AutoGeneratedType`, and three legacy marker spellings
+    still emitted by older apps: `de.petermaurer.TransientPasteboardType`,
+    `com.typeit4me.clipping`, `Pasteboard generator type`.
+  - Read the pasteboard **once** into a `CaptureCandidate`: `plainText =
+    string(forType: .string)`; `richRTFD` from `readObjects(forClasses:
+    [NSAttributedString.self])` **only if** `availableType(from: [.rtf,
+    .rtfd, .html]) != nil` (the Plan 2a lesson), serialised to RTFD data;
+    `imagePNG` from `.png` directly (skipped before decoding if over
+    `maxImageBytes`), else from `.tiff` via `NSBitmapImageRep` → PNG, gated
+    by a header-only pixel count (>25M pixels skipped, since TIFF byte size
+    does not correlate with PNG-compressed size) before paying for the
+    decode + re-encode; `imagePixelWidth`/`imagePixelHeight` read from the
+    image header, no full decode required.
+  - If the pasteboard's `changeCount` changed again while the read was in
+    flight, discard the read (it may mix this change's marker types with a
+    later change's content) and roll `lastChangeCount` back one so the next
+    tick reprocesses the newer change cleanly.
+  - **Stage 2 — `shouldCapture(_:types:)`:** a gate on the full candidate,
+    using the union of the types sampled before and after the read (see
+    Amendment 4), for filters that need content `read` alone populates (e.g.
+    `sourceBundleID`, for #10's app exclusion). If every filter says yes, call
+    `onCapture`.
   - The first tick after `start()` only records the current `changeCount`; it
     does not capture what was already on the clipboard.
-- `protocol CaptureFilter: Sendable { func shouldCapture(_ candidate: CaptureCandidate, types: [NSPasteboard.PasteboardType]) -> Bool }` and
-  `struct ConcealedTypeFilter: CaptureFilter`.
+- `protocol CaptureFilter: Sendable { func shouldRead(types: [NSPasteboard.PasteboardType]) -> Bool; func shouldCapture(_ candidate: CaptureCandidate, types: [NSPasteboard.PasteboardType]) -> Bool }`
+  and `struct ConcealedTypeFilter: CaptureFilter` (implements both stages
+  identically, since a concealed marker is decided by types alone). See
+  Amendment 4.
 
-**`AppDelegate`** — owns `HistoryStore(directory: <Application Support>/Pastefix/history)`
-and the monitor; starts the monitor when `settings.historyEnabled` is true and
-re-points it on change (same sink pattern as `showSidebar`); calls
-`historyStore.flush()` in `applicationWillTerminate`. Registers the second
-hotkey `KeyboardShortcuts.Name.summonHistory` (default ⌘⇧V) →
+**`AppDelegate`** — constructs `HistoryStore(directory: <Application
+Support>/Pastefix/history, limits: HistoryLimits(maxItems:
+settings.historyMaxItems))` directly with the user's configured cap (not the
+default, reset afterward) and owns the monitor; starts the monitor when
+`settings.historyEnabled` is true and re-points it on change (same sink
+pattern as `showSidebar`); calls `historyStore.flush()` in
+`applicationWillTerminate`. Registers the second hotkey
+`KeyboardShortcuts.Name.summonHistory` (default ⌘⇧V — see Amendment 7) →
 `summonHistory()`: if no session, `model.summon()` first (so the editor has
-the current clipboard behind the overlay), then `isHistoryOpen = true` via a
-published flag on `AppModel` (`showHistoryRequested`) that `PanelView`
-observes.
+the current clipboard behind the overlay), then
+`model.historyOverlayRequested = true`, which `PanelView` observes. Cap
+changes from `settings.$historyMaxItems` are clamped (20…1000) and debounced
+400 ms before being applied to `history.limits.maxItems`, so holding the
+Settings stepper's arrow doesn't walk the store through every intermediate
+value, evicting and deleting blobs at each step (Amendment 5).
 
 **`AppModel`** — gains `let history: HistoryStore` (injected),
 `func load(_ item: HistoryItem)` (bumps `sessionGeneration`, sets
-`document = PasteDocument(origin: ClipboardSnapshot(plainText: item.plainText ?? "", richRTFD: history.richRTFD(for: item)))`),
-`func copyBack(_ item: HistoryItem)` (`ClipboardBridge.write(item, from: history)` then `endSession()`),
+`document = PasteDocument(origin: ClipboardSnapshot(plainText: item.plainText ?? "", richRTFD: history.richRTFD(for: item)))`
+— except an image-only item, which has no text to edit: `load` redirects
+those straight to `copyBack` instead of opening an empty session),
+`func copyBack(_ item: HistoryItem)` (`ClipboardBridge.write(text:richRTFD:imagePNG:)` then `endSession()`),
 and `@Published var historyOverlayRequested = false`.
 
 **`ClipboardBridge`** — `static func write(text: String?, richRTFD: Data?, imagePNG: Data?)`:
@@ -226,19 +347,30 @@ and `@Published var historyOverlayRequested = false`.
 for images. Existing `writePlain` remains and calls it.
 
 **`HistoryOverlayView.swift`** (new) — same chrome as `CommandPaletteView`
-(shared `PanelMetrics`), title "History", search field focused on open,
-`List` of `HistorySearchResult` rows:
+(shared `PanelMetrics`), search field focused on open, `List` of
+`HistorySearchResult` rows:
 
 - Text/rich row: two-line monospaced preview with highlighted match, trailing
   caption "`<app>` · `<age>`", a small "rich" badge when RTFD is present.
-- Image row: 44×44 thumbnail (`NSImage(data:)` cached per id), caption
-  "Image 1280×800 · Screenshot · 3m", trailing hint "↵ copies".
+- Image row: 44×44 thumbnail, trailing hint "↵ copies". Thumbnails are ImageIO
+  thumbnails (`CGImageSourceCreateThumbnailAtIndex`, not a full decode)
+  downsampled to a maximum of 88 px (2× the 44pt slot, for Retina), cached per
+  item id up to 64 images with FIFO eviction — see Amendment 6.
+- Visible row count derives from the panel's available height at open time,
+  not a fixed 8: 4 rows at the panel's minimum height, up to a cap of 8.
 - Keys: ↑↓ wrap; ↵ → `model.load(item)` (text/rich) or `model.copyBack(item)`
   (image); ⌘↵ → `model.copyBack(item)`; ⌘⌫ → `history.remove(item.id)`;
-  Esc → close. All handlers read live `@State` (the Plan 4 lesson).
+  Esc → close. All handlers read live `@State` (the Plan 4 lesson). ⌘⌫ is a
+  hidden key-equivalent `Button`, not an `onKeyPress` handler — the search
+  field's field editor implements `deleteToBeginningOfLine:` and would
+  otherwise consume ⌘⌫ before the view ever sees it. Opening or copying back
+  an item closes the overlay *first*, then calls `model.load`/`copyBack` —
+  not the reverse — so a synchronous session-ending copy-back never races the
+  overlay's own teardown.
 - Empty states: "No clipboard history yet" / "Clipboard history is off — enable
   it in Settings" (with a button that opens Settings) / "No matches".
-- Footer: "↵ Open   ⌘↵ Copy   ⌘⌫ Remove   esc Close".
+- Footer: "↵ Open   ⌘↵ Copy   ⌘⌫ Remove   esc Close" plus an item count and
+  total size.
 
 **`PanelView`** — `@State isHistoryOpen`; toolbar clock button (`clock.arrow.circlepath`,
 ⌘Y) toggles it; the overlay `ZStack` hosts either the palette or the history
@@ -319,13 +451,13 @@ directory; toggling capture off stops new items; relaunch preserves history;
   Sparkle release page: "Pastefix now keeps a history of what you copy…" with
   the opt-out.
 - `AGENTS.md`: layout entries (`History/` in AppCore; `PasteboardMonitor.swift`,
-  `HistoryOverlayView.swift`); build/test notes on the temp-directory tests;
-  **new Critical Invariant 12:** *Clipboard history never records items marked
-  concealed/transient/auto-generated, never stores anything outside the
-  owner-only history directory, and every capture passes through the
-  `CaptureFilter` chain — new capture sources or storage paths must keep all
-  three.* Plus a Patterns note: the monitor reads the pasteboard once per
-  change and never on a timer tick without a change.
+  `HistoryOverlayView.swift`, `FuzzyMatch.swift`); build/test notes on the
+  temp-directory tests; **new Critical Invariant 12** naming the two-stage
+  `CaptureFilter` chain explicitly (Amendment 4) — new capture sources,
+  filters, or storage paths must keep `shouldRead`, `shouldCapture`, and the
+  owner-only directory guarantee all three. Plus a Patterns note: the monitor
+  reads the pasteboard once per `changeCount` change and never on a bare
+  timer tick, and rich content is read only when a rich type is declared.
 - Spec for #10 (Plan 7) will reference `CaptureFilter` and `sourceBundleID`.
 
 ## Project layout delta

@@ -6,6 +6,7 @@ struct PanelView: View {
     @ObservedObject var model: AppModel
     @ObservedObject var settings: SettingsStore
     @State private var isPaletteOpen = false
+    @State private var isHistoryOpen = false
     @FocusState private var editorFocused: Bool
 
     private var workingBinding: Binding<String> {
@@ -42,10 +43,16 @@ struct PanelView: View {
                 Divider()
                 actionBar
             }
+            // The two overlays are mutually exclusive: one backdrop, one focused field, one
+            // owner for Esc. Opening either closes the other.
             if isPaletteOpen {
                 CommandPaletteView(model: model, onClose: closePalette)
                     .transition(.opacity)
                     // A sidebar-started apply must not leave a live palette behind.
+                    .disabled(model.isApplying)
+            } else if isHistoryOpen {
+                HistoryOverlayView(model: model, onClose: closeHistory)
+                    .transition(.opacity)
                     .disabled(model.isApplying)
             }
         }
@@ -57,14 +64,30 @@ struct PanelView: View {
         )
         .animation(.easeInOut(duration: 0.15), value: settings.showSidebar)
         .animation(.easeInOut(duration: 0.1), value: isPaletteOpen)
-        // A new session always starts with the palette closed.
-        .onChange(of: model.document == nil) { _, ended in
-            if ended { isPaletteOpen = false }
+        .animation(.easeInOut(duration: 0.1), value: isHistoryOpen)
+        // Every session boundary closes both overlays. Keyed on the generation counter, not on
+        // `document == nil`: ⌘S and auto-hide-on-blur end the session from inside the overlay
+        // and hide the panel synchronously, and SwiftUI does not promise to update a hosting
+        // view in an ordered-out window — a derived Bool reads the same on both sides of a
+        // skipped render, so the transition is never observed and the next summon comes up with
+        // the overlay still over it. The counter is monotonic, so a skipped render can't hide it.
+        // Must stay above the `historyOverlayRequested` handler: a ⌘⇧V summon resets, then opens.
+        .onChange(of: model.sessionGeneration) { _, _ in
+            isPaletteOpen = false
+            isHistoryOpen = false
         }
-        // Hand focus back to the editor once a transform finishes, unless the user has
-        // the palette open and is picking the next one.
+        // Hand focus back to the editor once a transform finishes, unless the user has an
+        // overlay open and is picking the next thing.
         .onChange(of: model.isApplying) { _, applying in
-            if !applying && !isPaletteOpen { editorFocused = true }
+            if !applying && !isPaletteOpen && !isHistoryOpen { editorFocused = true }
+        }
+        // ⌘⇧V summons straight into the history overlay; the flag is a one-shot request,
+        // so reset it here or the next summon would reopen the overlay by itself.
+        .onChange(of: model.historyOverlayRequested) { _, requested in
+            guard requested else { return }
+            isPaletteOpen = false
+            isHistoryOpen = true
+            model.historyOverlayRequested = false
         }
     }
 
@@ -77,6 +100,15 @@ struct PanelView: View {
             Button("Refresh") { model.refresh() }
                 .disabled(model.isApplying)
             Spacer()
+            Button { toggleHistory() } label: {
+                Image(systemName: "clock.arrow.circlepath")
+            }
+            .help("Clipboard History (⌘Y)")
+            .accessibilityLabel("Clipboard History")
+            // Same one-binding rule as ⌘K below: while the history overlay is open its own
+            // hidden button owns ⌘Y (to close), and while the palette is open nothing does.
+            .keyboardShortcut(isPaletteOpen || isHistoryOpen ? nil : KeyboardShortcut("y", modifiers: .command))
+            .disabled(model.isApplying)
             Button { settings.showSidebar.toggle() } label: {
                 Image(systemName: "sidebar.right")
             }
@@ -85,7 +117,7 @@ struct PanelView: View {
             .keyboardShortcut("l", modifiers: [.command, .shift])
             // Cancel stays enabled during a slow transform, and owns Esc outright: one key with
             // two meanings, resolved here rather than by attaching and detaching the binding.
-            // Esc with the palette open closes the palette; Esc with it closed cancels the
+            // Esc with an overlay open closes that overlay; Esc with both closed cancels the
             // panel. Keeping the shortcut permanently attached means there is never a frame in
             // which nothing claims Esc.
             Button("Cancel") { escape() }
@@ -119,7 +151,7 @@ struct PanelView: View {
             // Only one ⌘K can exist at a time: while the palette is open this button is still
             // in the hierarchy (just under the backdrop), and the palette's own hidden button
             // takes over the shortcut to close it. Two live bindings would be ambiguous.
-            .keyboardShortcut(isPaletteOpen ? nil : KeyboardShortcut("k", modifiers: .command))
+            .keyboardShortcut(isPaletteOpen || isHistoryOpen ? nil : KeyboardShortcut("k", modifiers: .command))
             .disabled(model.isApplying)
             .accessibilityLabel("Find a transform")
             if let color = model.detectedColor {
@@ -146,16 +178,25 @@ struct PanelView: View {
     }
 
     private func togglePalette() {
-        if isPaletteOpen { closePalette() } else { isPaletteOpen = true }
+        if isPaletteOpen { closePalette() } else { isHistoryOpen = false; isPaletteOpen = true }
     }
 
-    /// Esc: close the palette if it is open, otherwise end the session.
+    private func toggleHistory() {
+        if isHistoryOpen { closeHistory() } else { isPaletteOpen = false; isHistoryOpen = true }
+    }
+
+    /// Esc: close whichever overlay is open, otherwise end the session.
     private func escape() {
-        if isPaletteOpen { closePalette() } else { model.cancel() }
+        if isPaletteOpen { closePalette() } else if isHistoryOpen { closeHistory() } else { model.cancel() }
     }
 
     private func closePalette() {
         isPaletteOpen = false
+        editorFocused = true
+    }
+
+    private func closeHistory() {
+        isHistoryOpen = false
         editorFocused = true
     }
 

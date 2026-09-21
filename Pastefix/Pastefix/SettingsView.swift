@@ -8,6 +8,8 @@ struct SettingsView: View {
     @ObservedObject var settings: SettingsStore
     @ObservedObject var model: AppModel
     @ObservedObject var updater: UpdaterController
+    @ObservedObject var history: HistoryStore
+    @State private var confirmClear = false
 
     var body: some View {
         TabView {
@@ -49,8 +51,23 @@ struct SettingsView: View {
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }
+            Section("History") {
+                Toggle("Remember clipboard history", isOn: $settings.historyEnabled)
+                Stepper("Keep last \(settings.historyMaxItems) items", value: $settings.historyMaxItems, in: 20...1000, step: 10)
+                    .disabled(!settings.historyEnabled)
+                HStack {
+                    Text("\(history.items.count) items · \(HistoryFormatting.byteLabel(history.totalBytes))").foregroundStyle(.secondary)
+                    Spacer()
+                    Button("Clear History…") { confirmClear = true }.disabled(history.items.isEmpty)
+                }
+                Text("Items marked private by password managers are never recorded.").font(.caption).foregroundStyle(.secondary)
+            }
         }
         .padding()
+        .alert("Clear clipboard history?", isPresented: $confirmClear) {
+            Button("Clear \(history.items.count) items", role: .destructive) { history.clear() }
+            Button("Cancel", role: .cancel) {}
+        } message: { Text("This removes every remembered item and its files from disk.") }
     }
 
     private var shortcut: some View {
@@ -58,6 +75,7 @@ struct SettingsView: View {
             KeyboardShortcuts.Recorder("Summon Pastefix:", name: .summonPastefix)
             Text("Global hotkey to summon the panel from any app.")
                 .font(.caption).foregroundStyle(.secondary)
+            KeyboardShortcuts.Recorder("Open history:", name: .summonHistory)
         }
         .padding()
     }
