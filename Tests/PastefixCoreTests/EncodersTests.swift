@@ -25,6 +25,10 @@ import Testing
         #expect(!Base64Codec.looksLikeBase64("internationalization"))      // letters, but decodes to junk
         #expect(!Base64Codec.looksLikeBase64("AAAAAAAAAAAAAAAA"))          // NULs
         #expect(Base64Codec.looksLikeBase64("SGVsbG8sIHdvcmxkLiBUaGlzIGlzIHRleHQu"))
+        #expect(!Base64Codec.looksLikeBase64("aGVsbG8gd29ybGTCm3g="))              // decodes to "hello world\u{9B}x" (C1 control)
+    }
+    @Test func base64LeadingPaddingRejected() {
+        #expect(Base64Codec.decodeText("=aGVsbG8=") == nil)
     }
     @Test func urlEncodeDecode() async throws {
         #expect(try await enc(.url, "a b&c=d/é~") == "a%20b%26c%3Dd%2F%C3%A9~")

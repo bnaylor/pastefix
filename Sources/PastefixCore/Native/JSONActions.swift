@@ -12,6 +12,16 @@ enum JSONReformat {
         }
     }
     static func render(_ object: Any, pretty: Bool) throws -> String {
+        if !JSONSerialization.isValidJSONObject(object) {
+            // isValidJSONObject is false for legitimate top-level fragments; allow the safe ones.
+            let ok: Bool
+            switch object {
+            case is String, is NSNull: ok = true
+            case let n as NSNumber: ok = n.doubleValue.isFinite
+            default: ok = false
+            }
+            guard ok else { throw TransformError.invalidInput("Not valid JSON: number out of range") }
+        }
         var opts: JSONSerialization.WritingOptions = [.sortedKeys, .withoutEscapingSlashes, .fragmentsAllowed]
         if pretty { opts.insert(.prettyPrinted) }
         let data = try JSONSerialization.data(withJSONObject: object, options: opts)

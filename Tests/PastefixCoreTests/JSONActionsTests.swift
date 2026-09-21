@@ -35,9 +35,22 @@ import Testing
         #expect(out == #""say \"hi\"\n\ttab \\ slash / é 😀""#)
     }
     @Test func metadata() {
-        #expect(JSONPrettify().id == "builtin.json.pretty"); #expect(JSONPrettify().applicableKinds == [.json])
-        #expect(JSONMinify().id == "builtin.json.minify");   #expect(JSONMinify().applicableKinds == [.json])
-        #expect(JSONEscape().id == "builtin.json.escape");   #expect(JSONEscape().applicableKinds == nil)
+        #expect(JSONPrettify().id == "builtin.json.pretty"); #expect(JSONPrettify().name == "JSON Prettify"); #expect(JSONPrettify().applicableKinds == [.json])
+        #expect(JSONMinify().id == "builtin.json.minify");   #expect(JSONMinify().name == "JSON Minify");     #expect(JSONMinify().applicableKinds == [.json])
+        #expect(JSONEscape().id == "builtin.json.escape");   #expect(JSONEscape().name == "Escape as JSON String"); #expect(JSONEscape().applicableKinds == nil)
         for c in [JSONPrettify().category, JSONMinify().category, JSONEscape().category] { #expect(c == TransformCategory.data) }
+    }
+    @Test func nonFiniteNumberRejected() async throws {
+        await #expect(throws: TransformError.invalidInput("Not valid JSON: number out of range")) {
+            _ = try await JSONPrettify().apply(.init(text: #"{"x":-1e400}"#))
+        }
+        await #expect(throws: TransformError.invalidInput("Not valid JSON: number out of range")) {
+            _ = try await JSONMinify().apply(.init(text: #"{"x":-1e400}"#))
+        }
+        await #expect(throws: TransformError.invalidInput("Not valid JSON: number out of range")) {
+            _ = try await JSONMinify().apply(.init(text: "-1e400"))
+        }
+        #expect(try await JSONMinify().apply(.init(text: #""abc""#)) == #""abc""#)
+        #expect(try await JSONMinify().apply(.init(text: "null")) == "null")
     }
 }

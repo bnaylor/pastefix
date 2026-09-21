@@ -5,12 +5,13 @@ public enum Codec: Sendable { case base64, url, html }
 enum Base64Codec {
     static func encode(_ s: String) -> String { Data(s.utf8).base64EncodedString() }
 
-    /// Lenient decode to text: ignores ASCII whitespace, accepts the url-safe alphabet, repairs
+    /// Lenient decode to text: ignores whitespace, accepts the url-safe alphabet, repairs
     /// padding. nil when it isn't Base64, decodes to invalid UTF-8, or contains NUL.
     static func decodeText(_ s: String) -> String? {
         let compact = s.filter { !$0.isWhitespace }
             .replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
-        let core = compact.trimmingCharacters(in: CharacterSet(charactersIn: "="))
+        var core = compact
+        while core.hasSuffix("=") { core.removeLast() }
         guard !core.isEmpty, core.allSatisfy({ $0.isLetter || $0.isNumber || $0 == "+" || $0 == "/" }), core.allSatisfy(\.isASCII) else { return nil }
         let padded = core + String(repeating: "=", count: (4 - core.count % 4) % 4)
         guard let data = Data(base64Encoded: padded), !data.contains(0), let text = String(data: data, encoding: .utf8) else { return nil }
@@ -21,17 +22,19 @@ enum Base64Codec {
     static func looksLikeBase64(_ s: String) -> Bool {
         let compact = s.filter { !$0.isWhitespace }
         guard compact.count >= 16, let text = decodeText(compact) else { return false }
-        return text.unicodeScalars.allSatisfy { $0 == "\t" || $0 == "\n" || $0 == "\r" || $0.value >= 0x20 && $0.value != 0x7F }
+        return text.unicodeScalars.allSatisfy {
+            $0 == "\t" || $0 == "\n" || $0 == "\r" || ($0.value >= 0x20 && $0.value != 0x7F && !(0x80...0x9F).contains($0.value))
+        }
     }
 }
 
 enum URLCodec {
     static let unreserved = CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")
+    // Every % must introduce two hex digits.
+    private static let malformedPercentPattern = try! NSRegularExpression(pattern: "%(?![0-9A-Fa-f]{2})")
     static func encode(_ s: String) -> String { s.addingPercentEncoding(withAllowedCharacters: unreserved) ?? s }
     static func decode(_ s: String) throws -> String {
-        // Every % must introduce two hex digits.
-        if let re = try? NSRegularExpression(pattern: "%(?![0-9A-Fa-f]{2})"),
-           re.firstMatch(in: s, range: NSRange(location: 0, length: (s as NSString).length)) != nil {
+        if malformedPercentPattern.firstMatch(in: s, range: NSRange(location: 0, length: (s as NSString).length)) != nil {
             throw TransformError.invalidInput("Malformed percent-encoding")
         }
         guard let out = s.removingPercentEncoding else { throw TransformError.invalidInput("Malformed percent-encoding") }

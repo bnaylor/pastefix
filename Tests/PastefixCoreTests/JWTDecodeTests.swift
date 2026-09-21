@@ -46,4 +46,17 @@ import Foundation
         #expect(t.id == "builtin.jwt.decode"); #expect(t.name == "Decode JWT")
         #expect(t.applicableKinds == [.jwt]); #expect(t.category == TransformCategory.data)
     }
+    @Test func nonFiniteNumberInPayloadThrows() async {
+        await #expect(throws: TransformError.self) {
+            _ = try await JWTDecode().apply(.init(text: token(payload: #"{"x":-1e400}"#)))
+        }
+    }
+    @Test func booleanExpIgnored() async throws {
+        let out = try await JWTDecode().apply(.init(text: token(payload: #"{"exp":true}"#)))
+        #expect(!out.contains("// exp"))
+    }
+    @Test func absurdExpIgnored() async throws {
+        let out = try await JWTDecode().apply(.init(text: token(payload: #"{"exp":1e308}"#)))
+        #expect(!out.contains("// exp"))
+    }
 }

@@ -39,7 +39,8 @@ public struct JWTDecode: Transformer {
         if let dict = payload as? [String: Any] {
             let fmt = ISO8601DateFormatter(); fmt.timeZone = TimeZone(identifier: "UTC")
             for key in ["exp", "iat", "nbf"] {
-                guard let n = dict[key] as? NSNumber else { continue }
+                guard let n = dict[key] as? NSNumber, !(dict[key] is Bool) else { continue }
+                guard (0...32_503_680_000).contains(n.doubleValue) else { continue }
                 let date = Date(timeIntervalSince1970: n.doubleValue)
                 var line = "// \(key): \(fmt.string(from: date))"
                 if key == "exp" { line += date < Date() ? " (expired)" : " (valid)" }
