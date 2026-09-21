@@ -29,6 +29,19 @@ public enum TransformError: Error, Equatable {
     case invalidInput(String)
 }
 
+/// How Save should write the buffer. Set by an `OutputModeTransformer`; lives on the document for the session.
+public enum OutputMode: String, Sendable, Equatable {
+    case plain
+    /// Render the buffer as Markdown: Save writes HTML + RTF alongside the Markdown source.
+    case renderedMarkdown
+}
+
+/// A transform that, besides (possibly) changing the text, chooses how the buffer is written on Save.
+/// This is the only channel through which a transform influences Save.
+public protocol OutputModeTransformer: Transformer {
+    var outputMode: OutputMode { get }
+}
+
 public protocol Transformer: Identifiable, Sendable {
     var id: String { get }
     var name: String { get }
@@ -52,6 +65,7 @@ public extension Transformer {
 /// Category names shared by the built-ins, the grouping code, and tests.
 public enum TransformCategory {
     public static let layout = "Layout"
+    public static let richText = "Rich Text"
     public static let characters = "Characters"
     public static let urls = "URLs"
     public static let `case` = "Case"
@@ -59,5 +73,5 @@ public enum TransformCategory {
     public static let colors = "Colors"
     public static let scripts = "Scripts"
     /// Display order for the built-in categories; custom ones follow alphabetically, then Scripts.
-    public static let builtinOrder = [layout, characters, urls, `case`, data, colors]
+    public static let builtinOrder = [layout, richText, characters, urls, `case`, data, colors]
 }

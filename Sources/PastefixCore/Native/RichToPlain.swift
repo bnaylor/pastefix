@@ -6,7 +6,7 @@ public struct RichToPlain: Transformer {
     public let name = "Rich → Plain Text"
     public let requiresRichInput = true
     public let source: TransformerSource = .builtin
-    public let category: String? = TransformCategory.characters
+    public let category: String? = TransformCategory.richText
 
     public init() {}
 

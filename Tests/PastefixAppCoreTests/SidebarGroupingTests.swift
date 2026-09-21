@@ -46,4 +46,13 @@ private struct CatTransformer: Transformer {
         #expect(titles(list) == ["Alpha", "beta"])
     }
     @Test func emptyInput() { #expect(SidebarGrouping.sections([]).isEmpty) }
+
+    @Test func richTextGroupComesRightAfterLayout() {
+        let list: [any Transformer] = [
+            CatTransformer(id: "a", category: TransformCategory.layout),
+            CatTransformer(id: "b", category: TransformCategory.richText),
+            CatTransformer(id: "c", category: TransformCategory.characters),
+        ]
+        #expect(titles(list) == ["Layout", "Rich Text", "Characters"])
+    }
 }

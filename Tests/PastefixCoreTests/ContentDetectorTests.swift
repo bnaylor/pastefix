@@ -36,7 +36,13 @@ import Foundation
         #expect(ContentKind.base64.displayName == "Base64")
         #expect(ContentKind.percentEncoded.displayName == "Percent-encoded")
         #expect(ContentKind.htmlEntities.displayName == "HTML entities")
-        #expect(ContentKind.allCases.count == 7)
+        #expect(ContentKind.markdown.displayName == "Markdown")
+        #expect(ContentKind.allCases.count == 8)
+    }
+    @Test func detectsMarkdownAndCoexistsWithURL() {
+        let kinds = ContentDetector.detect("# Notes\n\nsee https://example.com and **this**")
+        #expect(kinds.contains(.markdown) && kinds.contains(.url))
+        #expect(ContentKind.markdown.displayName == "Markdown")
     }
     @Test func colorKind() {
         #expect(ContentDetector.detect("#ff0080") == [.color])

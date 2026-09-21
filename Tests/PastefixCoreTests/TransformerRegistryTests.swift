@@ -71,7 +71,7 @@ import Foundation
         let byID = Dictionary(uniqueKeysWithValues: TransformerRegistry(config: .init(scriptsDirectory: dir, wrapWidth: 80)).load().map { ($0.id, $0.category) })
         #expect(byID["builtin.wrapreflow"] == TransformCategory.layout)
         #expect(byID["builtin.whitespace"] == TransformCategory.layout)
-        #expect(byID["builtin.richtoplain"] == TransformCategory.characters)
+        #expect(byID["builtin.richtoplain"] == TransformCategory.richText)
         #expect(byID["builtin.transliterate"] == TransformCategory.characters)
         #expect(byID["builtin.urlclean"] == TransformCategory.urls)
         #expect(byID["builtin.markdownlink"] == TransformCategory.urls)
@@ -84,7 +84,7 @@ import Foundation
         for id in dataIDs { #expect(byID[id] == TransformCategory.data) }
         let colorIDs = ["builtin.color.hex", "builtin.color.rgb", "builtin.color.hsl", "builtin.color.swift"]
         for id in colorIDs { #expect(byID[id] == TransformCategory.colors) }
-        #expect(TransformCategory.builtinOrder == ["Layout", "Characters", "URLs", "Case", "Data", "Colors"])
+        #expect(TransformCategory.builtinOrder == ["Layout", "Rich Text", "Characters", "URLs", "Case", "Data", "Colors"])
     }
 
     @Test func scriptCategorySurfaces() throws {
