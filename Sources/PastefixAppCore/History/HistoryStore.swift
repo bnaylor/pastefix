@@ -144,13 +144,23 @@ public final class HistoryStore: ObservableObject {
     }
 
     /// Drops every unpinned item and its blobs. Pins survive: they are saved snippets, not
-    /// history, and "clear history" is not "delete my snippets".
+    /// history, and "clear history" is not "delete my snippets". Use `clearAll` to drop those too.
     public func clear() {
         let victims = items.filter { !$0.pinned }
         items.removeAll { !$0.pinned }
         victims.forEach { deleteBlobs(ofItemWith: $0.id) }
         // A quarantined index is a verbatim plaintext copy of the history it described, so
-        // Settings' "removes every remembered item and its files from disk" has to cover it.
+        // "removes every remembered item and its files from disk" has to cover it.
+        removeQuarantinedIndexes()
+        flush()
+    }
+
+    /// The panic button: removes every item including pins, every blob, and every quarantined
+    /// index. Nothing a user could call "remembered" is left in `directory` but `index.json`.
+    public func clearAll() {
+        let ids = items.map(\.id)
+        items.removeAll()
+        ids.forEach(deleteBlobs(ofItemWith:))
         removeQuarantinedIndexes()
         flush()
     }
@@ -173,11 +183,18 @@ public final class HistoryStore: ObservableObject {
         flush()
     }
 
-    public func unpin(_ id: UUID) {
+    /// Unpinning rejoins the capped section as the NEWEST entry, not at the item's original
+    /// capture position: a long-lived pin is the oldest thing in `items`, so re-applying the
+    /// limits against its old `capturedAt` would evict the item the user just unpinned. It
+    /// behaves like a fresh capture instead.
+    public func unpin(_ id: UUID, now: Date = Date()) {
         guard let i = items.firstIndex(where: { $0.id == id }) else { return }
-        items[i].pinned = false
-        items[i].pinnedAt = nil
-        items[i].title = nil
+        var item = items.remove(at: i)
+        item.pinned = false
+        item.pinnedAt = nil
+        item.title = nil
+        item.capturedAt = now
+        items.insert(item, at: 0)
         // The item rejoins the capped section, which may now be over its limits.
         _ = enforceLimits()
         flush()

@@ -342,7 +342,32 @@ import Foundation
             let s = HistoryStore(directory: dir, limits: .init(maxItems: 1))
             let p = s.record(text("p"))!; s.pin(p.id); s.record(text("q"))
             s.unpin(p.id)
-            #expect(s.items.count == 1 && s.items[0].plainText == "q")
+            // The cap is enforced again (2 unpinned -> 1), and the survivor is the item that
+            // just rejoined: unpinning must never be a disguised delete.
+            #expect(s.items.count == 1 && s.items[0].plainText == "p")
+        }
+    }
+    @Test func unpinnedItemBecomesNewestNotTheNextVictim() throws {
+        try withDir { dir in
+            let s = HistoryStore(directory: dir, limits: .init(maxItems: 5))
+            let p = s.record(text("p"))!; s.pin(p.id)
+            for i in 0..<5 { s.record(text("t\(i)")) }
+            s.unpin(p.id)
+            #expect(s.items.count == 5 && s.items[0].id == p.id)          // rejoins as the newest
+            #expect(!s.items.contains { $0.plainText == "t0" })           // the oldest capture goes instead
+            #expect(s.items[0].capturedAt > p.capturedAt)
+        }
+    }
+    @Test func clearAllWipesPinsAndBlobsToo() throws {
+        try withDir { dir in
+            let s = HistoryStore(directory: dir)
+            let p = s.pinText("rich pin", richRTFD: Data([7]), title: "T")!
+            s.record(CaptureCandidate(imagePNG: png(3))); s.record(text("gone"))
+            try Data("x".utf8).write(to: dir.appendingPathComponent("index.json.corrupt-1"))
+            s.clearAll()
+            #expect(s.items.isEmpty && s.richRTFD(for: p) == nil)
+            let names = try FileManager.default.contentsOfDirectory(atPath: dir.path)
+            #expect(names == ["index.json"])
         }
     }
     @Test func pinFieldsPersistAndOldIndexesLoad() throws {
