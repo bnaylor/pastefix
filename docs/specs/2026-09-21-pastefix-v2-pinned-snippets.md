@@ -1,6 +1,6 @@
 ---
 type: spec
-status: approved
+status: implemented
 id: 2026-09-21-pastefix-v2-pinned-snippets
 title: Pastefix v2 — Pinned Snippets & Hotkey Paste (Plan 9)
 description: Pin history items or the editor buffer as snippets that never evict; a Pinned section in the ⌘⇧V overlay; ⇧↵ pastes any row into the app you came from; per-snippet global hotkeys that paste into the frontmost app (Accessibility-gated, copy-only fallback); a Snippets settings tab.
