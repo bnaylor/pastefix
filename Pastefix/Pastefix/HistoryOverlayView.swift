@@ -435,12 +435,11 @@ struct HistoryOverlayView: View {
     /// `onChange(of: history.items)` refresh re-ranks to the same value and is a no-op.
     private func togglePinSelected() {
         guard let item = selectedItem() else { return }
-        // Images are unpinnable by design (spec, README): a pinned image gets a hotkey recorder
-        // whose shortcut could never paste anything, and pinned bytes are exempt from eviction,
-        // so a handful of screenshot pins can starve history. The UI is the gate — `HistoryStore`
-        // stays policy-free. An image pinned before this guard existed is unpinnable from
-        // Settings → Snippets.
-        // Images can't become pins (spec), but an existing image pin must still be un-pinnable here.
+        // An image cannot *become* a pin (spec, README): it would get a hotkey recorder whose
+        // shortcut could never paste anything, and pinned bytes are exempt from eviction, so a
+        // handful of screenshot pins can starve history. An image pinned before this guard
+        // existed must still be un-pinnable from here, hence `|| item.pinned`. The UI is the
+        // gate — `HistoryStore.pin` stays policy-free.
         guard item.hasText || item.pinned else { NSSound.beep(); return }
         model.togglePin(item)
         refreshResults()

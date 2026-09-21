@@ -72,7 +72,13 @@ enum SnippetPaster {
     ///
     /// `.pasted` means activation succeeded and a post is scheduled — the post itself is still
     /// conditional on the frontmost re-check in `postWhenReady`, so it remains a prediction.
-    static func paste(text: String, richRTFD: Data?, into app: NSRunningApplication?) -> Outcome {
+    /// `onGaveUp` is how a caller hears about that prediction failing: it runs once, on the main
+    /// actor, if the chain reaches its deadline without posting. A `.copiedOnly` return and an
+    /// `onGaveUp` call are mutually exclusive, so a caller can treat them as the same signal.
+    static func paste(text: String,
+                      richRTFD: Data?,
+                      into app: NSRunningApplication?,
+                      onGaveUp: (() -> Void)? = nil) -> Outcome {
         ClipboardBridge.write(text: text, richRTFD: richRTFD, imagePNG: nil)
         // Bump before any early return: the clipboard is one slot, so *any* write invalidates a
         // pending chain whose whole premise is "the clipboard holds my text". A request that is
@@ -97,7 +103,7 @@ enum SnippetPaster {
         let target = app.processIdentifier
         let deadline = Date().addingTimeInterval(readyWait)
         DispatchQueue.main.asyncAfter(deadline: .now() + readyPoll) {
-            postWhenReady(targetPID: target, generation: generation, deadline: deadline)
+            postWhenReady(targetPID: target, generation: generation, deadline: deadline, onGaveUp: onGaveUp)
         }
         return .pasted
     }
@@ -115,7 +121,15 @@ enum SnippetPaster {
     /// Space switch can take longer than one tick to land. Retrying rather than bailing on the
     /// first mismatch is strictly safer, not laxer — a target that never comes forward (including
     /// because the user switched to a third app) still ends in posting nothing.
-    private static func postWhenReady(targetPID: pid_t, generation: Int, deadline: Date) {
+    ///
+    /// Expiring is a real outcome, not a non-event: the snippet is on the clipboard and the user
+    /// is waiting for a paste that will never arrive, so the deadline path calls `onGaveUp`. The
+    /// generation check stays ahead of it — a superseded chain has been replaced, not failed, and
+    /// must stay quiet.
+    private static func postWhenReady(targetPID: pid_t,
+                                      generation: Int,
+                                      deadline: Date,
+                                      onGaveUp: (() -> Void)?) {
         guard generation == pendingGeneration else { return }
         // `NSApp.keyWindow == nil` is not redundant with the frontmost check. The panel is an
         // `.nonactivatingPanel`, which is precisely the style mask that lets it hold *key* focus
@@ -128,9 +142,9 @@ enum SnippetPaster {
             && NSEvent.modifierFlags.intersection(blockingModifiers).isEmpty
             && NSWorkspace.shared.frontmostApplication?.processIdentifier == targetPID
         guard ready else {
-            guard Date() < deadline else { return }
+            guard Date() < deadline else { onGaveUp?(); return }
             DispatchQueue.main.asyncAfter(deadline: .now() + readyPoll) {
-                postWhenReady(targetPID: targetPID, generation: generation, deadline: deadline)
+                postWhenReady(targetPID: targetPID, generation: generation, deadline: deadline, onGaveUp: onGaveUp)
             }
             return
         }
@@ -160,7 +174,8 @@ enum SnippetPaster {
     /// Dvorak key 9 is "k", and ⌘K clears the scrollback in Terminal and inserts a link in Mail:
     /// the same failure family as the Caps Lock and held-modifier bugs, a posted chord that means
     /// something other than "paste". Resolved by translating each key code through the layout's
-    /// `uchr` data and taking the first that yields "v".
+    /// `uchr` data — in the Command state the event is actually posted in — and taking the first
+    /// that yields "v".
     private static func keyCodeForV() -> CGKeyCode {
         installLayoutObserverIfNeeded()
         if let cached = cachedVKeyCode { return cached }
@@ -186,12 +201,31 @@ enum SnippetPaster {
         }
     }
 
+    /// Three tiers, in order:
+    ///
+    /// 1. Scan the layout's **command** key map, because that is the state the posted event is
+    ///    really in. "Dvorak — QWERTY ⌘" reverts to QWERTY while ⌘ is held — that is the whole
+    ///    reason people choose it — and it encodes that as a separate command-state map. Asking
+    ///    the unmodified question there finds Dvorak's "v" at key 47, which the window server
+    ///    then re-reads through the command map as "." : we would post ⌘. (Cancel).
+    /// 2. Scan unmodified, for a layout that carries no command map at all (most of them; the
+    ///    two scans agree there, so this tier only matters if tier 1 somehow finds nothing).
+    /// 3. `ansiVKeyCode`, i.e. the behaviour before any of this existed, for an input source with
+    ///    no `uchr` data at all (CJK input methods).
     private static func resolveKeyCodeForV() -> CGKeyCode? {
         guard let source = TISCopyCurrentKeyboardLayoutInputSource()?.takeRetainedValue(),
               let pointer = TISGetInputSourceProperty(source, kTISPropertyUnicodeKeyLayoutData)
         else { return nil }
         let layoutData = Unmanaged<CFData>.fromOpaque(pointer).takeUnretainedValue() as Data
-        return layoutData.withUnsafeBytes { raw -> CGKeyCode? in
+        // `modifierKeyState` is the *high byte* of the classic modifiers field, so Command is
+        // `(cmdKey >> 8) & 0xFF`, which is 1 — not `cmdKey` itself.
+        let commandState = UInt32((cmdKey >> 8) & 0xFF)
+        return scanForV(layoutData: layoutData, modifierKeyState: commandState)
+            ?? scanForV(layoutData: layoutData, modifierKeyState: 0)
+    }
+
+    private static func scanForV(layoutData: Data, modifierKeyState: UInt32) -> CGKeyCode? {
+        layoutData.withUnsafeBytes { raw -> CGKeyCode? in
             guard let base = raw.baseAddress else { return nil }
             let layout = base.assumingMemoryBound(to: UCKeyboardLayout.self)
             var length = 0
@@ -205,7 +239,7 @@ enum SnippetPaster {
                 let status = UCKeyTranslate(layout,
                                             UInt16(code),
                                             UInt16(kUCKeyActionDown),
-                                            0,
+                                            modifierKeyState,
                                             UInt32(LMGetKbdType()),
                                             OptionBits(kUCKeyTranslateNoDeadKeysMask),
                                             &deadKeyState,

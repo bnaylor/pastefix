@@ -47,9 +47,14 @@ final class SnippetHotkeys {
         // (`PanelController.show()` calls `NSApp.activate`), in which case the frontmost app is
         // us. `SnippetPaster` refuses that target rather than typing into our own editor or
         // search field; otherwise the frontmost app is the one the user is typing into.
+        // `onGaveUp` covers the other half of "nothing was pasted": `paste` returns `.pasted` as
+        // soon as it schedules the post, so a chain that expires — a target that never came
+        // forward, modifiers still held, or one of our own windows holding key focus for the
+        // whole window — would otherwise be completely silent.
         let outcome = SnippetPaster.paste(text: text,
                                           richRTFD: history.richRTFD(for: item),
-                                          into: NSWorkspace.shared.frontmostApplication)
+                                          into: NSWorkspace.shared.frontmostApplication,
+                                          onGaveUp: { NSSound.beep() })
         // Copy-only has three causes here — no Accessibility, our own panel holding the front, a
         // target that never came forward — and the hotkey path has no UI of its own to say so. A
         // beep at least distinguishes "copied, paste it yourself" from a dead keystroke. The
