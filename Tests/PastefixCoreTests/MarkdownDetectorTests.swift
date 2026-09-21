@@ -5,6 +5,8 @@ import Testing
     @Test(arguments: [
         "# Title\nbody", "text\n\n```swift\nlet x = 1\n```", "- one\n- two\nsee [docs](https://x.y)",
         "> quoted\nand **strong**", "| a | b |\n|---|---|\n| 1 | 2 |\nwith `code`", "1. first\n2. second\n\n> note",
+        // CRLF: Swift reads "\r\n" as one Character, so the split has to normalize first.
+        "body\r\n# Title\r\n", "- a\r\n- b\r\n> q",
     ])
     func positives(_ s: String) { #expect(MarkdownDetector.looksLikeMarkdown(s)) }
 

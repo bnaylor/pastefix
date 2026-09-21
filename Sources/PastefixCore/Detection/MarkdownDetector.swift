@@ -16,6 +16,9 @@ public enum MarkdownDetector {
     public static func looksLikeMarkdown(_ text: String) -> Bool {
         var head = text
         if head.utf8.count > maxBytes { head = String(decoding: head.utf8.prefix(maxBytes), as: UTF8.self) }
+        // Swift treats "\r\n" as a single Character, so splitting on "\n" alone never
+        // breaks CRLF text into lines and every signal past the first is missed.
+        head = head.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
         var signals: Set<String> = []
         for (i, lineSub) in head.split(separator: "\n", omittingEmptySubsequences: false).enumerated() {
             if i >= maxLines { break }

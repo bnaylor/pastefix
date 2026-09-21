@@ -24,6 +24,8 @@ public struct TransformerRegistry {
     public func load() -> [any Transformer] {
         var entries: [(order: Int, name: String, transformer: any Transformer)] = [
             (10, "Rich → Plain Text", RichToPlain()),
+            (11, "Rich → Markdown", RichToMarkdown()),
+            (12, "Markdown → Rich Text", MarkdownToRich()),
             (20, "Transliterate to ASCII", Transliterate()),
             (30, "Wrap & Reflow", WrapReflow(width: config.wrapWidth)),
             (40, "Whitespace Cleanup", WhitespaceCleanup()),
