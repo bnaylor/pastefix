@@ -20,8 +20,10 @@ public enum MarkdownFromRich {
         return convert(a)
     }
 
-    /// Which table cell a line came from, so `join` can put a row back on one line.
-    struct CellRef: Equatable { var table: ObjectIdentifier; var row: Int }
+    /// Which table cell a line came from, so `join` can put a row back on one line. The
+    /// column matters as much as the row: a cell holding two paragraphs (`<td>a<br>b</td>`)
+    /// produces two lines with the same ref, and those are one cell, not two columns.
+    struct CellRef: Equatable { var table: ObjectIdentifier; var row: Int; var column: Int }
 
     struct Line {
         var text: String
@@ -41,19 +43,26 @@ public enum MarkdownFromRich {
             guard pr.length > 0 else { break }
             defer { loc = NSMaxRange(pr) }
             let content = NSRange(location: pr.location, length: pr.length - newlineSuffixLength(ns, pr))
-            guard content.length > 0 else { lines.append(Line(text: "")); continue }
-            let attrs = a.attributes(at: content.location, effectiveRange: nil)
+            // Read the style off the paragraph's first character rather than its content: an
+            // empty cell is a bare newline, and its table block only lives on that newline.
+            let attrs = a.attributes(at: pr.location, effectiveRange: nil)
             let ps = attrs[.paragraphStyle] as? NSParagraphStyle
             let sub = a.attributedSubstring(from: content)
 
             // A table cell is its own paragraph; `join` stitches a row back together from the
-            // block's table identity and row index. No header separator is emitted — RTF has
-            // no notion of a header row, so guessing one would misrepresent the table.
+            // block's table identity, row and column. No header separator is emitted — RTF has
+            // no notion of a header row, so guessing one would misrepresent the table. This is
+            // checked before the empty-content guard so an empty cell holds its column open
+            // instead of dropping out and shifting everything after it one place left.
             if !(ps?.textBlocks.isEmpty ?? true) {
                 let block = ps?.textBlocks.compactMap { $0 as? NSTextTableBlock }.last
-                let cell = block.map { CellRef(table: ObjectIdentifier($0.table), row: $0.startingRow) }
-                lines.append(Line(text: inlineMarkdown(sub), cell: cell)); continue
+                let cell = block.map { CellRef(table: ObjectIdentifier($0.table), row: $0.startingRow, column: $0.startingColumn) }
+                var text = content.length > 0 ? inlineMarkdown(sub) : ""
+                // A literal pipe would otherwise read as a column break once the row is joined.
+                if cell != nil { text = text.replacingOccurrences(of: "|", with: #"\|"#) }
+                lines.append(Line(text: text, cell: cell)); continue
             }
+            guard content.length > 0 else { lines.append(Line(text: "")); continue }
             if isWholly(sub, where: isMono) {
                 lines.append(Line(text: sub.string, isCode: true)); continue
             }
@@ -104,14 +113,21 @@ public enum MarkdownFromRich {
             if let first = line.cell {
                 var rows: [String] = []
                 var row: [String] = []
-                var currentRow = first
+                var paragraphs: [String] = []          // the paragraphs of the cell being built
+                var current = first
+                func closeCell() { row.append(paragraphs.filter { !$0.isEmpty }.joined(separator: " ")); paragraphs = [] }
                 while i < lines.count, let cell = lines[i].cell, cell.table == first.table {
-                    if cell != currentRow { rows.append(row.joined(separator: " | ")); row = []; currentRow = cell }
-                    row.append(trimTrailing(lines[i].text))
+                    if cell != current {
+                        closeCell()
+                        if cell.row != current.row { rows.append(row.joined(separator: " | ")); row = [] }
+                        current = cell
+                    }
+                    paragraphs.append(trimTrailing(lines[i].text))
                     i += 1
                 }
+                closeCell()
                 rows.append(row.joined(separator: " | "))
-                blocks.append(rows.joined(separator: "\n"))
+                blocks.append(rows.map(trimTrailing).joined(separator: "\n"))
                 continue
             }
             if line.isCode {

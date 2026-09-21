@@ -117,6 +117,16 @@ import AppKit
         #expect(MarkdownFromRich.convert(try html("<table><tr><td>a</td><td>b</td></tr><tr><td>c</td><td>d</td></tr></table>"))
                 == "a | b\nc | d")
     }
+    /// A cell is identified by row *and* column, so its paragraphs stay one column wide, an
+    /// empty one holds its place, and a literal pipe can't forge a column break.
+    @Test func tableCellsKeepTheirColumns() throws {
+        #expect(MarkdownFromRich.convert(try html("<table><tr><td>a<br>b</td><td>c</td></tr><tr><td>d</td><td>e</td></tr></table>"))
+                == "a b | c\nd | e")
+        #expect(MarkdownFromRich.convert(try html("<table><tr><td>a</td><td></td></tr><tr><td>c</td><td>d</td></tr></table>"))
+                == "a |\nc | d")
+        #expect(MarkdownFromRich.convert(try html("<table><tr><td>x|y</td><td>z</td></tr></table>"))
+                == #"x\|y | z"#)
+    }
     @Test func rtfdRoundTrip() throws {
         // headerLevel does not survive RTF serialisation; a round-tripped heading is big bold text.
         let a = doc([para("Title", font: NSFont.boldSystemFont(ofSize: 26)), para("body")])

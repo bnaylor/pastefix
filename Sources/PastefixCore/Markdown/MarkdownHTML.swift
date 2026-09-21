@@ -127,9 +127,12 @@ public enum MarkdownHTML {
         if intents.contains(.softBreak) { return "\n" }
         if inCodeBlock { return escape(text) }
         if let image = run.imageURL {
+            // Foundation hands an alt-less image (`![](url)`) the object replacement character
+            // as its run text; that placeholder must not become the alt attribute.
+            let alt = text == "\u{FFFC}" ? "" : text
             // A rejected scheme degrades to the alt text rather than dropping the run.
-            guard isEmittableURL(image) else { return escape(text) }
-            return "<img src=\"\(attr(image.absoluteString))\" alt=\"\(attr(text))\">"
+            guard isEmittableURL(image) else { return escape(alt) }
+            return "<img src=\"\(attr(image.absoluteString))\" alt=\"\(attr(alt))\">"
         }
         if text.isEmpty { return "" }
         var html = escape(text)
@@ -153,9 +156,13 @@ public enum MarkdownHTML {
     /// already apply; `mailto` is the one other scheme Markdown links legitimately use.
     private static let emittableSchemes: Set<String> = ["http", "https", "mailto"]
 
-    /// A scheme-less URL (relative path, `#fragment`, `?query`) carries no scheme risk.
+    /// A scheme-less URL (relative path, `#fragment`, `?query`) carries no scheme risk — with
+    /// one exception. A protocol-relative `//host/path` has no scheme *here* but inherits one
+    /// wherever the fragment is pasted, so it resolves to a live cross-origin request and has
+    /// to face the same allowlist as a spelled-out URL. It can't, since there is no scheme to
+    /// check, so it is refused outright.
     private static func isEmittableURL(_ url: URL) -> Bool {
-        guard let scheme = url.scheme?.lowercased() else { return true }
+        guard let scheme = url.scheme?.lowercased() else { return !url.absoluteString.hasPrefix("//") }
         return emittableSchemes.contains(scheme)
     }
 

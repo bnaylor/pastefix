@@ -16,6 +16,8 @@ import Testing
     @Test func linkAndImage() throws {
         #expect(try r("[site](https://x.y/?a=1&b=2)") == "<p><a href=\"https://x.y/?a=1&amp;b=2\">site</a></p>")
         #expect(try r("![alt text](https://x.y/i.png)") == "<p><img src=\"https://x.y/i.png\" alt=\"alt text\"></p>")
+        // Foundation gives an alt-less image U+FFFC as its run text; that must not reach `alt`.
+        #expect(try r("![](https://x.y/i.png)") == "<p><img src=\"https://x.y/i.png\" alt=\"\"></p>")
     }
 
     @Test func tightLists() throws {
@@ -75,6 +77,15 @@ import Testing
 
     @Test func referenceDefinitionSchemeAllowlist() throws {
         #expect(try r("[a][1]\n\n[1]: javascript:alert(2)") == "<p>a</p>")
+    }
+
+    /// A protocol-relative destination has no scheme *here*, so it slips past a scheme
+    /// allowlist, but it inherits one wherever the fragment is pasted and resolves to a live
+    /// cross-origin request. It is refused rather than waved through with `/path` and `#frag`.
+    @Test func protocolRelativeDestinationsAreRejected() throws {
+        #expect(try r("[x](//evil.example/p)") == "<p>x</p>")
+        #expect(try r("![x](//evil.example/i.png)") == "<p>x</p>")
+        #expect(try r("[x](/local)") == "<p><a href=\"/local\">x</a></p>")
     }
 
     @Test func allowedSchemesSurvive() throws {
