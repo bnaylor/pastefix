@@ -21,7 +21,7 @@ struct PastefixApp: App {
         }
 
         Settings {
-            SettingsView(settings: delegate.settings, model: delegate.model, updater: delegate.updater)
+            SettingsView(settings: delegate.settings, model: delegate.model, updater: delegate.updater, history: delegate.history)
         }
     }
 }
