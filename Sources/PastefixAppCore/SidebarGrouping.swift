@@ -8,8 +8,9 @@ public struct SidebarSection: Identifiable, Sendable {
 }
 
 /// Groups transforms for the sidebar: built-in categories in their fixed order, then any
-/// custom categories alphabetically, then "Scripts" (the bucket for transforms with no
-/// category). Order within a section is the incoming (user) order.
+/// custom categories alphabetically in user-facing order (`localizedStandardCompare`, so
+/// "Alpha" precedes "beta" and "item10" follows "item2"), then "Scripts" (the bucket for
+/// transforms with no category). Order within a section is the incoming (user) order.
 public enum SidebarGrouping {
     public static func sections(_ transformers: [any Transformer]) -> [SidebarSection] {
         var buckets: [String: [any Transformer]] = [:]
@@ -19,7 +20,7 @@ public enum SidebarGrouping {
         let builtin = TransformCategory.builtinOrder.filter { buckets[$0] != nil }
         let custom = buckets.keys
             .filter { !TransformCategory.builtinOrder.contains($0) && $0 != TransformCategory.scripts }
-            .sorted()
+            .sorted { $0.localizedStandardCompare($1) == .orderedAscending }
         let tail = buckets[TransformCategory.scripts] == nil ? [] : [TransformCategory.scripts]
         return (builtin + custom + tail).map { SidebarSection(title: $0, transformers: buckets[$0] ?? []) }
     }

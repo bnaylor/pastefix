@@ -38,5 +38,12 @@ private struct CatTransformer: Transformer {
         let list: [any Transformer] = [CatTransformer(id: "x", category: "Scripts"), CatTransformer(id: "b", category: "Beta")]
         #expect(titles(list) == ["Beta", "Scripts"])
     }
+    @Test func customCategoriesUseCaseInsensitiveHumanOrder() {
+        let list: [any Transformer] = [
+            CatTransformer(id: "b", category: "beta"),
+            CatTransformer(id: "a", category: "Alpha"),
+        ]
+        #expect(titles(list) == ["Alpha", "beta"])
+    }
     @Test func emptyInput() { #expect(SidebarGrouping.sections([]).isEmpty) }
 }
