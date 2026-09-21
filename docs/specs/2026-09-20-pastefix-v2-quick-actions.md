@@ -78,7 +78,10 @@ This plan adds the consumers.
 - `base64`: not `jwt`; after removing ASCII whitespace `t` is ≥ 16 characters,
   matches `^[A-Za-z0-9+/]+={0,2}$` or the base64url alphabet, decodes via
   `Data(base64Encoded:options:.ignoreUnknownCharacters)` after padding to a
-  multiple of 4, and the result is valid UTF-8 containing no NUL bytes.
+  multiple of 4, and the result is valid UTF-8. *(Amended in review: "no NUL
+  bytes" was too narrow — `Base64Codec.looksLikeBase64` requires the decoded
+  text to be printable: tab/newline/CR are allowed, but no other C0 control,
+  no DEL, and no C1 control (0x80–0x9F). See `e2b0807`.)*
 - `percentEncoded`: `t` contains the regex `%[0-9A-Fa-f]{2}`.
 - `htmlEntities`: `t` contains `&(#[0-9]+|#x[0-9A-Fa-f]+|[A-Za-z][A-Za-z0-9]{1,31});`.
 
@@ -103,6 +106,16 @@ hex uses `Int((c * 255).rounded())`; HSL prints integer degrees and integer
 percentages; alpha prints up to 3 decimals with trailing zeros trimmed
 (`0.5`, `0.333`).
 
+*Amended in review (`15a2b7e`):* `parseHex` rejects hex digits that satisfy
+`Character.isHexDigit` but are not ASCII (e.g. fullwidth digits), since
+`UInt8(_:radix:)` rejects them and would otherwise force-unwrap to a crash.
+Numeric parsing (`channel`, `hue`, alpha, percent) rejects non-finite `Double`
+values (`nan`, `inf`, `-inf`) and hex-float tokens (anything containing `x`,
+e.g. `0x1p3`) that `Double.init(_:)` would otherwise accept — both survive
+naive `min`/`max` clamping. Separately, `hasAlpha` gates on the *rounded*
+8-bit alpha (`Int((alpha * 255).rounded()) < 255`), not the raw `Double`, so
+an alpha of `0.9999` (rounds to 255) prints with no alpha channel at all.
+
 **`Native/JSONActions.swift`** (new) — three transforms:
 
 | id | name | order | kinds | behaviour |
@@ -112,6 +125,14 @@ percentages; alpha prints up to 3 decimals with trailing zeros trimmed
 | `builtin.json.escape` | Escape as JSON String | 82 | nil | Wraps the entire buffer as one JSON string literal (quotes, backslashes, control chars, newlines escaped); never fails. |
 
 `.sortedKeys` is a deliberate choice: deterministic output. Note it in README.
+
+*Amended in review (`e2b0807`):* `JSONReformat.render` also guards non-finite
+numbers. `JSONSerialization.data(withJSONObject:)` raises an Objective-C
+exception rather than throwing a Swift error — uncatchable by `try` — and a
+value like `-1e400` parses to `-inf` and would abort the process on write.
+`render` checks `isValidJSONObject` first (allowing the safe scalar fragments
+`String`/`NSNull`/finite `NSNumber`) and throws
+`invalidInput("Not valid JSON: number out of range")` instead of writing.
 
 **`Native/Encoders.swift`** (new) — one `enum Codec { case base64, url, html }`
 and two structs `Encode(codec:)` / `Decode(codec:)`, registered as six
@@ -158,6 +179,11 @@ numbers; the `(expired)`/`(valid)` suffix compares `exp` with the current date.
 A payload that is not a JSON object still decodes (arrays/scalars are printed
 as-is). Failure to decode either segment → `invalidInput("Not a decodable JWT")`.
 
+*Amended in review (`e2b0807`):* a timestamp claim is skipped (no comment
+line) when its JSON value is a boolean or falls outside `0...32_503_680_000`
+epoch seconds (roughly year 1970–3000) — `NSNumber` bridges `true`/`false` as
+1/0, and an absurd magnitude is not a meaningful date to render.
+
 **`Native/ColorConvert.swift`** (new) — one struct `ColorConvert(style:)`:
 
 | id | name | order | style output |
@@ -199,9 +225,17 @@ Summon with `#ff0080` → detector returns `[.color]` → action bar shows a
 magenta swatch and "Detected: Color" → ⌘K lists the four Color transforms
 first → ↵ on "Color → CSS hsl()" → `ColorConvert.apply` → buffer becomes
 `hsl(330 100% 50%)` → still `[.color]`, swatch unchanged. Summon with a JWT →
-`[.jwt]` → "Decode JWT" first → output is JSON → detector now says `[.json]` →
-JSON Prettify/Minify promoted. Summon with prose containing `%20` →
-`[.percentEncoded]` → URL Decode promoted; applying it decodes in place.
+`[.jwt]` → "Decode JWT" first → output is pretty JSON followed by trailing
+`// exp: …` / `// signature not verified` comment lines. Summon with prose
+containing `%20` → `[.percentEncoded]` → URL Decode promoted; applying it
+decodes in place.
+
+*Amended in review:* the JWT output is **not** re-detected as `[.json]`. The
+`json` kind requires the trimmed buffer to parse outright
+(`JSONSerialization.jsonObject`), and the trailing `//` comment lines are not
+valid JSON, so parsing fails and JSON Prettify/Minify are never promoted for
+a just-decoded JWT — the sentence above describing that promotion was wrong
+and is corrected here.
 
 ## Error handling
 

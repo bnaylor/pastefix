@@ -17,7 +17,17 @@ Pastefix runs as a macOS menu-bar app. A clipboard icon sits in the menu bar; pr
 
    **Finding transforms.** Press ⌘K (or click the Transform… bar) for a command palette: type to filter, ↑↓ to choose, ↵ to apply, Esc to close; transforms that apply to the detected content are listed first. Typing matches a prefix, a word start, or (failing those) a loose subsequence — camel-case boundaries count as word starts too, so typing `case` finds `camelCase`. Esc closes the palette first; only a second Esc (with the palette already closed) cancels the panel. Toggle the sidebar (⌘⇧L or the toolbar button) to browse all enabled transforms grouped by category; the sidebar state is remembered. The panel window is resizable: it widens by the sidebar's width when the sidebar opens and gives that width back when it closes, so the editor doesn't get squeezed — and you can also resize the window yourself. The sidebar always keeps your configured order, so it doesn't reshuffle as you copy different things; the ⌘K palette lists transforms that apply to the detected content first.
 
-   **Content detection.** When the buffer contains a URL or is valid JSON, a `Detected: …` label appears beside the Transform… bar and transforms that apply to that kind are listed first in the ⌘K palette. (The sidebar deliberately stays in your configured order.) Nothing is hidden; your enable/reorder settings still apply.
+   **Content detection.** When the buffer matches a recognised kind, a `Detected: …` label appears beside the Transform… bar and transforms that apply to that kind are listed first in the ⌘K palette. (The sidebar deliberately stays in your configured order.) Nothing is hidden; your enable/reorder settings still apply. Recognised kinds:
+
+   - **URL** — the buffer contains a link.
+   - **JSON** — the whole buffer parses as JSON.
+   - **Color** — the whole buffer is a colour literal (`#hex`, `rgb()`, `hsl()`, …); a 14×14 swatch showing the colour appears next to the badge.
+   - **JWT** — the whole buffer is three base64url segments whose header decodes to JSON with an `alg` key.
+   - **Base64** — the whole buffer is 16+ characters that decode to printable text.
+   - **Percent-encoded** — the buffer contains a `%XX` sequence.
+   - **HTML entities** — the buffer contains a `&name;` or `&#n;` reference.
+
+   A decode transform that can't interpret its input shows a red error banner and leaves the text unchanged.
 
 3. **Edit** — the editor is freely editable. Undo/Redo/Refresh controls are in the toolbar.
 4. **Save (⌘S)** — writes the working text back to the clipboard and dismisses the panel.
@@ -41,7 +51,7 @@ Pastefix checks for updates once a day via [Sparkle](https://sparkle-project.org
 
 The engine provides:
 
-- **Ten built-in native transforms** written in Swift, fast and dependency-free
+- **Twenty-four built-in native transforms** written in Swift, fast and dependency-free
 - **User scripts** discovered from `~/.config/pastefix/scripts/`, with automatic engine selection (shell or JavaScript) by file extension
 - **Unified error handling** via typed `TransformError`; all transforms run off the main thread with configurable timeouts
 - **Script metadata** via magic comments (name, enabled flag, execution order)
@@ -59,6 +69,28 @@ Each is a zero-configuration `Transformer` conforming to the protocol:
 - **Clean URL Tracking:** Removes tracking parameters (`utm_*`, `fbclid`, `gclid`, `si`, `mc_cid`, … ) from every URL in the text; other parameters, fragments, and surrounding text are untouched. HTML-escaped `&amp;` query separators (as found in links copied from email or HTML source) are normalised to `&` before stripping, which counts as a change on its own.
 - **URL → Markdown Link:** Replaces each URL with `[Page Title](url)`. The title is fetched over the network with a 3-second timeout and a 256 KB cap; if that fails the link text is `host/path`. URLs already inside Markdown links are skipped. Up to 16 unique URLs per apply are fetched; any beyond that fall back to `host/path` without a network call. The link target always includes a scheme, so `www.example.com` becomes `[…](http://www.example.com)`. Titles are always fetched over `https`, even for an `http://` link (App Transport Security blocks cleartext, so a plain-`http` fetch could only ever fail) — the link target keeps the scheme the text had. Requests carry a `Pastefix` User-Agent and no cookies, and these are never contacted: loopback, link-local, private (RFC 1918 and CGNAT), multicast and reserved IPv4 ranges — including legacy numeric spellings such as `2130706433`, `0x7f.0.0.1` and `127.1` — their IPv6 equivalents (including IPv4-mapped addresses), and `localhost`, `*.local` and `*.localhost` names; redirects to any of those are refused. Hostnames are not resolved before fetching. Links to a blocked host just get the `host/path` fallback.
 - **camelCase / snake_case / kebab-case / CONSTANT_CASE:** Rewrites each line as one identifier phrase. Splits on separators and camel boundaries (`HTTPServerError` → `http_server_error`), keeps digits with their word (`utf8Decoder`), preserves indentation and non-ASCII letters.
+
+### Data
+
+- **JSON Prettify:** Reformats JSON with 2-space indentation. Output keys are always sorted, so runs are deterministic.
+- **JSON Minify:** Reformats JSON onto a single line, no whitespace. Output keys are always sorted.
+- **Escape as JSON String:** Wraps the entire buffer as one JSON string literal (quotes, backslashes, control characters escaped); never fails.
+- **Base64 Encode:** Encodes the buffer as standard Base64 text.
+- **Base64 Decode:** Decodes Base64 to text only — never binary. Tolerates whitespace, missing padding, and the URL-safe alphabet; fails if the result isn't valid UTF-8.
+- **URL Encode:** Percent-encodes everything except the RFC 3986 unreserved characters (`A–Z a–z 0–9 - . _ ~`); a space becomes `%20`.
+- **URL Decode:** Reverses percent-encoding; leaves `+` alone (no form-encoding assumption); rejects malformed `%` sequences.
+- **HTML Encode:** Escapes `& < > " '` to `&amp; &lt; &gt; &quot; &#39;`.
+- **HTML Decode:** Decodes named, decimal, and hex character references, including the HTML4 Latin-1 named entities (`&eacute;`, `&nbsp;`, …); unknown entities are left verbatim.
+- **Decode JWT:** Shows a JWT's header and payload as pretty JSON. Never verifies the signature. `exp`/`iat`/`nbf`, when present as plausible numbers, are printed as UTC comment lines below the JSON, with `exp` also noting `(expired)`/`(valid)`.
+
+### Colors
+
+All four accept `#hex`, `rgb()`/`rgba()`, and `hsl()`/`hsla()` input, either comma-separated or CSS4 space/slash syntax, and rewrite it in a different notation:
+
+- **Color → CSS Hex:** `#rrggbb`, or `#rrggbbaa` when there's an alpha channel.
+- **Color → CSS rgb():** `rgb(r g b)`, or `rgb(r g b / a)` with an alpha channel.
+- **Color → CSS hsl():** `hsl(h s% l%)`, or `hsl(h s% l% / a)` with an alpha channel.
+- **Color → SwiftUI Color:** `Color(red:green:blue:opacity:)` with 3-decimal literals.
 
 ## User Scripts
 
@@ -117,7 +149,7 @@ Magic comments in the first 30 lines define script behavior. Recognized keys are
 
 - **Comment syntax:** lines are tolerant of comment markers (`#`, `//`, `*`, `/*`); the parser strips leading whitespace and any run of the individual characters space, tab, `#`, `/`, `*`
 - **Keys:** `name` (display name), `enabled` (true/false; default true), `order` (integer execution order; default 1000 for scripts), `kinds` (comma-separated list of `url`, `json`; a script with `kinds` is listed first in the ⌘K palette when that content is detected; unknown names ignored), `category` (free text, trimmed; groups the script under this heading in the sidebar; default `Scripts` when omitted; a custom category appears in the sidebar alphabetically after the built-in categories below)
-- **Built-in order:** Rich→Plain (10), Transliterate (20), Wrap (30), Whitespace (40), Clean URL Tracking (50), URL → Markdown Link (60), camelCase (70), snake_case (71), kebab-case (72), CONSTANT_CASE (73); user scripts at order 1000+ appear after built-ins unless explicitly reordered
+- **Built-in order:** Rich→Plain (10), Transliterate (20), Wrap (30), Whitespace (40), Clean URL Tracking (50), URL → Markdown Link (60), camelCase (70), snake_case (71), kebab-case (72), CONSTANT_CASE (73), JSON Prettify (80), JSON Minify (81), Escape as JSON String (82), Base64 Encode (90), Base64 Decode (91), URL Encode (92), URL Decode (93), HTML Encode (94), HTML Decode (95), Decode JWT (96), Color → CSS Hex (100), Color → CSS rgb() (101), Color → CSS hsl() (102), Color → SwiftUI Color (103); user scripts at order 1000+ appear after built-ins unless explicitly reordered
 - **Malformed lines:** ignored silently
 
 **Built-in categories** (sidebar order):
@@ -128,6 +160,8 @@ Magic comments in the first 30 lines define script behavior. Recognized keys are
 | Characters | Rich → Plain Text, Transliterate to ASCII |
 | URLs | Clean URL Tracking, URL → Markdown Link |
 | Case | camelCase, snake_case, kebab-case, CONSTANT_CASE |
+| Data | JSON Prettify, JSON Minify, Escape as JSON String, Base64 Encode/Decode, URL Encode/Decode, HTML Encode/Decode, Decode JWT |
+| Colors | Color → CSS Hex, Color → CSS rgb(), Color → CSS hsl(), Color → SwiftUI Color |
 
 ## Execution Model
 
