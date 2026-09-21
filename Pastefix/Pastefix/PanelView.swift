@@ -34,8 +34,9 @@ struct PanelView: View {
                 HStack(spacing: 0) {
                     VStack(spacing: 0) {
                         if isPreviewing {
+                            // No padding here: the text view carries its own 8 pt
+                            // `textContainerInset`, which matches the editor's gutter.
                             MarkdownPreviewView(text: previewText)
-                                .padding(8)
                         } else {
                             TextEditor(text: workingBinding)
                                 .font(.system(.body, design: .monospaced))
@@ -89,9 +90,12 @@ struct PanelView: View {
             isHistoryOpen = false
             // A new summon always starts in the editor: the preview is a view of *this*
             // buffer, and leaving it on would show the previous session's render until the
-            // debounce lands.
+            // debounce lands. The render is dropped too — the next ⌘⇧M turns the preview on
+            // before its immediate render lands, and the stale string it would otherwise show
+            // for that frame is the previous clipboard's content.
             isPreviewing = false
             previewTask?.cancel()
+            previewText = NSAttributedString()
         }
         // Hand focus back to the editor once a transform finishes, unless the user has an
         // overlay open and is picking the next thing — or is reading the preview, where there
@@ -279,10 +283,10 @@ struct PanelView: View {
         previewTask?.cancel()
         let text = model.document?.working ?? ""
         previewTask = Task { @MainActor in
-            if !immediate {
-                try? await Task.sleep(for: .milliseconds(150))
-                guard !Task.isCancelled else { return }
-            }
+            if !immediate { try? await Task.sleep(for: .milliseconds(150)) }
+            // Both paths check: a cancelled immediate render would still import the old buffer
+            // on the main actor and write it back over a newer one (or into a dead session).
+            guard !Task.isCancelled else { return }
             previewText = MarkdownPreview.attributedString(markdown: text)
         }
     }

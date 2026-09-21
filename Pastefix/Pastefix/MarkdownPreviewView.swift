@@ -5,6 +5,13 @@ import AppKit
 struct MarkdownPreviewView: NSViewRepresentable {
     let text: NSAttributedString
 
+    /// Remembers the last render we applied. The storage itself can't answer "did this change?":
+    /// `tv.textColor` below rewrites `.foregroundColor` on every run, so the stored string never
+    /// compares equal to the render it came from.
+    final class Coordinator { var lastApplied: NSAttributedString? }
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
     func makeNSView(context: Context) -> NSScrollView {
         let scroll = NSTextView.scrollableTextView()
         let tv = scroll.documentView as! NSTextView
@@ -25,8 +32,11 @@ struct MarkdownPreviewView: NSViewRepresentable {
         // Only touch the text storage when the render actually changed: `setAttributedString`
         // drops the selection, and SwiftUI re-runs `updateNSView` for unrelated state changes
         // (sidebar toggle, applying spinner) while the user is mid-selection in the preview.
-        guard let tv = scroll.documentView as? NSTextView, tv.textStorage?.isEqual(to: text) != true else { return }
+        guard let tv = scroll.documentView as? NSTextView,
+              context.coordinator.lastApplied !== text,
+              context.coordinator.lastApplied?.isEqual(to: text) != true else { return }
         tv.textStorage?.setAttributedString(text)
         tv.textColor = .labelColor
+        context.coordinator.lastApplied = text
     }
 }

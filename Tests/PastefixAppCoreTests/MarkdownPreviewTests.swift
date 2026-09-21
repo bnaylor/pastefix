@@ -41,6 +41,17 @@ import AppKit
         let s = MarkdownPreview.attributedString(markdown: "[unclosed(\n\n**bold")
         #expect(!s.string.isEmpty && s.string.contains("bold"))
     }
+    // The importer writes each marker twice — literal "\t•\t" text plus an NSTextList that
+    // TextKit 2 draws itself — so a list rendered with two bullets until the styles were cleaned.
+    @Test func listsCarryNoTextList() {
+        let s = MarkdownPreview.attributedString(markdown: "- one\n- two")
+        var lists: [NSTextList] = []
+        s.enumerateAttribute(.paragraphStyle, in: NSRange(location: 0, length: s.length)) { value, _, _ in
+            lists += (value as? NSParagraphStyle)?.textLists ?? []
+        }
+        #expect(lists.isEmpty)
+        #expect(s.string.contains("one"))
+    }
     @Test func imagesProduceNoAttachment() {
         let s = MarkdownPreview.attributedString(markdown: "![p](https://example.invalid/pixel.png) text")
         #expect(!s.string.contains("\u{FFFC}") && s.string.contains("text"))
