@@ -322,7 +322,7 @@ public enum MarkdownHTML {
     static func attr(_ s: String) -> String { escape(s).replacingOccurrences(of: "\"", with: "&quot;") }
 }
 ```
-Known Foundation quirks to handle from the scratch run: (a) a thematic break may arrive as a run with empty text — the `<hr>` comes from `openTag`, nothing else is emitted; (b) hard breaks (`  \n`) surface as `.lineBreak` runs whose text is "\n"; (c) the soft-break run text is "\n" too; (d) `imageURL` runs carry the alt text; (e) list item paragraphs always carry a `.paragraph` component inside `.listItem` — suppressed to keep lists tight; (f) `header` levels are 1…6.
+Known Foundation quirks (verified on this machine; see the Task 2 brief appendix): the thematic-break run text is a placeholder glyph "⸻" that must be discarded; hard breaks are a "\n" run with `.lineBreak`; soft breaks a " " run with `.softBreak`; the first table body row has rowIndex 1. Also: (a) a thematic break may arrive as a run with empty text — the `<hr>` comes from `openTag`, nothing else is emitted; (b) hard breaks (`  \n`) surface as `.lineBreak` runs whose text is "\n"; (c) the soft-break run text is "\n" too; (d) `imageURL` runs carry the alt text; (e) list item paragraphs always carry a `.paragraph` component inside `.listItem` — suppressed to keep lists tight; (f) `header` levels are 1…6.
 
 - [ ] **Step 4:** `swift test --filter MarkdownHTMLTests` green; full suite green.
 - [ ] **Step 5: Commit** `feat(core): MarkdownHTML — Foundation-only Markdown → HTML renderer`.
