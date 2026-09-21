@@ -1,6 +1,6 @@
 # Pastefix v2 Markdown ↔ Rich Text (Plan 8) — Implementation Plan
 
-> ## ⬜ STATUS: NOT STARTED — written 2026-09-21 from the approved spec (issue #16).
+> ## 🟡 STATUS: IN PROGRESS — branch feat/markdown-rich-text
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 >

@@ -14,6 +14,49 @@ Source: [issue #16](https://github.com/bnaylor/pastefix/issues/16). Builds on Pl
 detection/kinds machinery, Plan 6's rich history items (which now feed Rich → Markdown),
 and Plan 6's multi-type `ClipboardBridge.write`.
 
+## Amendments (post-implementation)
+
+The implementation refined the following points beyond what's specified in the body below;
+this section is the source of truth where it disagrees with the rest of the document.
+
+1. **Rendered-HTML URL allowlist.** Link and image URLs in `MarkdownHTML.render`'s output
+   are allowlisted to `http`, `https`, `mailto`, and scheme-less (relative/fragment) URLs;
+   anything else is emitted as plain escaped text (links) or alt text (images), so a
+   `javascript:`/`data:` URL from a pasted document can't reach the pasteboard's `.html`
+   representation. Known nit: a protocol-relative `//host` URL has no `scheme` and is still
+   emitted.
+2. **No network fetch on Save.** Before the HTML → RTF conversion in `RichOutputRenderer`,
+   `<img>` tags are stripped from the string handed to `NSAttributedString(html:)` — AppKit's
+   HTML importer is WebKit-backed and would otherwise fetch remote images during a Save. The
+   HTML written to the pasteboard (the `.html` sibling) keeps the images; only the RTF
+   conversion's input is stripped.
+3. **Heading heuristic denominator.** RTF/RTFD does not preserve `NSParagraphStyle
+   .headerLevel` — it does not survive an `NSAttributedString` → RTF/RTFD round trip — so
+   headings survive a clipboard round trip only via the size/weight heuristic. That heuristic
+   measures a bold paragraph's point size against the *dominant point size of the non-bold
+   text* in the document (bold text is excluded from the tally, so a heading-only document
+   can't become its own baseline); a wholly-bold document, with no non-bold text to measure
+   against, falls back to a 13pt baseline. HTML-derived attributed text (browser copies, which
+   do carry `headerLevel`) keeps real heading levels regardless.
+4. **List/table specifics in Rich → Markdown.** Only AppKit's tab-delimited list markers
+   (`\t•\t`, `\t1\t`, `\t1.\t`) are stripped; a bare leading number not followed by a tab is
+   content and is kept verbatim. A nested item's indent is the *sum of its ancestors'* marker
+   widths (3 columns per ordered ancestor, 2 per bullet ancestor), not a flat 2 spaces per
+   level — indenting less than a parent's marker width reads as a sibling, not a child, to
+   downstream Markdown parsers. Headings are rendered with bold suppressed (the boldness is
+   what made the paragraph a heading; re-emitting it as `**` would be noise). Table cells
+   sharing a row are joined with `" | "` on one line, one line per row, with no header
+   separator; a `|` inside a cell's text is not escaped (open nit); a cell with `rowSpan`
+   appears only in the row it starts in (not repeated into the spanned rows).
+5. **Detection normalises line endings.** `MarkdownDetector.looksLikeMarkdown` normalises
+   CRLF and bare CR to LF before scanning — Swift treats `"\r\n"` as a single `Character`, so
+   splitting on `"\n"` alone would never see a second line in CRLF text and every signal past
+   the first line would be missed.
+6. **`MarkdownToRich.apply` throws `invalidInput` only when Foundation cannot parse the text
+   at all.** With `failurePolicy: .returnPartiallyParsedIfPossible`, a genuinely-rejected
+   input is near-unreachable by design — this is a defensive throw, not a path ordinary
+   Markdown exercises.
+
 ## Scope
 
 **In scope:**
@@ -62,10 +105,10 @@ task-list checkboxes, math; making the rendered HTML themable.
 | Parser | Foundation `AttributedString(markdown:options: .full)` | No third-party deps; supports blocks, GFM tables, links, images. `failurePolicy: .returnPartiallyParsedIfPossible` so a stray construct never blocks a save. |
 | HTML → RTF | `NSAttributedString(html:)` in the app/AppCore at save time (main thread) | AppKit's importer applies a sane default stylesheet; RTF is what older AppKit targets want, HTML what modern ones want — write both. |
 | Rich → Markdown source | The session's `origin.richRTFD` (same input as Rich → Plain) | One rich input path; history items already carry RTFD. |
-| Heading heuristic for RTF | `headerLevel` if > 0; else paragraph entirely bold and size ≥ 1.8× body → `#`, ≥ 1.4× → `##`, ≥ 1.15× → `###` (body = most frequent point size) | RTF has no semantic headings; size tiers are what humans read as headings. |
-| Lists | `NSTextList` depth → indent 2 spaces per level; marker format containing `decimal` → `N.` (counter per list object), else `-`; leading marker glyphs/tabs stripped from the text | Mirrors how AppKit represents imported lists. |
+| Heading heuristic for RTF | `headerLevel` if > 0; else paragraph entirely bold and size ≥ 1.8× body → `#`, ≥ 1.4× → `##`, ≥ 1.15× → `###` (body = dominant point size of *non-bold* text; falls back to 13pt when the document is all bold) | RTF has no semantic headings; size tiers are what humans read as headings. |
+| Lists | `NSTextList` nesting → indent by the sum of ancestor marker widths (3 columns per ordered ancestor, 2 per bullet ancestor); marker format containing `decimal` → `N.` (counter per list object), else `-`; AppKit's tab-delimited marker glyph stripped from the text (a bare leading number not followed by a tab is content) | Mirrors how AppKit represents imported lists; indent must clear the parent's marker width or the item reads as a sibling, not a child. |
 | Code | Font symbolic trait `.monoSpace` or family name containing Menlo/Monaco/Courier/Mono → inline backticks; whole paragraph mono → fenced block, consecutive merged | Best available signal in RTF. |
-| Detection heuristic | Markdown if any line starts with an ATX heading (`#{1,6} `) or a fence, **or** ≥ 2 distinct signals among {list line, `> ` quote, pipe-table row, `[text](url)` link, `**strong**`/`` `code` `` inline}. Scan capped at the first 64 KB / 400 lines | Conservative: prose with one asterisk or a lone URL never lights up. |
+| Detection heuristic | Markdown if any line starts with an ATX heading (`#{1,6} `) or a fence, **or** ≥ 2 distinct signals among {list line, `> ` quote, pipe-table row, `[text](url)` link, `**strong**`/`` `code` `` inline}. Scan capped at the first 64 KB / 400 lines, CRLF/CR normalised to LF before scanning | Conservative: prose with one asterisk or a lone URL never lights up. |
 | Category | New "Rich Text" after Layout: Rich → Plain (10), Rich → Markdown (11), Markdown → Rich Text (12) | The three belong together; Rich → Plain in Characters was a historical accident. |
 | Coordinator outcome for an arming transform | `.applied` even if text unchanged (badge appears; error bar clears) | An `unchanged` outcome would be invisible. |
 | Rendering failures at save | Fall back to plain-text save and show the error bar message "Couldn't render Markdown — saved plain text" *before* hiding? No: render first; on failure keep the session open with the error bar | The user asked for rich; silently downgrading would surprise. |
@@ -104,7 +147,9 @@ HTML. Paragraph tags are suppressed directly inside list items (tight lists). Ta
 are `<th>` under a header row, `<td>` otherwise. Inline: `imageURL` → `<img>`; `link` →
 `<a>`; intents `.code`/`.stronglyEmphasized`/`.emphasized`/`.strikethrough` → `<code>`,
 `<strong>`, `<em>`, `<del>`; `.lineBreak` → `<br>`; `.softBreak` → newline. Text inside
-code blocks is escaped but not inline-wrapped.
+code blocks is escaped but not inline-wrapped. Link and image URLs pass through a scheme
+allowlist (`http`, `https`, `mailto`, plus scheme-less relative/fragment URLs) before being
+emitted; a rejected link degrades to escaped plain text, a rejected image to its alt text.
 
 ### PastefixAppCore
 
@@ -117,7 +162,9 @@ public enum RichOutputRenderer { @MainActor public static func render(markdown: 
 ```
 `RichOutputRenderer` calls `MarkdownHTML.render`, then
 `NSAttributedString(html:options:documentAttributes:)` → `.rtf` data (nil if AppKit can't
-convert; HTML alone still goes out).
+convert; HTML alone still goes out). `<img>` tags are stripped from the HTML before this
+conversion only — the `.html` written to the pasteboard keeps them — so a Save can never
+trigger a network fetch of a remote image.
 
 ### Pastefix app
 

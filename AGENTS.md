@@ -67,9 +67,14 @@ Two caveats:
 ```
 Package.swift                         # swift-tools 6.0, .macOS(.v14), product PastefixCore, NO deps
 Sources/PastefixCore/
-  Transformer.swift                   # protocol + TransformInput + TransformerSource + TransformError
+  Transformer.swift                   # protocol + TransformInput + TransformerSource + TransformError + OutputMode/OutputModeTransformer + TransformCategory.richText
+  Markdown/
+    MarkdownHTML.swift                 # Markdown -> HTML fragment (AttributedString(markdown:) walked by presentationIntent)
+    MarkdownFromRich.swift             # RTFD -> GitHub-flavoured Markdown (headings, lists, tables flattened, images dropped)
   Native/                             # native Swift transforms (pure String -> String)
-    RichToPlain.swift                 #   builtin.richtoplain  (order 10, requiresRichInput)
+    RichToPlain.swift                 #   builtin.richtoplain  (order 10, requiresRichInput, category richText)
+    RichToMarkdown.swift              #   builtin.richtomarkdown (order 11, requiresRichInput, category richText)
+    MarkdownToRich.swift              #   builtin.markdowntorich (order 12, OutputModeTransformer .renderedMarkdown, kinds [markdown], category richText)
     Transliterate.swift               #   builtin.transliterate (order 20)
     WrapReflow.swift                  #   builtin.wrapreflow   (order 30, init(width:))
     WhitespaceCleanup.swift           #   builtin.whitespace   (order 40)
@@ -82,8 +87,9 @@ Sources/PastefixCore/
     ColorLiteral.swift                #   ColorLiteral: CSS/SwiftUI colour literal parse + format, sRGB 0…1
     ColorConvert.swift                #   builtin.color.{hex,rgb,hsl,swift} (100–103)
   Detection/
-    ContentKind.swift                 # url | json | color | jwt | base64 | percentEncoded | htmlEntities (+ displayName)
+    ContentKind.swift                 # url | json | color | jwt | base64 | percentEncoded | htmlEntities | markdown (+ displayName)
     ContentDetector.swift             # detect(_:) -> Set<ContentKind>, 1 MB guard
+    MarkdownDetector.swift            # looksLikeMarkdown(_:) heuristic; CRLF/CR normalised to LF first, capped at 64 KB / 400 lines
     URLFinder.swift                   # internal http(s) link ranges (NSDataDetector)
     HTMLEntities.swift                # shared entity decode table (HTML Decode + Markdown-link title parser)
   Scripting/
@@ -98,8 +104,9 @@ Tests/PastefixCoreTests/
   Fixtures/                           # executable fixture scripts (100755)
 Sources/PastefixAppCore/              # app pure model (depends on PastefixCore, NO third-party deps)
   ClipboardSnapshot.swift             # plainText + richRTFD (RTFD data, Sendable)
-  PasteDocument.swift                 # origin + history/cursor undo/redo/refresh
-  TransformCoordinator.swift          # apply(transformer, to: document) + isEnabled
+  PasteDocument.swift                 # origin + history/cursor undo/redo/refresh + outputMode (default .plain, reset on refresh)
+  TransformCoordinator.swift          # apply(transformer, to: document) + isEnabled; sets document.outputMode from an OutputModeTransformer, reports .applied even when text is unchanged
+  RichOutputRenderer.swift            # @MainActor render(markdown:) -> RichOutput{html,rtf}: MarkdownHTML.render then NSAttributedString(html:) -> RTF; <img> stripped from the RTF conversion input only
   SettingsStore.swift                 # UserDefaults persistence (wrap width, auto-hide, sidebar, scripts folder, per-transform enable/order, historyEnabled, historyMaxItems)
   TransformOverrides.swift            # per-transform enable/disable + drag-reordering
   PaletteOrdering.swift               # applicable-first stable partition on top of TransformOverrides
@@ -153,7 +160,7 @@ These are load-bearing; most were established the hard way (see "Things that hav
 5. **Shell contract:** working text on **stdin → stdout**; the script file is executed directly so its shebang is honored; minimal scrubbed env; cwd = the script's directory. Drain stdout **and** stderr **concurrently** (`async let`) before `waitUntilExit()` — sequential draining deadlocks on >64KB stderr. The timeout is a **hard bound**: the child runs in its own process group and gets SIGTERM then SIGKILL after a short grace. `kill(-pid)` always uses the child's own positive PID — it must never be able to become `kill(0)` (caller's group) or `kill(-1)` (broadcast). `.nonZeroExit` stderr is truncated to a bounded tail.
 6. **JS contract:** the script defines `function transform(text)`, run in a **fresh `JSContext` per call**; exceptions (read via `context.exception`) or a non-string return are errors. The eval/timeout race is guarded so the continuation resumes **exactly once**. JavaScriptCore cannot be interrupted, so a runaway script is abandoned best-effort on timeout (its thread runs until process exit) — this is documented, not a bug to "fix" by weakening the timeout.
 7. **FSEvents lifetime:** the stream owns a **retained `WatcherContext` box** (via `passRetained`, balanced by the context `release` callback) — never `passUnretained(self)`, which is a use-after-free. `ScriptWatcher.stream` access is `NSLock`-guarded; `deinit` calls `stop()`.
-8. **Transformer identities are stable and typed:** `builtin.<name>`, `shell:<filename>`, `js:<filename>`. Built-ins occupy orders 10/20/30/40/50/60/70–73/80–82/90–96/100–103; discovered scripts default to 1000; the registry sorts by `(order, name)` and returns only enabled transforms. Missing/unreadable script dirs are tolerated (built-ins still load).
+8. **Transformer identities are stable and typed:** `builtin.<name>`, `shell:<filename>`, `js:<filename>`. Built-ins occupy orders 10–12/20/30/40/50/60/70–73/80–82/90–96/100–103; discovered scripts default to 1000; the registry sorts by `(order, name)` and returns only enabled transforms. Missing/unreadable script dirs are tolerated (built-ins still load).
 9. **The app is NON-SANDBOXED (`ENABLE_APP_SANDBOX = NO`).** By design (direct-download, notarized). The sandbox would block reading `~/.config/pastefix/scripts/` and executing shell/JS scripts — i.e. it kills the entire user-scripts pipeline, the heart of the product. Xcode's app template re-enables the sandbox on a whim; if you regenerate or reconfigure the target, re-verify it stays off (`codesign -d --entitlements - <app>` must not show `com.apple.security.app-sandbox`).
 10. **A slow transform must not lose the user's edit.** `AppModel.apply` is gated by `isApplying`: while an async transform (shell/JS up to 3 s; a self-bounding native transform such as `MarkdownLink` up to ~4 s) runs, the editor, palette, and sidebar are disabled so nothing mutates the document underneath the in-flight apply, and the result can't overwrite a newer edit. The apply completion also drops its result outright if the session ended meanwhile (`document == nil` after Save/Cancel/auto-hide), so a finished transform can never resurrect a dismissed panel; results are also tagged with a session generation, so a result from a dismissed session cannot land in a newer one. Don't remove the gate without a replacement that closes the same race.
 11. **Hardened runtime + notarization are release requirements, and the Sparkle key is the root of trust.** `ENABLE_HARDENED_RUNTIME = YES` with `Pastefix.entitlements` carrying `com.apple.security.cs.allow-jit` (JavaScriptCore) and never `app-sandbox`. Sparkle lives only in the app target. The EdDSA private key in the maintainer's login keychain signs every update; a release signed with a different key is rejected by every installed copy, so the key is backed up and never regenerated, and `scripts/release.sh` refuses to ship if the keychain key does not match `SUPublicEDKey`. The `CFBundleVersion` Sparkle compares is `git rev-list --count HEAD` at release time — never hand-edit it in the pbxproj.
@@ -171,6 +178,7 @@ These are load-bearing; most were established the hard way (see "Things that hav
 - **Content kinds:** a transform that is *meant for* a kind sets `applicableKinds`; the palette promotes it, never hides others. Detection heuristics live only in `ContentDetector`.
 - **Poll the pasteboard on change, not on the tick.** `PasteboardMonitor` reads `NSPasteboard.general` at most once per `changeCount` change — never on a bare timer tick with no change — and reads rich content (RTFD) only when a rich type (`.rtf`/`.rtfd`/`.html`) is actually declared, the same Plan 2a lesson `ClipboardBridge` already relies on. Any new capture source must read the same way: sample types first, read once, and never assume a tick means new content.
 - **Capture filters get a `CaptureContext` built before the read and refreshed after it.** Attribution comes from the tracker's newest activation; exclusion checks every app the tracker saw within the poll window *plus* the live `NSWorkspace.frontmostApplication` id (unioned into `recentBundleIDs` as a fail-closed cross-check, never used for attribution). Don't remove either half.
+- `OutputModeTransformer` is the only channel by which a transform influences Save. Render at save time from the live buffer; never cache rendered output on the document. Rendered HTML goes through the URL-scheme allowlist, and the RTF conversion input has `<img>` stripped so Save never touches the network.
 - **Browsing UIs stay dumb:** the ⌘K palette reads `enabledTransformers()` (applicable-first) and the sidebar reads `browsableTransformers()` (plain user order, no detection promotion, so a browse surface doesn't reshuffle with the clipboard); both render whatever a pure AppCore function hands back — ranking (`TransformSearch`), grouping (`SidebarGrouping`), and applicable-first ordering (`PaletteOrdering`) are pure functions in `PastefixAppCore`, not view logic. A view should never re-sort or re-filter the list itself.
 
 ## Things that have bitten us
@@ -268,6 +276,7 @@ When you **significantly expand the project** — a new target, subsystem, scrip
 | 5 — Quick actions | JSON, encoders, JWT, colours, swatch | ✅ merged, [PR #30](https://github.com/bnaylor/pastefix/pull/30) (`ba0a829`) |
 | 6 — Clipboard history | `HistoryStore`, `PasteboardMonitor`, ⌘⇧V overlay, Settings | ✅ merged — PR #33 (`ba2793a`) — [spec](docs/specs/2026-09-21-pastefix-v2-clipboard-history.md), [plan](docs/plans/2026-09-21-pastefix-v2-clipboard-history.md) |
 | 7 — Sensitive-app exclusion | AppExclusionFilter, FrontmostAppTracker, Privacy tab, menu-bar pause | ✅ merged — PR #34 (`b2b5166`) — [spec](docs/specs/2026-09-21-pastefix-v2-sensitive-app-exclusion.md), [plan](docs/plans/2026-09-21-pastefix-v2-sensitive-app-exclusion.md) |
+| 8 — Markdown ↔ rich text | MarkdownHTML, MarkdownFromRich, OutputMode, Rich Text category | 🟡 in progress, branch feat/markdown-rich-text — [spec](docs/specs/2026-09-21-pastefix-v2-markdown-rich-text.md), [plan](docs/plans/2026-09-21-pastefix-v2-markdown-rich-text.md) |
 
 Historical reference material for the 2007 and 2019 incarnations is vendored under [`docs/inputs/legacy/`](docs/inputs/legacy/).
 
