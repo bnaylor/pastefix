@@ -299,7 +299,7 @@ When you **significantly expand the project** — a new target, subsystem, scrip
 | 6 — Clipboard history | `HistoryStore`, `PasteboardMonitor`, ⌘⇧V overlay, Settings | ✅ merged — PR #33 (`ba2793a`) — [spec](docs/specs/2026-09-21-pastefix-v2-clipboard-history.md), [plan](docs/plans/2026-09-21-pastefix-v2-clipboard-history.md) |
 | 7 — Sensitive-app exclusion | AppExclusionFilter, FrontmostAppTracker, Privacy tab, menu-bar pause | ✅ merged — PR #34 (`b2b5166`) — [spec](docs/specs/2026-09-21-pastefix-v2-sensitive-app-exclusion.md), [plan](docs/plans/2026-09-21-pastefix-v2-sensitive-app-exclusion.md) |
 | 8 — Markdown ↔ rich text | MarkdownHTML, MarkdownFromRich, OutputMode, Rich Text category | ✅ merged — PR #35 (`1d99648`) — [spec](docs/specs/2026-09-21-pastefix-v2-markdown-rich-text.md), [plan](docs/plans/2026-09-21-pastefix-v2-markdown-rich-text.md) |
-| 9 — Pinned snippets | pin/unpin, Pinned section, ⇧↵ paste, per-snippet hotkeys, Snippets tab | 🟡 in progress, branch feat/pinned-snippets — [spec](docs/specs/2026-09-21-pastefix-v2-pinned-snippets.md), [plan](docs/plans/2026-09-21-pastefix-v2-pinned-snippets.md) |
+| 9 — Pinned snippets | pin/unpin, Pinned section, ⇧↵ paste, per-snippet hotkeys, Snippets tab | ✅ merged — PR #38 (`08f72d6`) — [spec](docs/specs/2026-09-21-pastefix-v2-pinned-snippets.md), [plan](docs/plans/2026-09-21-pastefix-v2-pinned-snippets.md) |
 
 Historical reference material for the 2007 and 2019 incarnations is vendored under [`docs/inputs/legacy/`](docs/inputs/legacy/).
 

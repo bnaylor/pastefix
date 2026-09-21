@@ -1,6 +1,6 @@
 # Pastefix v2 Pinned Snippets & Hotkey Paste (Plan 9) — Implementation Plan
 
-> ## 🟡 STATUS: IN PROGRESS — branch feat/pinned-snippets
+> ## ✅ STATUS: COMPLETE — merged to main via PR #38 (`08f72d6`, 2026-09-21)
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 >
