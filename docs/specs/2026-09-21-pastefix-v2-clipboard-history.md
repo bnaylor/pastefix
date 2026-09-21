@@ -121,7 +121,7 @@ read of this spec.
 | ↵ semantics | Text/rich: load into the editor as a new session (origin = the item, with `richRTFD` attached). Image: copy back and dismiss (row says "↵ copies") | Editing is the app's core; images can't be edited until #18, so ↵ does the only useful thing. |
 | ⌘↵ semantics | Copy the whole item (all representations) to the clipboard and dismiss | The CopyClip use case: get an old item back onto the clipboard in two keystrokes. |
 | Search | Same folding/tiers as `TransformSearch`, over the first 2 KB of plain text; empty query = recency order; image-only items match on their source app name and "image" | Consistent feel with ⌘K; bounded cost per keystroke. |
-| Exclusion hook | `protocol CaptureFilter { func shouldCapture(_ candidate: CaptureCandidate) -> Bool }`; the monitor consults a list of filters; this plan ships `ConcealedTypeFilter` | #10 adds `BundleIDExclusionFilter` without touching the monitor. |
+| Exclusion hook | `protocol CaptureFilter { func shouldRead(types:) -> Bool; func shouldCapture(_ candidate:, types:) -> Bool }` (two-stage — Amendment 4); the monitor consults a list of filters at each stage; this plan ships `ConcealedTypeFilter` | #10 adds `BundleIDExclusionFilter` without touching the monitor. |
 | Invariant | New Critical Invariant: concealed/transient pasteboard items are never recorded, and nothing in history is ever written anywhere but the owner-only history directory | Load-bearing for trust; belongs in AGENTS.md. |
 
 ## Architecture
@@ -134,17 +134,19 @@ read of this spec.
 public struct HistoryItem: Identifiable, Codable, Equatable, Sendable {
     public let id: UUID
     public var capturedAt: Date
-    public let plainText: String?          // inline; ≤ 256 KB (UTF-8)
-    public let richRTFDFile: String?       // "<uuid>.rtfd" in the history dir, ≤ 1 MB
-    public let imageFile: String?          // "<uuid>.png", ≤ 5 MB
-    public let imagePixelSize: CGSize?     // for the row caption
-    public let imageHash: String?          // SHA-256 hex of the PNG, for de-dup
-    public let sourceBundleID: String?
-    public let sourceAppName: String?
+    public var plainText: String?          // inline; ≤ 256 KB (UTF-8)
+    public var richRTFDFile: String?       // "<uuid>.rtfd" in the history dir, ≤ 1 MB
+    public var imageFile: String?          // "<uuid>.png", ≤ 5 MB
+    public var imagePixelWidth: Int?       // for the row caption; header-derived, no CGSize (AppCore stays AppKit/CoreGraphics-free)
+    public var imagePixelHeight: Int?
+    public var imageHash: String?          // SHA-256 hex of the PNG, for de-dup
+    public var sourceBundleID: String?
+    public var sourceAppName: String?
     public var byteCount: Int              // text + blobs, for the total budget
 
     public var kind: Kind                  // .text, .richText (text + rtfd), .image (image, maybe text)
     public enum Kind: String, Codable, Sendable { case text, richText, image }
+    public var hasText: Bool               // plainText, trimmed, is non-empty
 }
 ```
 
@@ -164,20 +166,27 @@ public struct CaptureCandidate: Sendable {
     public var plainText: String?
     public var richRTFD: Data?
     public var imagePNG: Data?
+    public var imagePixelWidth: Int?
+    public var imagePixelHeight: Int?
     public var sourceBundleID: String?
     public var sourceAppName: String?
 }
 
 public final class HistoryStore: ObservableObject {
     @Published public private(set) var items: [HistoryItem]      // newest first
-    public var limits: HistoryLimits { didSet { enforceLimits() } }
+    // Lowering a limit sheds items and deletes blobs immediately, so that trim must be
+    // flushed rather than debounced (Amendment 2); otherwise it schedules the normal debounced write.
+    public var limits: HistoryLimits { didSet { if enforceLimits() { flush() } else { scheduleWrite() } } }
+    @Published public private(set) var lastWriteError: String?   // eventually consistent — see Amendment 2
+    public let directory: URL
     public init(directory: URL, limits: HistoryLimits = .init())  // loads index; quarantines a corrupt one
-    @discardableResult public func record(_ candidate: CaptureCandidate) -> HistoryItem?
+    @discardableResult public func record(_ candidate: CaptureCandidate, now: Date = Date()) -> HistoryItem?
     public func remove(_ id: UUID)
     public func clear()
     public func richRTFD(for item: HistoryItem) -> Data?
     public func imagePNG(for item: HistoryItem) -> Data?
     public var totalBytes: Int
+    public func flush()   // synchronous; tests, remove/clear, applicationWillTerminate
 }
 ```
 
