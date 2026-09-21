@@ -65,9 +65,16 @@ struct PanelView: View {
         .animation(.easeInOut(duration: 0.15), value: settings.showSidebar)
         .animation(.easeInOut(duration: 0.1), value: isPaletteOpen)
         .animation(.easeInOut(duration: 0.1), value: isHistoryOpen)
-        // A new session always starts with both overlays closed.
-        .onChange(of: model.document == nil) { _, ended in
-            if ended { isPaletteOpen = false; isHistoryOpen = false }
+        // Every session boundary closes both overlays. Keyed on the generation counter, not on
+        // `document == nil`: ⌘S and auto-hide-on-blur end the session from inside the overlay
+        // and hide the panel synchronously, and SwiftUI does not promise to update a hosting
+        // view in an ordered-out window — a derived Bool reads the same on both sides of a
+        // skipped render, so the transition is never observed and the next summon comes up with
+        // the overlay still over it. The counter is monotonic, so a skipped render can't hide it.
+        // Must stay above the `historyOverlayRequested` handler: a ⌘⇧V summon resets, then opens.
+        .onChange(of: model.sessionGeneration) { _, _ in
+            isPaletteOpen = false
+            isHistoryOpen = false
         }
         // Hand focus back to the editor once a transform finishes, unless the user has an
         // overlay open and is picking the next thing.

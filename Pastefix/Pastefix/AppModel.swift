@@ -23,7 +23,12 @@ final class AppModel: ObservableObject {
     /// value it started under, so a result from a session the user has since dismissed
     /// can't land in a newer one — `document != nil` alone doesn't catch a dismiss-then-
     /// re-summon inside the apply window.
-    private var sessionGeneration = 0
+    ///
+    /// Published because it is also the panel's reset signal: it moves monotonically, so a
+    /// `PanelView` that never got to render between a session ending and the next one starting
+    /// still sees the change (a derived `document == nil` reads the same on both sides of a
+    /// skipped render and the overlay stays open over a fresh session).
+    @Published private(set) var sessionGeneration = 0
 
     init(settings: SettingsStore, history: HistoryStore) {
         self.settings = settings

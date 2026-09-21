@@ -10,7 +10,8 @@ import PastefixAppCore
 protocol CaptureFilter: Sendable {
     /// Cheap pre-read gate on declared types only; returning false means the content is never read.
     func shouldRead(types: [NSPasteboard.PasteboardType]) -> Bool
-    /// Post-read gate on the full candidate, with the types sampled before the read.
+    /// Post-read gate on the full candidate, with the union of the types sampled before and
+    /// after the read (a writer can add a marker to the same change after the first sample).
     func shouldCapture(_ candidate: CaptureCandidate, types: [NSPasteboard.PasteboardType]) -> Bool
 }
 
@@ -87,14 +88,26 @@ final class PasteboardMonitor {
             return
         }
         // Stage 2: gate again on the full candidate (e.g. a future filter keyed on
-        // `sourceBundleID`, which only `read` populates), using the same pre-sampled types.
-        guard filters.allSatisfy({ $0.shouldCapture(candidate, types: types) }) else { return }
+        // `sourceBundleID`, which only `read` populates), on the union of the types sampled
+        // before and after the read. The union is load-bearing, not belt-and-braces: because
+        // `setData`/`setString` do not bump `changeCount` (see above), an unchanged count
+        // proves only that nobody called `clearContents`/`declareTypes` again — types can
+        // still have been ADDED to this same change since the pre-read sample. A writer that
+        // does clearContents -> setString(secret) -> setData(ConcealedType) would otherwise
+        // pass both stages on the stale sample and record the secret.
+        let finalTypes = Array(Set(types).union(pasteboard.types ?? []))
+        guard filters.allSatisfy({ $0.shouldCapture(candidate, types: finalTypes) }) else { return }
         onCapture(candidate)
     }
 
     /// One read per change. Rich content only when a rich type is actually declared (Plan 2a lesson).
-    /// `maxImageBytes` lets an over-budget image skip decoding/re-encoding entirely instead of
-    /// paying that cost on the main actor only for `HistoryStore.record` to reject it.
+    ///
+    /// `maxImageBytes` is an exact gate for the `.png` branch only: the pasteboard already holds
+    /// the PNG, so an over-budget one is skipped without any decoding. The `.tiff` branch cannot
+    /// know its PNG size until it has produced the PNG, so a TIFF inside the pixel ceiling below
+    /// is still decoded and re-encoded on the main actor, and only then can the byte cap — here
+    /// or in `HistoryStore.record` — reject the result. Moving that conversion off the main actor
+    /// is tracked as a follow-up issue; the pixel ceiling is the cheap bound in the meantime.
     static func read(_ pb: NSPasteboard, maxImageBytes: Int) -> CaptureCandidate? {
         var c = CaptureCandidate()
         c.plainText = pb.string(forType: .string)
@@ -112,9 +125,11 @@ final class PasteboardMonitor {
         } else if let tiff = pb.data(forType: .tiff), let size = pixelSize(of: tiff),
                   // Header-only pixel gate, not a byte-size heuristic: a full-screen Retina grab
                   // is ~81 MB as raw TIFF but only 2-6 MB once PNG-compressed, so gating on TIFF
-                  // byte size rejects exactly the images it should keep. 50M px is generous for
-                  // any real display; the store's byte cap on the PNG result still applies below.
-                  size.width * size.height <= 50_000_000,
+                  // byte size rejects exactly the images it should keep. 25M px still covers any
+                  // real display (a 6K Pro Display XDR grab is ~20M px) while bounding the
+                  // main-actor decode + re-encode this branch has to pay; the store's byte cap on
+                  // the PNG result still applies below.
+                  size.width * size.height <= 25_000_000,
                   let rep = NSBitmapImageRep(data: tiff),
                   let png = rep.representation(using: .png, properties: [:]),
                   png.count <= maxImageBytes {

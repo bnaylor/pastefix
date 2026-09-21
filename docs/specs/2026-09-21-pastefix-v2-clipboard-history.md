@@ -46,14 +46,20 @@ read of this spec.
    item.
 4. **`CaptureFilter` is two-stage.** `shouldRead(types:)` runs on declared
    types alone before any content is read; `shouldCapture(_:types:)` runs
-   again after the read, on the full candidate, with types sampled before the
-   read and the pasteboard's change count re-checked after — a mismatch
-   discards the read rather than recording a mixed candidate. The concealed
+   again after the read, on the full candidate, with the pasteboard's change
+   count re-checked first — a mismatch discards the read rather than recording
+   a mixed candidate. Stage 2 sees the **union of the types sampled before and
+   after the read**: `setData`/`setString` do not bump `changeCount`, so an
+   unchanged count proves only that the change did not turn over, not that the
+   type list is unchanged, and a marker added to the same change after the
+   first sample would otherwise be invisible to both stages. The concealed
    marker check also covers three legacy spellings still emitted by older
    apps. A tick that sees empty declared types is retried next tick rather
    than treated as a real (empty) change. PNG over the image budget is
-   skipped before decoding; TIFF is gated by a header-only pixel count (>50M
-   pixels skipped) before paying for a decode + PNG re-encode.
+   skipped before decoding; TIFF is gated by a header-only pixel count (>25M
+   pixels skipped) before paying for a decode + PNG re-encode — that decode
+   and re-encode is the one image cost still paid on the main actor, since a
+   TIFF's PNG size is unknown until the PNG exists.
 5. **The store is constructed with the user's configured cap directly**, and
    cap changes from Settings are clamped and debounced 400 ms in the app layer
    before reaching `HistoryStore.limits`, so holding the Settings stepper
@@ -282,7 +288,7 @@ characters, "…" when truncated; `"Image \(w)×\(h)"` for image-only items),
     .rtfd, .html]) != nil` (the Plan 2a lesson), serialised to RTFD data;
     `imagePNG` from `.png` directly (skipped before decoding if over
     `maxImageBytes`), else from `.tiff` via `NSBitmapImageRep` → PNG, gated
-    by a header-only pixel count (>50M pixels skipped, since TIFF byte size
+    by a header-only pixel count (>25M pixels skipped, since TIFF byte size
     does not correlate with PNG-compressed size) before paying for the
     decode + re-encode; `imagePixelWidth`/`imagePixelHeight` read from the
     image header, no full decode required.
@@ -291,9 +297,10 @@ characters, "…" when truncated; `"Image \(w)×\(h)"` for image-only items),
     later change's content) and roll `lastChangeCount` back one so the next
     tick reprocesses the newer change cleanly.
   - **Stage 2 — `shouldCapture(_:types:)`:** a gate on the full candidate,
-    using the types sampled before the read, for filters that need content
-    `read` alone populates (e.g. `sourceBundleID`, for #10's app exclusion).
-    If every filter says yes, call `onCapture`.
+    using the union of the types sampled before and after the read (see
+    Amendment 4), for filters that need content `read` alone populates (e.g.
+    `sourceBundleID`, for #10's app exclusion). If every filter says yes, call
+    `onCapture`.
   - The first tick after `start()` only records the current `changeCount`; it
     does not capture what was already on the clipboard.
 - `protocol CaptureFilter: Sendable { func shouldRead(types: [NSPasteboard.PasteboardType]) -> Bool; func shouldCapture(_ candidate: CaptureCandidate, types: [NSPasteboard.PasteboardType]) -> Bool }`

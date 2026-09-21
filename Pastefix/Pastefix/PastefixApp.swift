@@ -100,17 +100,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // stepper's down arrow walks 200→20 in about a second, evicting and deleting blobs
             // at each step along the way. Debounce so only the value the user settles on lands.
             .debounce(for: .milliseconds(400), scheduler: DispatchQueue.main)
+            // @Published emits from willSet, before SettingsStore's own didSet clamp — an
+            // out-of-range value can arrive here raw (e.g. a live-typed "2" before "20" lands),
+            // and applying it would evict and permanently delete blobs for a value the setting
+            // itself never actually holds. Clamp ABOVE removeDuplicates so the whole chain
+            // speaks in clamped values: two raw values that clamp to the same cap (2 then 5)
+            // are one change, not two.
+            .map { min(max($0, 20), 1000) }
             .removeDuplicates()
             .sink { [weak self] n in
                 MainActor.assumeIsolated {
-                    guard let self else { return }
-                    // @Published emits from willSet, before SettingsStore's own didSet clamp —
-                    // an in-range value can arrive here still raw (e.g. a live-typed "2" before
-                    // "20" lands), and assigning it straight through would evict and permanently
-                    // delete blobs for a value the setting itself never actually holds.
-                    let clamped = min(max(n, 20), 1000)
-                    guard clamped != self.history.limits.maxItems else { return }
-                    self.history.limits.maxItems = clamped
+                    guard let self, n != self.history.limits.maxItems else { return }
+                    self.history.limits.maxItems = n
                 }
             }
             .store(in: &cancellables)

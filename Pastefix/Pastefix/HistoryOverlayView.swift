@@ -8,8 +8,8 @@ import PastefixAppCore
 ///
 /// Deliberately shaped like `CommandPaletteView` — same backdrop, card, list metrics and
 /// footer — so the two overlays read as one surface. Its key-handling rule is also the
-/// palette's: every handler recomputes `results` and reads `@State` at call time, never a
-/// value captured while `body` ran (the ⌘K Return bug, `7f67d41`).
+/// palette's: every handler reads `@State` at call time, never a value captured while `body`
+/// ran (the ⌘K Return bug, `7f67d41`).
 struct HistoryOverlayView: View {
     @ObservedObject var model: AppModel
     /// The store is a separate `ObservableObject`, so it needs its own observation for
@@ -19,6 +19,11 @@ struct HistoryOverlayView: View {
 
     @State private var query = ""
     @State private var selection = 0
+    /// Ranked once per query/history change, not once per `body`. Ranking is O(items x haystack)
+    /// and `body` re-runs for every arrow key and every thumbnail that lands, so recomputing it
+    /// there made each of those pay a full re-rank. Actions read this `@State` at call time
+    /// (the ⌘K Return lesson, `7f67d41`) — it is the live value, never a render-time local.
+    @State private var results: [HistorySearchResult] = []
     /// Downsampled thumbnails, kept per item id so scrolling doesn't re-read the blob every
     /// frame, with `thumbnailOrder` as the FIFO eviction order.
     @State private var thumbnails: [UUID: NSImage] = [:]
@@ -44,11 +49,10 @@ struct HistoryOverlayView: View {
     init(model: AppModel, onClose: @escaping () -> Void) {
         _model = ObservedObject(wrappedValue: model)
         _history = ObservedObject(wrappedValue: model.history)
+        // Seeded here rather than left empty until `onAppear`, so the overlay's first frame
+        // already shows the history instead of the "No clipboard history yet" empty state.
+        _results = State(initialValue: HistorySearch.rank(query: "", in: model.history.items))
         self.onClose = onClose
-    }
-
-    private var results: [HistorySearchResult] {
-        HistorySearch.rank(query: query, in: history.items)
     }
 
     var body: some View {
@@ -70,7 +74,13 @@ struct HistoryOverlayView: View {
                     .padding(.top, Self.cardTopPadding)
             }
         }
-        .onAppear { fieldFocused = true }
+        .onAppear { fieldFocused = true; refreshResults() }
+        .onChange(of: query) { _, _ in
+            selection = 0
+            refreshResults()
+        }
+        // record/remove/clear all land here, including a capture arriving while the overlay is open.
+        .onChange(of: history.items) { _, _ in refreshResults() }
         // The view is torn down on close, so this is belt-and-braces — but the cache is the one
         // piece of state here that is worth megabytes.
         .onDisappear { thumbnails.removeAll(); thumbnailOrder.removeAll() }
@@ -94,7 +104,6 @@ struct HistoryOverlayView: View {
                     .focused($fieldFocused)
                     // Plain Return only; the handler below handles the command case.
                     .onSubmit { openSelection() }
-                    .onChange(of: query) { _, _ in selection = 0 }
                 if history.lastWriteError != nil {
                     Label("History couldn't be saved", systemImage: "exclamationmark.triangle")
                         .font(.caption)
@@ -284,6 +293,10 @@ struct HistoryOverlayView: View {
     }
 
     // MARK: Actions (every one reads live state)
+
+    private func refreshResults() {
+        results = HistorySearch.rank(query: query, in: history.items)
+    }
 
     /// Index the list is actually highlighting: `selection` clamped to the live result count.
     private func clampedSelection(in items: [HistorySearchResult]) -> Int {
