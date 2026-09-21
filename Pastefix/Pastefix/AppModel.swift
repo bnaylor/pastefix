@@ -12,7 +12,11 @@ final class AppModel: ObservableObject {
     @Published private(set) var transformers: [any Transformer] = []
     @Published private(set) var allTransformers: [any Transformer] = []
 
+    /// Set by the ⌘⇧V hotkey; PanelView opens the history overlay and resets it.
+    @Published var historyOverlayRequested = false
+
     let settings: SettingsStore
+    let history: HistoryStore
     var onEndSession: (() -> Void)?
 
     /// Bumped on every summon and every dismissal. An in-flight transform captures the
@@ -21,8 +25,9 @@ final class AppModel: ObservableObject {
     /// re-summon inside the apply window.
     private var sessionGeneration = 0
 
-    init(settings: SettingsStore) {
+    init(settings: SettingsStore, history: HistoryStore) {
         self.settings = settings
+        self.history = history
         reload()
     }
 
@@ -128,6 +133,19 @@ final class AppModel: ObservableObject {
     }
 
     func cancel() { endSession() }
+
+    /// Starts a new session from a history item (rich data attached when present).
+    func load(_ item: HistoryItem) {
+        errorMessage = nil
+        sessionGeneration &+= 1
+        document = PasteDocument(origin: ClipboardSnapshot(plainText: item.plainText ?? "", richRTFD: history.richRTFD(for: item)))
+    }
+
+    /// Puts the whole item back on the clipboard and ends the session.
+    func copyBack(_ item: HistoryItem) {
+        ClipboardBridge.write(text: item.plainText, richRTFD: history.richRTFD(for: item), imagePNG: history.imagePNG(for: item))
+        endSession()
+    }
 
     private func endSession() {
         document = nil

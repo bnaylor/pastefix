@@ -45,12 +45,17 @@ struct CheckForUpdatesButton: View {
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private(set) var settings = SettingsStore()
-    private(set) lazy var model = AppModel(settings: settings)
+    private(set) lazy var history = HistoryStore(directory: Self.historyDirectory)
+    private(set) lazy var model = AppModel(settings: settings, history: history)
     let updater = UpdaterController()
     private var panel: PanelController?
     private var scriptWatcher: ScriptWatcher?
+    private var pasteboardMonitor: PasteboardMonitor?
     private var lastSummonAt: Date = .distantPast
     private var cancellables = Set<AnyCancellable>()
+
+    static let historyDirectory: URL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        .appendingPathComponent("Pastefix/history", isDirectory: true)
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Sparkle: scheduled daily checks start here, after launch, per Sparkle's guidance.
@@ -81,6 +86,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         KeyboardShortcuts.onKeyUp(for: .summonPastefix) { [weak self] in
             self?.summon()
         }
+
+        // Clipboard history: second hotkey opens the panel straight into the overlay.
+        KeyboardShortcuts.onKeyUp(for: .summonHistory) { [weak self] in
+            self?.summonHistory()
+        }
+        history.limits.maxItems = settings.historyMaxItems
+        settings.$historyMaxItems.dropFirst().removeDuplicates().receive(on: DispatchQueue.main)
+            .sink { [weak self] n in MainActor.assumeIsolated { self?.history.limits.maxItems = n } }
+            .store(in: &cancellables)
+        updateMonitor(enabled: settings.historyEnabled)
+        settings.$historyEnabled.dropFirst().removeDuplicates().receive(on: DispatchQueue.main)
+            .sink { [weak self] on in MainActor.assumeIsolated { self?.updateMonitor(enabled: on) } }
+            .store(in: &cancellables)
 
         // Live-reload the palette when the user's scripts directory changes.
         startWatchingScripts()
@@ -123,5 +141,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         lastSummonAt = Date()
         model.summon()
         panel?.show()
+    }
+
+    private func updateMonitor(enabled: Bool) {
+        if enabled {
+            if pasteboardMonitor == nil {
+                pasteboardMonitor = PasteboardMonitor(filters: [ConcealedTypeFilter()]) { [weak self] candidate in
+                    self?.history.record(candidate)
+                }
+            }
+            pasteboardMonitor?.start()
+        } else {
+            pasteboardMonitor?.stop()
+        }
+    }
+
+    /// ⌘⇧V: show the panel (starting a session from the current clipboard if none) with history open.
+    func summonHistory() {
+        if model.document == nil { summon() } else { lastSummonAt = Date(); panel?.show() }
+        model.historyOverlayRequested = true
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        history.flush()
     }
 }
