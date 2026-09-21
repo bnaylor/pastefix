@@ -53,6 +53,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var panel: PanelController?
     private var scriptWatcher: ScriptWatcher?
     private var pasteboardMonitor: PasteboardMonitor?
+    /// Built on first use and kept for the process lifetime: it has to have been listening for
+    /// activations before a copy happens to be able to attribute it.
+    private lazy var frontmostTracker = FrontmostAppTracker()
     private var lastSummonAt: Date = .distantPast
     private var cancellables = Set<AnyCancellable>()
 
@@ -119,6 +122,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         settings.$historyEnabled.dropFirst().removeDuplicates().receive(on: DispatchQueue.main)
             .sink { [weak self] on in MainActor.assumeIsolated { self?.updateMonitor(enabled: on) } }
             .store(in: &cancellables)
+        // Exclusion-list edits are rare and one at a time, so no debounce: rebuild the monitor
+        // so the new list takes effect on the very next poll.
+        settings.$historyExcludedBundleIDs.dropFirst().removeDuplicates().receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in MainActor.assumeIsolated { self?.rebuildMonitor() } }
+            .store(in: &cancellables)
 
         // Live-reload the palette when the user's scripts directory changes.
         startWatchingScripts()
@@ -166,7 +174,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func updateMonitor(enabled: Bool) {
         if enabled {
             if pasteboardMonitor == nil {
-                pasteboardMonitor = PasteboardMonitor(filters: [ConcealedTypeFilter()], maxImageBytes: history.limits.maxImageBytes) { [weak self] candidate in
+                pasteboardMonitor = PasteboardMonitor(
+                    filters: [ConcealedTypeFilter(),
+                              AppExclusionFilter(excludedBundleIDs: settings.historyExcludedBundleIDs)],
+                    maxImageBytes: history.limits.maxImageBytes,
+                    tracker: frontmostTracker) { [weak self] candidate in
                     self?.history.record(candidate)
                 }
             }
@@ -174,6 +186,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         } else {
             pasteboardMonitor?.stop()
         }
+    }
+
+    /// The filter chain is fixed at construction, so a changed exclusion list means a new
+    /// monitor. Dropping the old one loses only its `lastChangeCount`, and `start()` reseeds
+    /// that from the current pasteboard — the deliberate "never back-fill" behaviour.
+    private func rebuildMonitor() {
+        pasteboardMonitor?.stop()
+        pasteboardMonitor = nil
+        updateMonitor(enabled: settings.historyEnabled)
     }
 
     /// ⌘⇧V: show the panel (starting a session from the current clipboard if none) with history open.
