@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import UniformTypeIdentifiers
 import KeyboardShortcuts
 import PastefixCore
 import PastefixAppCore
@@ -10,10 +11,15 @@ struct SettingsView: View {
     @ObservedObject var updater: UpdaterController
     @ObservedObject var history: HistoryStore
     @State private var confirmClear = false
+    @State private var selectedExclusion: String?
+    @State private var showIdentifierPrompt = false
+    @State private var newIdentifier = ""
+    @State private var noBundleIDNames: [String] = []
 
     var body: some View {
         TabView {
             general.tabItem { Label("General", systemImage: "gearshape") }
+            privacy.tabItem { Label("Privacy", systemImage: "hand.raised") }
             shortcut.tabItem { Label("Shortcut", systemImage: "keyboard") }
             transforms.tabItem { Label("Transforms", systemImage: "slider.horizontal.3") }
         }
@@ -51,6 +57,12 @@ struct SettingsView: View {
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }
+        }
+        .padding()
+    }
+
+    private var privacy: some View {
+        Form {
             Section("History") {
                 Toggle("Remember clipboard history", isOn: $settings.historyEnabled)
                 Stepper("Keep last \(settings.historyMaxItems) items", value: $settings.historyMaxItems, in: 20...1000, step: 10)
@@ -62,12 +74,82 @@ struct SettingsView: View {
                 }
                 Text("Items marked private by password managers are never recorded.").font(.caption).foregroundStyle(.secondary)
             }
+            Section("Excluded apps") {
+                Text("Copies made in these apps are never read or remembered.")
+                    .font(.caption).foregroundStyle(.secondary)
+                List(selection: $selectedExclusion) {
+                    ForEach(settings.historyExcludedBundleIDs, id: \.self) { id in
+                        ExcludedAppRow(bundleID: id).tag(id)
+                    }
+                }
+                .frame(minHeight: 120)
+                HStack {
+                    Button("Add App…") { addAppFromPanel() }
+                    Button("Add Identifier…") { showIdentifierPrompt = true }
+                        .popover(isPresented: $showIdentifierPrompt) {
+                            VStack(alignment: .leading) {
+                                Text("Bundle identifier").font(.caption)
+                                TextField("com.example.app", text: $newIdentifier)
+                                    .frame(width: 260)
+                                    .onSubmit { commitIdentifier() }
+                                HStack {
+                                    Spacer()
+                                    Button("Add") { commitIdentifier() }.keyboardShortcut(.defaultAction)
+                                }
+                            }
+                            .padding()
+                        }
+                    Button("Remove") {
+                        if let selected = selectedExclusion {
+                            settings.removeExcludedBundleID(selected)
+                            selectedExclusion = nil
+                        }
+                    }
+                    .disabled(selectedExclusion == nil)
+                    Spacer()
+                    Button("Restore Defaults") { settings.restoreDefaultExclusions() }
+                }
+                Text("Copies made by browser password extensions come from the browser, not the manager; those are skipped when the extension marks them concealed, which 1Password, Bitwarden and Apple do.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
         }
         .padding()
         .alert("Clear clipboard history?", isPresented: $confirmClear) {
             Button("Clear \(history.items.count) items", role: .destructive) { history.clear() }
             Button("Cancel", role: .cancel) {}
         } message: { Text("This removes every remembered item and its files from disk.") }
+        .alert("No bundle identifier", isPresented: Binding(
+            get: { !noBundleIDNames.isEmpty },
+            set: { if !$0 { noBundleIDNames = [] } }
+        )) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("These items have no bundle identifier and were not added:\n\(noBundleIDNames.joined(separator: "\n"))")
+        }
+    }
+
+    private func commitIdentifier() {
+        settings.addExcludedBundleID(newIdentifier)
+        newIdentifier = ""
+        showIdentifierPrompt = false
+    }
+
+    private func addAppFromPanel() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.application]
+        panel.directoryURL = URL(fileURLWithPath: "/Applications")
+        panel.allowsMultipleSelection = true
+        panel.canChooseDirectories = false
+        guard panel.runModal() == .OK else { return }
+        var missing: [String] = []
+        for url in panel.urls {
+            if let id = Bundle(url: url)?.bundleIdentifier {
+                settings.addExcludedBundleID(id)
+            } else {
+                missing.append(url.lastPathComponent)
+            }
+        }
+        if !missing.isEmpty { noBundleIDNames = missing }
     }
 
     private var shortcut: some View {
@@ -125,6 +207,27 @@ struct SettingsView: View {
         if panel.runModal() == .OK, let url = panel.url {
             settings.scriptsDirectoryPath = url.path
             model.reload()
+        }
+    }
+}
+
+/// One row of the excluded-apps list: the app's icon and name when it is installed,
+/// otherwise the raw identifier greyed out and marked "not installed" — an exclusion
+/// stays on the list even if the app is gone, so the user can still see and remove it.
+struct ExcludedAppRow: View {
+    let bundleID: String
+
+    var body: some View {
+        let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID)
+        HStack(spacing: 8) {
+            Image(nsImage: url.map { NSWorkspace.shared.icon(forFile: $0.path) } ?? NSWorkspace.shared.icon(for: .application))
+                .resizable().frame(width: 20, height: 20)
+            VStack(alignment: .leading, spacing: 0) {
+                Text(url.flatMap { FileManager.default.displayName(atPath: $0.path).replacingOccurrences(of: ".app", with: "") } ?? bundleID)
+                    .foregroundStyle(url == nil ? AnyShapeStyle(.secondary) : AnyShapeStyle(.primary))
+                Text(url == nil ? "\(bundleID) · not installed" : bundleID)
+                    .font(.caption2).foregroundStyle(.secondary)
+            }
         }
     }
 }

@@ -10,19 +10,45 @@ struct PastefixApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var delegate
 
     var body: some Scene {
-        MenuBarExtra("Pastefix", systemImage: "doc.on.clipboard") {
-            Button("Summon Pastefix") { delegate.summon() }
-            SettingsLink { Text("Settings…") }
-                .keyboardShortcut(",", modifiers: .command)
-            CheckForUpdatesButton(updater: delegate.updater)
-            Divider()
-            Button("Quit Pastefix") { NSApplication.shared.terminate(nil) }
-                .keyboardShortcut("q", modifiers: .command)
+        MenuBarExtra {
+            MenuBarMenu(settings: delegate.settings, updater: delegate.updater) { delegate.summon() }
+        } label: {
+            MenuBarLabel(settings: delegate.settings)
         }
 
         Settings {
             SettingsView(settings: delegate.settings, model: delegate.model, updater: delegate.updater, history: delegate.history)
         }
+    }
+}
+
+/// The menu bar icon. `App` is a struct and does not observe `delegate.settings` on its own,
+/// so the glyph lives in a view that holds the store as an `@ObservedObject` and redraws when
+/// `historyEnabled` flips.
+struct MenuBarLabel: View {
+    @ObservedObject var settings: SettingsStore
+
+    var body: some View {
+        Label("Pastefix", systemImage: settings.historyEnabled ? "doc.on.clipboard" : "pause.circle")
+    }
+}
+
+/// The menu bar menu. Observes the settings store so the Clipboard History toggle reflects
+/// changes made elsewhere (Settings, or another copy of the menu).
+struct MenuBarMenu: View {
+    @ObservedObject var settings: SettingsStore
+    @ObservedObject var updater: UpdaterController
+    let summon: () -> Void
+
+    var body: some View {
+        Button("Summon Pastefix") { summon() }
+        Toggle("Clipboard History", isOn: $settings.historyEnabled)
+        SettingsLink { Text("Settings…") }
+            .keyboardShortcut(",", modifiers: .command)
+        CheckForUpdatesButton(updater: updater)
+        Divider()
+        Button("Quit Pastefix") { NSApplication.shared.terminate(nil) }
+            .keyboardShortcut("q", modifiers: .command)
     }
 }
 
