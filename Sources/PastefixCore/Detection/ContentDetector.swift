@@ -15,6 +15,14 @@ public enum ContentDetector {
            (try? JSONSerialization.jsonObject(with: data, options: [])) != nil {
             kinds.insert(.json)
         }
+        if ColorLiteral.parse(trimmed) != nil { kinds.insert(.color) }
+        if JWTDecoder.split(trimmed) != nil { kinds.insert(.jwt) }
+        else if Base64Codec.looksLikeBase64(trimmed) { kinds.insert(.base64) }
+        if percentRegex.firstMatch(in: trimmed, range: NSRange(location: 0, length: (trimmed as NSString).length)) != nil { kinds.insert(.percentEncoded) }
+        if entityRegex.firstMatch(in: trimmed, range: NSRange(location: 0, length: (trimmed as NSString).length)) != nil { kinds.insert(.htmlEntities) }
         return kinds
     }
+
+    private static let percentRegex = try! NSRegularExpression(pattern: "%[0-9A-Fa-f]{2}")
+    private static let entityRegex = try! NSRegularExpression(pattern: "&(#[0-9]+|#[xX][0-9A-Fa-f]+|[A-Za-z][A-Za-z0-9]{1,31});")
 }
