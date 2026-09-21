@@ -51,6 +51,14 @@ public final class HistoryStore: ObservableObject {
     public var limits: HistoryLimits { didSet { if enforceLimits() { flush() } else { scheduleWrite() } } }
     public let directory: URL
 
+    /// True when this launch found `index.json` unreadable and moved it aside.
+    ///
+    /// Set once, in `init`, and never cleared: it describes the load, not the current contents.
+    /// Callers use it to tell "the user has no pins" from "we cannot see the user's pins" —
+    /// `items` is empty either way, but only one of those justifies discarding state keyed to
+    /// item ids (see `SnippetHotkeys`).
+    public private(set) var lastLoadQuarantined = false
+
     /// Last index-write failure, or nil after a success.
     ///
     /// Eventually consistent: index writes run off the main actor, so this is updated on a
@@ -73,6 +81,7 @@ public final class HistoryStore: ObservableObject {
         self.indexURL = directory.appendingPathComponent("index.json")
         Self.ensureDirectory(directory)
         let outcome = load()
+        lastLoadQuarantined = outcome.quarantined
         let evicted = enforceLimits()
         // A quarantined index is the only remaining record of which blob belongs to which
         // item, so sweeping against an empty `items` would delete exactly the payloads the

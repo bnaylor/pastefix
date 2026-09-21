@@ -56,7 +56,13 @@ final class SnippetHotkeys {
     ///
     /// Run on every `sync()`, which includes the one at launch, so ids that disappeared while the
     /// app was not running (or in the gap between `unpin`'s flush and a crash) are also collected.
+    ///
+    /// Skipped entirely after a quarantined load: the index that was moved aside may name pins we
+    /// can no longer see, and `items` being empty then means "we cannot read them", not "they are
+    /// gone". Resetting their combos would be a second loss on top of the quarantine — and the
+    /// quarantine file exists precisely so that loss is recoverable.
     private func sweepOrphanedShortcuts() {
+        guard !history.lastLoadQuarantined else { return }
         let live = Set(history.items.map(\.id.uuidString))
         for name in KeyboardShortcuts.storedNames
         where name.rawValue.hasPrefix(Self.namePrefix)

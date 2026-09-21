@@ -283,6 +283,22 @@ import Foundation
             #expect(names.contains { $0.hasPrefix("index.json.corrupt-") })
         }
     }
+    @Test func quarantinedLoadIsFlaggedAndANormalOneIsNot() throws {
+        try withDir { dir in
+            let s = HistoryStore(directory: dir)
+            s.record(text("keep")); s.flush()
+            #expect(!s.lastLoadQuarantined)                              // fresh directory
+            #expect(!HistoryStore(directory: dir).lastLoadQuarantined)   // readable index
+            try Data("not json".utf8).write(to: dir.appendingPathComponent("index.json"))
+            // The flag distinguishes "no items" from "cannot read the items": callers key state
+            // to item ids and must not discard it on the second one.
+            let corrupt = HistoryStore(directory: dir)
+            #expect(corrupt.items.isEmpty && corrupt.lastLoadQuarantined)
+            // It describes the load, so the *next* launch (index rewritten) is clean again.
+            corrupt.flush()
+            #expect(!HistoryStore(directory: dir).lastLoadQuarantined)
+        }
+    }
     // MARK: Pinned snippets
 
     @Test func pinUnpinRenameAndOrdering() throws {
