@@ -19,6 +19,14 @@ enum ClipboardBridge {
         write(text: text, richRTFD: nil, imagePNG: nil, to: pasteboard)
     }
 
+    /// Armed-Markdown save: formatted targets take HTML/RTF, plain targets get the Markdown source.
+    static func writeRich(text: String, html: String, rtf: Data?, to pasteboard: NSPasteboard = .general) {
+        pasteboard.clearContents()
+        pasteboard.setString(text, forType: .string)
+        pasteboard.setString(html, forType: .html)
+        if let rtf { pasteboard.setData(rtf, forType: .rtf) }
+    }
+
     /// Writes every representation we have for one item. Empty inputs write nothing for that type.
     static func write(text: String?, richRTFD: Data?, imagePNG: Data?, to pasteboard: NSPasteboard = .general) {
         pasteboard.clearContents()
