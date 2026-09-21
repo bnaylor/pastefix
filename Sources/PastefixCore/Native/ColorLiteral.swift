@@ -36,7 +36,7 @@ public struct ColorLiteral: Equatable, Sendable {
     }
 
     private static func parseHex(_ h: String) -> ColorLiteral? {
-        guard h.allSatisfy(\.isHexDigit) else { return nil }
+        guard h.allSatisfy({ $0.isASCII && $0.isHexDigit }) else { return nil }
         let digits: [Character]
         switch h.count {
         case 3, 4: digits = h.flatMap { [$0, $0] }
@@ -48,7 +48,11 @@ public struct ColorLiteral: Equatable, Sendable {
         return ColorLiteral(red: byte(0), green: byte(2), blue: byte(4), alpha: a)
     }
 
-    private static func number(_ s: String) -> Double? { Double(s) }
+    private static func number(_ s: String) -> Double? {
+        guard !s.contains("x") else { return nil }
+        guard let d = Double(s), d.isFinite else { return nil }
+        return d
+    }
     private static func channel(_ s: String) -> Double? {
         if s.hasSuffix("%") { return number(String(s.dropLast())).map { $0 / 100 } }
         return number(s).map { $0 / 255 }
@@ -103,7 +107,7 @@ public struct ColorLiteral: Equatable, Sendable {
     private var r255: Int { Int((red * 255).rounded()) }
     private var g255: Int { Int((green * 255).rounded()) }
     private var b255: Int { Int((blue * 255).rounded()) }
-    private var hasAlpha: Bool { alpha < 1 }
+    private var hasAlpha: Bool { Int((alpha * 255).rounded()) < 255 }
     /// "0.5", "0.333", "0.25" — up to 3 decimals, trailing zeros trimmed.
     private var cssAlpha: String {
         var s = String(format: "%.3f", alpha)

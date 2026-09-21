@@ -30,6 +30,22 @@ import Testing
             #expect(p(bad) == nil, Comment(rawValue: bad))
         }
     }
+    @Test func rejectsFullwidthHexDigits() {
+        #expect(p("#\u{FF26}\u{FF26}\u{FF26}") == nil)
+    }
+    @Test func rejectsNonFiniteNumbers() {
+        for bad in ["rgb(nan, 0, 0)", "rgb(NaN 0 0)", "hsl(nan 50% 50%)", "rgb(0 0 0 / nan)", "rgb(1e400,0,0)", "rgb(infinity,0,0)"] {
+            #expect(p(bad) == nil, Comment(rawValue: bad))
+        }
+    }
+    @Test func rejectsHexFloatLiterals() {
+        #expect(p("rgb(0x10, 0, 0)") == nil)
+    }
+    @Test func nearOpaqueAlphaPrintsOpaque() {
+        let c = p("rgb(0 0 0 / 0.9999)")!
+        #expect(c.cssHex == "#000000")
+        #expect(c.cssRGB == "rgb(0 0 0)")
+    }
     @Test func formatting() {
         let c = p("#ff0080")!
         #expect(c.cssHex == "#ff0080")
@@ -44,7 +60,7 @@ import Testing
         #expect(p("rgb(0 0 0 / 0.3333)")!.cssRGB == "rgb(0 0 0 / 0.333)")
     }
     @Test func roundTrips() {
-        for hex in ["#000000", "#ffffff", "#ff0080", "#122436", "#204060", "#80ff00"] {
+        for hex in ["#000000", "#ffffff", "#ff0080", "#141414", "#603010", "#80ff00"] {
             let c = p(hex)!
             #expect(p(c.cssRGB)!.cssHex == hex, Comment(rawValue: hex))
             #expect(p(c.cssHSL)!.cssHex == hex, Comment(rawValue: hex))   // integer HSL loses ≤1/255; adjust expectation only if a listed colour provably cannot round-trip
