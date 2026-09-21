@@ -23,8 +23,7 @@ this section is the source of truth where it disagrees with the rest of the docu
    are allowlisted to `http`, `https`, `mailto`, and scheme-less (relative/fragment) URLs;
    anything else is emitted as plain escaped text (links) or alt text (images), so a
    `javascript:`/`data:` URL from a pasted document can't reach the pasteboard's `.html`
-   representation. Known nit: a protocol-relative `//host` URL has no `scheme` and is still
-   emitted.
+   representation. Protocol-relative `//host` URLs are rejected too (a nil scheme with a leading `//`).
 2. **No network fetch on Save.** Before the HTML → RTF conversion in `RichOutputRenderer`,
    `<img>` tags are stripped from the string handed to `NSAttributedString(html:)` — AppKit's
    HTML importer is WebKit-backed and would otherwise fetch remote images during a Save. The
@@ -46,7 +45,7 @@ this section is the source of truth where it disagrees with the rest of the docu
    downstream Markdown parsers. Headings are rendered with bold suppressed (the boldness is
    what made the paragraph a heading; re-emitting it as `**` would be noise). Table cells
    sharing a row are joined with `" | "` on one line, one line per row, with no header
-   separator; a `|` inside a cell's text is not escaped (open nit); a cell with `rowSpan`
+   separator; a `|` inside a cell's text is escaped as `\|`; multiple paragraphs in one cell are joined with a space and empty cells keep their slot; a cell with `rowSpan`
    appears only in the row it starts in (not repeated into the spanned rows).
 5. **Detection normalises line endings.** `MarkdownDetector.looksLikeMarkdown` normalises
    CRLF and bare CR to LF before scanning — Swift treats `"\r\n"` as a single `Character`, so
@@ -260,3 +259,6 @@ Pastefix/Pastefix/
   AppModel.swift                       # save path, disarm
   PanelView.swift                      # badge, tooltips
 ```
+7. **Detector regexes are bounded.** The link and inline patterns use bounded quantifiers
+   and lines longer than 4 096 characters skip the multi-character scans, so a pathological
+   64 KB line of `[` costs ~2 ms instead of ~1.6 s on the main actor.

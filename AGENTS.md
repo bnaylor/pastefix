@@ -248,6 +248,14 @@ Also caught in review on `29c1d02`: a page truncated at the byte cap mid-charact
 - **A settings value written as the wrong `defaults` type is silently ignored** (automated pass): JSON-backed settings are stored as `Data`; `defaults write -string` never reaches the app. Test hooks must write `-data <hex>`.
 - **SwiftUI `Form` puts a titled `Stepper`'s label in the leading gutter** (`73604f8`): use `HStack { Text; Spacer; Stepper("").labelsHidden() }`; and four text buttons don't fit a 460 pt settings pane — use +/− controls.
 
+*Markdown ↔ rich text (Plan 8):*
+- **Rendered HTML is an injection surface** (`385ab02`, `e2a463b`): Foundation escapes raw HTML in Markdown, but `[x](javascript:…)` and `![x](data:…)` reach `href`/`src` verbatim. Allowlist schemes (http/https/mailto/relative, not `//host`); fall back to escaped text.
+- **AppKit's HTML importer fetches remote images** (`197bfb3`): `NSAttributedString(html:)` is WebKit-backed, so converting to RTF at Save would hit any `<img src>` URL. Strip `<img>` from the conversion input; the pasteboard HTML keeps them.
+- **RTF drops `headerLevel`** (`cf781d4`): headings only survive a clipboard round trip via size/weight; measure against the dominant size of *non-bold* text or a heading-only document becomes its own baseline. WebKit writes numbered markers as `\t1\t` (no period).
+- **A list-marker stripper that accepts bare numbers eats content** (`63ce0c1`): "2024 was a year" → "was a year" on the RTFD path where markers are already gone. Strip only the tab-delimited form.
+- **`"\r\n"` is one Swift `Character`** (`cf781d4`): splitting on `"\n"` never splits CRLF text; normalise first.
+- **Unbounded regex quantifiers on user text** (`4935e9d`): `\[[^\]]+\]\([^)\s]+\)` over a 64 KB line of `[` backtracks for 1.6 s on the main actor. Bound quantifiers and cap per-line scans.
+
 ## Definition of Done
 
 Before opening or updating a PR:
