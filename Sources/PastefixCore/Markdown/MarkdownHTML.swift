@@ -126,15 +126,37 @@ public enum MarkdownHTML {
         if intents.contains(.lineBreak) { return "<br>" }
         if intents.contains(.softBreak) { return "\n" }
         if inCodeBlock { return escape(text) }
-        if let image = run.imageURL { return "<img src=\"\(attr(image.absoluteString))\" alt=\"\(attr(text))\">" }
+        if let image = run.imageURL {
+            // A rejected scheme degrades to the alt text rather than dropping the run.
+            guard isEmittableURL(image) else { return escape(text) }
+            return "<img src=\"\(attr(image.absoluteString))\" alt=\"\(attr(text))\">"
+        }
         if text.isEmpty { return "" }
         var html = escape(text)
         if intents.contains(.code) { html = "<code>\(html)</code>" }
         if intents.contains(.stronglyEmphasized) { html = "<strong>\(html)</strong>" }
         if intents.contains(.emphasized) { html = "<em>\(html)</em>" }
         if intents.contains(.strikethrough) { html = "<del>\(html)</del>" }
-        if let link = run.link { html = "<a href=\"\(attr(link.absoluteString))\">\(html)</a>" }
+        if let link = run.link, isEmittableURL(link) {
+            html = "<a href=\"\(attr(link.absoluteString))\">\(html)</a>"
+        }
         return html
+    }
+
+    /// Schemes allowed to reach an emitted `href`/`src`.
+    ///
+    /// The Markdown we render is not authored by the user — it is whatever was on the
+    /// clipboard — and the fragment leaves here as `public.html`, so a `javascript:` or
+    /// `data:` URL would be carried verbatim into any browser-based rich-text editor the
+    /// user pastes into. AppKit's own importer ignores those schemes, but the pasteboard
+    /// has other consumers. `http`/`https` matches the gate `URLFinder` and `MarkdownLink`
+    /// already apply; `mailto` is the one other scheme Markdown links legitimately use.
+    private static let emittableSchemes: Set<String> = ["http", "https", "mailto"]
+
+    /// A scheme-less URL (relative path, `#fragment`, `?query`) carries no scheme risk.
+    private static func isEmittableURL(_ url: URL) -> Bool {
+        guard let scheme = url.scheme?.lowercased() else { return true }
+        return emittableSchemes.contains(scheme)
     }
 
     static func escape(_ s: String) -> String {

@@ -46,6 +46,44 @@ import Testing
         #expect(try r("a & b <script>") == "<p>a &amp; b &lt;script&gt;</p>")
     }
 
+    @Test func softBreak() throws {
+        #expect(try r("line one\nline two") == "<p>line one\nline two</p>")
+    }
+
+    /// Destinations that must never reach an emitted `href`/`src`.
+    static let unsafeDestinations = [
+        "javascript:alert(1)",
+        "JaVaScRiPt:alert(1)",
+        "data:text/html;base64,PHNjcmlwdD4=",
+        "file:///etc/passwd",
+        "vbscript:msgbox(1)",
+    ]
+
+    @Test(arguments: unsafeDestinations)
+    func linkSchemeAllowlist(_ destination: String) throws {
+        let out = try r("[a & <b>](\(destination))")
+        #expect(!out.contains("<a"))
+        #expect(out == "<p>a &amp; &lt;b&gt;</p>")
+    }
+
+    @Test(arguments: unsafeDestinations)
+    func imageSchemeAllowlist(_ destination: String) throws {
+        let out = try r("![a & <b>](\(destination))")
+        #expect(!out.contains("<img"))
+        #expect(out == "<p>a &amp; &lt;b&gt;</p>")
+    }
+
+    @Test func referenceDefinitionSchemeAllowlist() throws {
+        #expect(try r("[a][1]\n\n[1]: javascript:alert(2)") == "<p>a</p>")
+    }
+
+    @Test func allowedSchemesSurvive() throws {
+        #expect(try r("[a](mailto:x@y.z)") == "<p><a href=\"mailto:x@y.z\">a</a></p>")
+        #expect(try r("[a](/relative/path)") == "<p><a href=\"/relative/path\">a</a></p>")
+        #expect(try r("[a](#frag)") == "<p><a href=\"#frag\">a</a></p>")
+        #expect(try r("[a](HTTPS://X.Y)") == "<p><a href=\"HTTPS://X.Y\">a</a></p>")
+    }
+
     @Test func partiallyMalformedStillRenders() throws {
         let out = try r("# ok\n\n[unclosed link(\n\n**bold")
         #expect(out.hasPrefix("<h1>ok</h1>") && out.contains("<p>"))
