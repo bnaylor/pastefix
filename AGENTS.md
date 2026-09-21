@@ -133,7 +133,7 @@ Pastefix/                             # the Xcode app (KeyboardShortcuts + Spark
     AppModel.swift                    # @MainActor ObservableObject: registry+document+clipboard+history; load(_:)/copyBack(_:), historyOverlayRequested
     HotkeyName.swift                  # KeyboardShortcuts recorder + display helper; summonPastefix (⌘⇧C) + summonHistory (⌘⇧V)
     FrontmostAppTracker.swift         # @MainActor tracker fed by NSWorkspace.didActivateApplicationNotification; context(window:) -> CaptureContext (source app determined before the read, Critical Invariant 12)
-    SettingsView.swift                # SwiftUI Settings window (General/Privacy/Snippets/Shortcut/Transforms tabs); Privacy has the History section (moved from General) + Excluded Apps list + two-option Clear dialog, Snippets has Accessibility status + per-pin title/recorder/Unpin rows (shortcutValidation blocks duplicate combos), Shortcut a second recorder
+    SettingsView.swift                # SwiftUI Settings window (General/Privacy/Snippets/Shortcut/Transforms tabs); Privacy has the History section (moved from General) + Excluded Apps list + two-option Clear dialog, Snippets has Accessibility status + per-pin title/recorder/Unpin rows (shortcutValidation blocks combos already bound to another snippet or to the summon shortcuts, and the Shortcut tab validates against snippets in turn), Shortcut a second recorder
     ClipboardBridge.swift             # NSPasteboard <-> ClipboardSnapshot; write(text:richRTFD:imagePNG:) for multi-representation copy-back
     PanelController.swift             # floating resizable NSPanel host (+ sidebar-driven resize, sidebar-aware minSize)
     PanelMetrics.swift                # panel/sidebar/palette sizes shared by SwiftUI and AppKit
@@ -258,6 +258,17 @@ Also caught in review on `29c1d02`: a page truncated at the byte cap mid-charact
 - **A list-marker stripper that accepts bare numbers eats content** (`63ce0c1`): "2024 was a year" → "was a year" on the RTFD path where markers are already gone. Strip only the tab-delimited form.
 - **`"\r\n"` is one Swift `Character`** (`cf781d4`): splitting on `"\n"` never splits CRLF text; normalise first.
 - **Unbounded regex quantifiers on user text** (`4935e9d`): `\[[^\]]+\]\([^)\s]+\)` over a 64 KB line of `[` backtracks for 1.6 s on the main actor. Bound quantifiers and cap per-line scans.
+
+*Pinned snippets (Plan 9) — posting ⌘V into other apps is the riskiest thing the app does; almost every finding was about doing it *only* when safe:*
+- **Held hotkey modifiers combine with a posted ⌘V** (`db7e783`): `onKeyUp` fires while ⌃⌥⇧ are still down and a combined-state event source merges live hardware modifiers, so a snippet hotkey could paste as ⌥⌘V (Finder: Move Items Here). Build from `.privateState`, Command only, and wait for modifiers to release.
+- **`deviceIndependentFlagsMask` includes Caps Lock** (`6428d9b`): waiting on it meant no hotkey ever pasted with Caps Lock on. Wait on shift/control/option/command only.
+- **Never post blind** (`db7e783`, `1579f92`): nil/terminated targets, refused activation, Pastefix as target, or a key Pastefix window (the non-activating panel holds key focus while inactive) all mean copy-only. Verify the frontmost pid in the same loop that waits for modifiers.
+- **Activate the target before hiding the panel** (`6428d9b`): cooperative activation is only granted while we are the active app; hiding first turns ⇧↵ into copy-only.
+- **`paste(text: "")` for an image row deletes the target's selection** (`1579f92`): every paste path must check `hasText`; images copy back instead.
+- **Hard-coded key code 9 is only "v" on QWERTY** (`1579f92`): on Dvorak it is ⌘K. Resolve the key code against the current layout.
+- **Unpin at the cap was a delete** (`fd9ffac`): an unpinned item kept its old `capturedAt` and was the next eviction victim. Unpinning re-inserts it as newest.
+- **Ad-hoc Debug signatures lose TCC grants on every rebuild** (controller pass): Accessibility trust keys on the designated requirement, which for ad-hoc is the cdhash. Re-sign the Debug app with the Developer ID identity before permission-dependent tests.
+- **KeyboardShortcuts names must not contain dots** (`1b11b99`) and `removeHandler(for:)` exists — don't work around a limitation the library doesn't have.
 
 ## Definition of Done
 

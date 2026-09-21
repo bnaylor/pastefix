@@ -440,7 +440,8 @@ struct HistoryOverlayView: View {
         // so a handful of screenshot pins can starve history. The UI is the gate — `HistoryStore`
         // stays policy-free. An image pinned before this guard existed is unpinnable from
         // Settings → Snippets.
-        guard item.hasText else { NSSound.beep(); return }
+        // Images can't become pins (spec), but an existing image pin must still be un-pinnable here.
+        guard item.hasText || item.pinned else { NSSound.beep(); return }
         model.togglePin(item)
         refreshResults()
         selection = results.firstIndex { $0.item.id == item.id } ?? clampedSelection(in: results)
