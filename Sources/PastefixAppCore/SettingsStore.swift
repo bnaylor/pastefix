@@ -13,6 +13,14 @@ public final class SettingsStore: ObservableObject {
     @Published public var scriptsDirectoryPath: String { didSet { defaults.set(scriptsDirectoryPath, forKey: Key.scriptsDir) } }
     @Published public var transformEnabled: [String: Bool] { didSet { Self.writeJSON(transformEnabled, to: defaults, key: Key.enabled) } }
     @Published public var transformOrder: [String: Int] { didSet { Self.writeJSON(transformOrder, to: defaults, key: Key.order) } }
+    @Published public var historyEnabled: Bool { didSet { defaults.set(historyEnabled, forKey: Key.historyEnabled) } }
+    @Published public var historyMaxItems: Int {
+        didSet {
+            let clamped = min(max(historyMaxItems, 20), 1000)
+            if clamped != historyMaxItems { historyMaxItems = clamped; return }
+            defaults.set(historyMaxItems, forKey: Key.historyMaxItems)
+        }
+    }
 
     public init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -22,6 +30,8 @@ public final class SettingsStore: ObservableObject {
         self.scriptsDirectoryPath = (defaults.string(forKey: Key.scriptsDir)) ?? Self.defaultScriptsPath
         self.transformEnabled = Self.readJSON([String: Bool].self, from: defaults, key: Key.enabled) ?? [:]
         self.transformOrder = Self.readJSON([String: Int].self, from: defaults, key: Key.order) ?? [:]
+        self.historyEnabled = (defaults.object(forKey: Key.historyEnabled) as? Bool) ?? true
+        self.historyMaxItems = min(max((defaults.object(forKey: Key.historyMaxItems) as? Int) ?? 200, 20), 1000)
     }
 
     public var scriptsDirectoryURL: URL {
@@ -45,6 +55,8 @@ public final class SettingsStore: ObservableObject {
         static let scriptsDir = "pastefix.scriptsDirectoryPath"
         static let enabled = "pastefix.transformEnabled"
         static let order = "pastefix.transformOrder"
+        static let historyEnabled = "pastefix.historyEnabled"
+        static let historyMaxItems = "pastefix.historyMaxItems"
     }
 
     private static func writeJSON<T: Encodable>(_ value: T, to defaults: UserDefaults, key: String) {

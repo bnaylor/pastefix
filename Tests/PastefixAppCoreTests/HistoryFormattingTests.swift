@@ -12,6 +12,10 @@ import Foundation
         let p = HistoryFormatting.previewText(for: item)
         #expect(p.count == 160 && p.hasSuffix("…"))
     }
+    @Test func previewKeepsExactly160Chars() {
+        let s = String(repeating: "b", count: 160)
+        #expect(HistoryFormatting.previewText(for: HistoryItem(plainText: s)) == s)
+    }
     @Test func previewForImage() {
         #expect(HistoryFormatting.previewText(for: HistoryItem(imageFile: "x.png", imagePixelWidth: 1280, imagePixelHeight: 800)) == "Image 1280×800")
         #expect(HistoryFormatting.previewText(for: HistoryItem(imageFile: "x.png")) == "Image")

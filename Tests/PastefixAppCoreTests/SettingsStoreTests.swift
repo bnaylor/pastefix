@@ -93,4 +93,16 @@ import Foundation
             #expect(SettingsStore(defaults: d).showSidebar == true)
         }
     }
+
+    @Test func historyKeysDefaultAndClamp() {
+        withFreshDefaults { d in
+            let s = SettingsStore(defaults: d)
+            #expect(s.historyEnabled == true && s.historyMaxItems == 200)
+            s.historyMaxItems = 5;    #expect(s.historyMaxItems == 20)
+            s.historyMaxItems = 5000; #expect(s.historyMaxItems == 1000)
+            s.historyEnabled = false
+            let s2 = SettingsStore(defaults: d)
+            #expect(s2.historyEnabled == false && s2.historyMaxItems == 1000)
+        }
+    }
 }

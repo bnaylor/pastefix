@@ -9,7 +9,7 @@ public enum HistoryFormatting {
                 .filter { !$0.isEmpty }
             var out = lines.prefix(2).joined(separator: "\n")
             var cut = lines.count > 2
-            if out.count > 159 { out = String(out.prefix(159)); cut = true }
+            if out.count > 160 { out = String(out.prefix(159)); cut = true }
             return cut ? out + "…" : out
         }
         if let w = item.imagePixelWidth, let h = item.imagePixelHeight { return "Image \(w)×\(h)" }
