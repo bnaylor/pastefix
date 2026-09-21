@@ -72,6 +72,12 @@ final class AppModel: ObservableObject {
         return ContentKind.allCases.filter(kinds.contains).map(\.displayName).joined(separator: ", ")
     }
 
+    /// The parsed colour when the buffer is a colour literal; drives the action-bar swatch.
+    var detectedColor: ColorLiteral? {
+        guard let document, document.detectedKinds.contains(.color) else { return nil }
+        return ColorLiteral.parse(document.working)
+    }
+
     func apply(_ transformer: any Transformer) {
         guard let current = document, !isApplying else { return }
         isApplying = true
