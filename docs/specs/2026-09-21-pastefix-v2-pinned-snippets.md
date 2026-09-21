@@ -19,11 +19,13 @@ The plan below was written before implementation; these are where the shipped co
 
 1. **Shortcut names use a hyphen, not a dot.** `KeyboardShortcuts` rejects names containing
    `.` (`isValidShortcutName`), so the per-pin name is `snippet-<uuid>`, not `snippet.<uuid>`.
-   Unpinning calls `KeyboardShortcuts.reset(name)` *then* `removeHandler(for: name)` — reset
-   first, so a re-pinned item starts with no recorded shortcut rather than inheriting the old
-   binding. `SnippetRow`'s `KeyboardShortcuts.Recorder` uses `.shortcutValidation` to refuse a
-   combo already bound to another pinned snippet (the library only checks against menu items
-   and system shortcuts, not sibling recorders).
+   Unpinning is reversible: it removes the handler but keeps the recorded shortcut and the
+   title, so ⌘P twice is a no-op and a re-pin of the same item gets its shortcut back. A
+   shortcut is `reset` only when the item leaves the store entirely (evicted, removed,
+   cleared); a sweep at every sync also resets combos whose item no longer exists — except
+   after a quarantined index load, when the store cannot see its items. `SnippetRow`'s
+   `KeyboardShortcuts.Recorder` uses `.shortcutValidation` to refuse a combo already bound to
+   another pinned snippet or to the summon shortcuts; the Shortcut tab validates the other way.
 2. **`unpin` gives the item a fresh `capturedAt` and reinserts it at the top of `items`**,
    rather than restoring its original capture position, and then re-applies `enforceLimits()`.
    Unpinning a long-lived pin therefore always rejoins history as the newest item — it is never
@@ -36,15 +38,15 @@ The plan below was written before implementation; these are where the shipped co
    writes the clipboard and requests activation synchronously, then polls every 20ms (up to a
    1s deadline) for two conditions to hold together — no blocking modifier
    (shift/control/option/command) is physically down, and the target process is really
-   frontmost — before posting ⌘V exactly once. Caps Lock is deliberately excluded from the
+   frontmost (asked of Accessibility's focused-application attribute, which answers synchronously, with `NSWorkspace` as fallback; this narrows the check-to-post window, it cannot close it) — and no Pastefix window is key — before posting ⌘V exactly once. Caps Lock is deliberately excluded from the
    watched modifiers (it latches and would never clear). A timeout posts nothing; the clipboard
    already has the snippet. The event is built from a `.privateState` `CGEventSource` (not
    `.combinedSessionState`, which would merge in live hardware modifiers) carrying only
    `.maskCommand`. A newer `paste` call bumps a generation counter that supersedes any older
    pending post. The target is refused (copy-only, nothing posted) when it is `nil`,
-   terminated, Pastefix itself, or its activation request is refused. The hotkey path
-   (`SnippetHotkeys`) beeps on a copy-only outcome, since it has no UI to report through; the
-   overlay path (`pasteIntoPreviousApp`) is silent because the panel is visible feedback enough.
+   terminated, Pastefix itself, or its activation request is refused. Both the hotkey path and the overlay's ⇧↵ beep when a paste gives up or is refused. Any
+   clipboard write from the app (Save, copy-back, palette) supersedes a pending paste. If the
+   layout's key code for "v" cannot be resolved, nothing is posted (never a cached guess).
 5. **`pasteIntoPreviousApp` posts the paste (and activates the target) *before* calling
    `endSession()` to hide the panel** — not after. Activation has to be requested while Pastefix
    is still the active app so it can hand off cooperatively; requesting it after hiding asks for
