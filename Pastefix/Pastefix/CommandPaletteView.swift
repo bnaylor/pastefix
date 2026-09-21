@@ -46,7 +46,7 @@ struct CommandPaletteView: View {
                     .textFieldStyle(.plain)
                     .font(.title3)
                     .focused($fieldFocused)
-                    .onSubmit { apply(items, selected) }
+                    .onSubmit { applyCurrentSelection() }
                     .onChange(of: query) { _, _ in selection = 0 }
             }
             .padding(12)
@@ -91,8 +91,8 @@ struct CommandPaletteView: View {
         }
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
         .shadow(radius: 20)
-        .onKeyPress(.upArrow) { move(-1, count: items.count); return .handled }
-        .onKeyPress(.downArrow) { move(+1, count: items.count); return .handled }
+        .onKeyPress(.upArrow) { move(-1, count: results.count); return .handled }
+        .onKeyPress(.downArrow) { move(+1, count: results.count); return .handled }
         // Cancel's `.cancelAction` already closes the palette first; this is a harmless
         // duplicate that keeps Esc working even if that button is ever disabled or removed.
         .onKeyPress(.escape) { onClose(); return .handled }
@@ -129,6 +129,19 @@ struct CommandPaletteView: View {
             text[lower..<upper].foregroundColor = .accentColor
         }
         return text
+    }
+
+    /// Index the list is actually highlighting: `selection` clamped to the live result count.
+    private func clampedSelection(in items: [SearchResult]) -> Int {
+        items.isEmpty ? 0 : min(selection, items.count - 1)
+    }
+
+    /// Applies whatever is highlighted *now*. Handlers must call this rather than capture an
+    /// index: SwiftUI reuses the underlying NSTextField's submit action across re-renders, so a
+    /// value captured at render time can be stale by the time Return is pressed.
+    private func applyCurrentSelection() {
+        let items = results
+        apply(items, clampedSelection(in: items))
     }
 
     private func move(_ delta: Int, count: Int) {
