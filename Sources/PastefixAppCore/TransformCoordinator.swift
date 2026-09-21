@@ -44,6 +44,7 @@ public enum TransformCoordinator {
             let detail = stderr.trimmingCharacters(in: .whitespacesAndNewlines)
             return detail.isEmpty ? "Script failed (exit \(code))." : "Script failed (exit \(code)): \(detail)"
         case .scriptFailed(let msg): return "Script error: \(msg)"
+        case .invalidInput(let msg): return msg
         }
     }
 }

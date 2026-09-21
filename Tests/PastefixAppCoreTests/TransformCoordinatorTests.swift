@@ -91,4 +91,14 @@ private struct FakeTransformer: Transformer {
         let (_, outcome) = await TransformCoordinator.apply(t, to: doc("hi"))
         #expect(outcome == .failed("Script failed (exit 1)."))
     }
+
+    @Test func invalidInputLeavesDocumentAndReportsMessage() async {
+        let t = FakeTransformer(id: "bad", name: "Bad", requiresRichInput: false) { _ in
+            throw TransformError.invalidInput("Not valid Base64 text")
+        }
+        let (updated, outcome) = await TransformCoordinator.apply(t, to: doc("hi"))
+        #expect(outcome == .failed("Not valid Base64 text"))
+        #expect(updated.working == "hi")
+        #expect(updated.canUndo == false)
+    }
 }

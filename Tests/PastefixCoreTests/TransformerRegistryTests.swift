@@ -72,7 +72,7 @@ import Foundation
         #expect(byID["builtin.urlclean"] == TransformCategory.urls)
         #expect(byID["builtin.markdownlink"] == TransformCategory.urls)
         for style in ["camel", "snake", "kebab", "constant"] { #expect(byID["builtin.case.\(style)"] == TransformCategory.case) }
-        #expect(TransformCategory.builtinOrder == ["Layout", "Characters", "URLs", "Case"])
+        #expect(TransformCategory.builtinOrder == ["Layout", "Characters", "URLs", "Case", "Data", "Colors"])
     }
 
     @Test func scriptCategorySurfaces() throws {
