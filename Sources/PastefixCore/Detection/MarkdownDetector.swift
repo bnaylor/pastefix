@@ -10,8 +10,16 @@ public enum MarkdownDetector {
     private static let list = try! NSRegularExpression(pattern: #"^\s{0,3}([-*+]|\d+[.)]) \S"#)
     private static let quote = try! NSRegularExpression(pattern: #"^> "#)
     private static let table = try! NSRegularExpression(pattern: #"^\|.+\|\s*$"#)
-    private static let link = try! NSRegularExpression(pattern: #"\[[^\]]+\]\([^)\s]+\)"#)
-    private static let inline = try! NSRegularExpression(pattern: #"(\*\*|__)\S.*?\S(\*\*|__)|`[^`\n]+`"#)
+    // Quantifiers are bounded ({1,300} / {1,1000}) so a line with many unclosed
+    // "[" can't force quadratic backtracking (unbounded "+" tries a full-length
+    // scan from every "[").
+    private static let link = try! NSRegularExpression(pattern: #"\[[^\]]{1,300}\]\([^)\s]{1,1000}\)"#)
+    private static let inline = try! NSRegularExpression(pattern: #"(\*\*|__)\S.{0,300}?\S(\*\*|__)|`[^`\n]+`"#)
+    // Lines longer than this skip the link/inline scans below (still O(line) each,
+    // but not worth paying even that on a pathological single giant line); the
+    // anchored single-shot patterns above (heading/fence/list/quote/table) stay
+    // linear regardless of length, so they still run.
+    private static let maxScannedLineLength = 4_096
 
     public static func looksLikeMarkdown(_ text: String) -> Bool {
         var head = text
@@ -28,8 +36,10 @@ public enum MarkdownDetector {
             if list.firstMatch(in: line, range: r) != nil { signals.insert("list") }
             if quote.firstMatch(in: line, range: r) != nil { signals.insert("quote") }
             if table.firstMatch(in: line, range: r) != nil { signals.insert("table") }
-            if link.firstMatch(in: line, range: r) != nil { signals.insert("link") }
-            if inline.firstMatch(in: line, range: r) != nil { signals.insert("inline") }
+            if line.utf16.count <= maxScannedLineLength {
+                if link.firstMatch(in: line, range: r) != nil { signals.insert("link") }
+                if inline.firstMatch(in: line, range: r) != nil { signals.insert("inline") }
+            }
             if signals.count >= 2 { return true }
         }
         return false

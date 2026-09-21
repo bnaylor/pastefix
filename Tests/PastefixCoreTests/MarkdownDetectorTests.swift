@@ -20,4 +20,16 @@ import Testing
         let big = String(repeating: "plain line\n", count: 100_000) + "# heading far below the cap\n"
         #expect(!MarkdownDetector.looksLikeMarkdown(big))   // heading is beyond 64 KB / 400 lines
     }
+
+    @Test func unclosedBracketLineDoesNotBacktrackQuadratically() {
+        // A single 64 KB line of unclosed "[" defeats the unbounded link/inline
+        // quantifiers via O(n^2) backtracking unless both are bounded and the
+        // per-line scan cap skips them outright on a line this long.
+        let big = String(repeating: "[", count: 65_536) + "(x)"
+        let clock = ContinuousClock()
+        var result = false
+        let elapsed = clock.measure { result = MarkdownDetector.looksLikeMarkdown(big) }
+        #expect(!result)
+        #expect(elapsed < .milliseconds(100))
+    }
 }
