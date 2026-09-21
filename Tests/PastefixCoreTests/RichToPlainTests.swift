@@ -29,6 +29,6 @@ import AppKit
 
     @Test func metadata() {
         #expect(subject.requiresRichInput == true)
-        #expect(subject.category == TransformCategory.characters)
+        #expect(subject.category == TransformCategory.richText)
     }
 }

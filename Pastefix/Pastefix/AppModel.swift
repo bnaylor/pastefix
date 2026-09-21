@@ -133,8 +133,32 @@ final class AppModel: ObservableObject {
     }
 
     func save() {
-        if let text = document?.working { ClipboardBridge.writePlain(text) }
+        guard let doc = document else { endSession(); return }
+        if doc.outputMode == .renderedMarkdown {
+            do {
+                let rich = try RichOutputRenderer.render(markdown: doc.working)
+                ClipboardBridge.writeRich(text: doc.working, html: rich.html, rtf: rich.rtf)
+            } catch {
+                // Keep the session open and the mode armed: the user can read the error and
+                // either fix the Markdown or disarm the badge and save plain text instead.
+                errorMessage = "Couldn't render Markdown: \(error.localizedDescription)"
+                return
+            }
+        } else {
+            ClipboardBridge.writePlain(doc.working)
+        }
         endSession()
+    }
+
+    /// True while Save would write HTML + RTF; drives the action-bar badge and the Save tooltip.
+    var isRichOutputArmed: Bool { document?.outputMode == .renderedMarkdown }
+
+    /// Back to a plain-text Save. `document` is `private(set)`, so mutate a copy and reassign
+    /// to publish the change.
+    func disarmRichOutput() {
+        guard var doc = document else { return }
+        doc.outputMode = .plain
+        document = doc
     }
 
     func cancel() { endSession() }

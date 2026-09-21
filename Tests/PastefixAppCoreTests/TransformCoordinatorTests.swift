@@ -12,6 +12,24 @@ private struct FakeTransformer: Transformer {
     func apply(_ input: TransformInput) async throws -> String { try await behavior(input) }
 }
 
+private struct Arming: OutputModeTransformer {
+    let id = "t.arm"
+    let name = "Arm"
+    let requiresRichInput = false
+    let source = TransformerSource.builtin
+    let outputMode = OutputMode.renderedMarkdown
+    func apply(_ i: TransformInput) async throws -> String { i.text }
+}
+
+private struct FailingArming: OutputModeTransformer {
+    let id = "t.fail"
+    let name = "Fail"
+    let requiresRichInput = false
+    let source = TransformerSource.builtin
+    let outputMode = OutputMode.renderedMarkdown
+    func apply(_ i: TransformInput) async throws -> String { throw TransformError.invalidInput("no") }
+}
+
 @Suite struct TransformCoordinatorTests {
     private func doc(_ text: String, rich: Bool = false) -> PasteDocument {
         PasteDocument(origin: ClipboardSnapshot(plainText: text, richRTFD: rich ? Data([1]) : nil))
@@ -100,5 +118,17 @@ private struct FakeTransformer: Transformer {
         #expect(outcome == .failed("Not valid Base64 text"))
         #expect(updated.working == "hi")
         #expect(updated.canUndo == false)
+    }
+
+    @Test func armingTransformAppliesWithoutTextChange() async {
+        let doc = PasteDocument(origin: ClipboardSnapshot(plainText: "# x", richRTFD: nil))
+        let (out, outcome) = await TransformCoordinator.apply(Arming(), to: doc)
+        #expect(outcome == .applied && out.outputMode == .renderedMarkdown && out.working == "# x" && !out.canUndo)
+    }
+
+    @Test func failingArmingLeavesModePlain() async {
+        let doc = PasteDocument(origin: ClipboardSnapshot(plainText: "# x", richRTFD: nil))
+        let (out, outcome) = await TransformCoordinator.apply(FailingArming(), to: doc)
+        #expect(out.outputMode == .plain); if case .failed = outcome {} else { Issue.record("expected failure") }
     }
 }

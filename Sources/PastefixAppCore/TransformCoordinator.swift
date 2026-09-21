@@ -21,7 +21,8 @@ public enum TransformCoordinator {
         let input = TransformInput(text: doc.working, richRTFD: doc.origin.richRTFD)
         do {
             let result = try await transformer.apply(input)
-            if result == doc.working { return (doc, .unchanged) }
+            if let arming = transformer as? OutputModeTransformer { doc.outputMode = arming.outputMode }
+            if result == doc.working { return (doc, transformer is OutputModeTransformer ? .applied : .unchanged) }
             doc.pushState(result)
             return (doc, .applied)
         } catch let error as TransformError {

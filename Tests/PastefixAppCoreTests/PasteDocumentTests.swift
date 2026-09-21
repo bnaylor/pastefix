@@ -81,4 +81,13 @@ import PastefixCore
         d.refresh(origin: ClipboardSnapshot(plainText: "www.example.com", richRTFD: nil))
         #expect(d.detectedKinds == [.url])
     }
+
+    @Test func outputModeDefaultsSurvivesPushResetsOnRefresh() {
+        var d = PasteDocument(origin: ClipboardSnapshot(plainText: "a", richRTFD: nil))
+        #expect(d.outputMode == .plain)
+        d.outputMode = .renderedMarkdown; d.pushState("b")
+        #expect(d.outputMode == .renderedMarkdown)
+        d.refresh(origin: ClipboardSnapshot(plainText: "c", richRTFD: nil))
+        #expect(d.outputMode == .plain)
+    }
 }

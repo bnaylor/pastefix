@@ -15,7 +15,8 @@ import Foundation
         let reg = TransformerRegistry(config: .init(scriptsDirectory: dir, wrapWidth: 400))
         let ids = reg.load().map(\.id)
         #expect(ids == [
-            "builtin.richtoplain", "builtin.transliterate", "builtin.wrapreflow", "builtin.whitespace",
+            "builtin.richtoplain", "builtin.richtomarkdown", "builtin.markdowntorich",
+            "builtin.transliterate", "builtin.wrapreflow", "builtin.whitespace",
             "builtin.urlclean", "builtin.markdownlink",
             "builtin.case.camel", "builtin.case.snake", "builtin.case.kebab", "builtin.case.constant",
             "builtin.json.pretty", "builtin.json.minify", "builtin.json.escape",
@@ -51,7 +52,7 @@ import Foundation
         let dir = FileManager.default.temporaryDirectory
             .appendingPathComponent("does-not-exist-\(UUID().uuidString)")
         let reg = TransformerRegistry(config: .init(scriptsDirectory: dir, wrapWidth: 80))
-        #expect(reg.load().count == 24)   // built-ins only, no crash
+        #expect(reg.load().count == 26)   // built-ins only, no crash
     }
 
     @Test func scriptKindsSurfaceAsApplicableKinds() throws {
@@ -71,7 +72,9 @@ import Foundation
         let byID = Dictionary(uniqueKeysWithValues: TransformerRegistry(config: .init(scriptsDirectory: dir, wrapWidth: 80)).load().map { ($0.id, $0.category) })
         #expect(byID["builtin.wrapreflow"] == TransformCategory.layout)
         #expect(byID["builtin.whitespace"] == TransformCategory.layout)
-        #expect(byID["builtin.richtoplain"] == TransformCategory.characters)
+        #expect(byID["builtin.richtoplain"] == TransformCategory.richText)
+        #expect(byID["builtin.richtomarkdown"] == TransformCategory.richText)
+        #expect(byID["builtin.markdowntorich"] == TransformCategory.richText)
         #expect(byID["builtin.transliterate"] == TransformCategory.characters)
         #expect(byID["builtin.urlclean"] == TransformCategory.urls)
         #expect(byID["builtin.markdownlink"] == TransformCategory.urls)
@@ -84,7 +87,12 @@ import Foundation
         for id in dataIDs { #expect(byID[id] == TransformCategory.data) }
         let colorIDs = ["builtin.color.hex", "builtin.color.rgb", "builtin.color.hsl", "builtin.color.swift"]
         for id in colorIDs { #expect(byID[id] == TransformCategory.colors) }
-        #expect(TransformCategory.builtinOrder == ["Layout", "Characters", "URLs", "Case", "Data", "Colors"])
+        #expect(TransformCategory.builtinOrder == ["Layout", "Rich Text", "Characters", "URLs", "Case", "Data", "Colors"])
+    }
+
+    @Test func richTextTransformsRegisteredInOrder() {
+        let ids = TransformerRegistry(config: .init(scriptsDirectory: URL(fileURLWithPath: "/nonexistent"), wrapWidth: 80)).load().map(\.id)
+        #expect(ids.prefix(3) == ["builtin.richtoplain", "builtin.richtomarkdown", "builtin.markdowntorich"])
     }
 
     @Test func scriptCategorySurfaces() throws {

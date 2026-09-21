@@ -1,9 +1,9 @@
 import Foundation
 import AppKit
 
-public struct RichToPlain: Transformer {
-    public let id = "builtin.richtoplain"
-    public let name = "Rich → Plain Text"
+public struct RichToMarkdown: Transformer {
+    public let id = "builtin.richtomarkdown"
+    public let name = "Rich → Markdown"
     public let requiresRichInput = true
     public let source: TransformerSource = .builtin
     public let category: String? = TransformCategory.richText
@@ -14,11 +14,6 @@ public struct RichToPlain: Transformer {
         guard let data = input.richRTFD else {
             throw TransformError.richInputUnavailable
         }
-        let attributed = try NSAttributedString(
-            data: data,
-            options: [.documentType: NSAttributedString.DocumentType.rtfd],
-            documentAttributes: nil
-        )
-        return attributed.string
+        return try MarkdownFromRich.convert(rtfd: data)
     }
 }

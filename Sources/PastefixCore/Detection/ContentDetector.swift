@@ -20,6 +20,7 @@ public enum ContentDetector {
         else if Base64Codec.looksLikeBase64(trimmed) { kinds.insert(.base64) }
         if percentRegex.firstMatch(in: trimmed, range: NSRange(location: 0, length: (trimmed as NSString).length)) != nil { kinds.insert(.percentEncoded) }
         if entityRegex.firstMatch(in: trimmed, range: NSRange(location: 0, length: (trimmed as NSString).length)) != nil { kinds.insert(.htmlEntities) }
+        if MarkdownDetector.looksLikeMarkdown(text) { kinds.insert(.markdown) }
         return kinds
     }
 

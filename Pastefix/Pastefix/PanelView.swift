@@ -125,6 +125,9 @@ struct PanelView: View {
             Button("Save") { model.save() }
                 .keyboardShortcut("s", modifiers: .command)
                 .disabled(model.isApplying)
+                .help(model.isRichOutputArmed
+                      ? "Save as formatted text + Markdown source (⌘S)"
+                      : "Save to clipboard (⌘S)")
         }
         .padding(8)
     }
@@ -167,6 +170,19 @@ struct PanelView: View {
                     .lineLimit(1)
                     .foregroundStyle(.secondary)
                     .accessibilityLabel("Detected content: \(summary)")
+            }
+            // Only while a Markdown render is armed. Clicking it is the disarm affordance —
+            // the same capsule tells you what ⌘S will do and how to take it back.
+            if model.isRichOutputArmed {
+                Button { model.disarmRichOutput() } label: {
+                    Label("Rich text on save", systemImage: "textformat")
+                        .font(.caption)
+                        .padding(.horizontal, 8).padding(.vertical, 3)
+                        .background(Color.accentColor.opacity(0.15), in: Capsule())
+                }
+                .buttonStyle(.plain)
+                .help("⌘S will paste as formatted text (HTML + RTF); plain-text targets get the Markdown source. Click to save plain text only.")
+                .accessibilityLabel("Rich text on save; click to disarm")
             }
             if model.isApplying {
                 ProgressView()
