@@ -136,9 +136,9 @@ struct CommandPaletteView: View {
         items.isEmpty ? 0 : min(selection, items.count - 1)
     }
 
-    /// Applies whatever is highlighted *now*. Handlers must call this rather than capture an
-    /// index: SwiftUI reuses the underlying NSTextField's submit action across re-renders, so a
-    /// value captured at render time can be stale by the time Return is pressed.
+    /// Applies whatever is highlighted *now*. A retained handler must not close over render-time
+    /// locals; read `@State` (which resolves through its storage box and is always current) at
+    /// call time. Return applied the first result after arrowing until this was fixed.
     private func applyCurrentSelection() {
         let items = results
         apply(items, clampedSelection(in: items))

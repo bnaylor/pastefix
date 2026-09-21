@@ -73,6 +73,9 @@ final class AppModel: ObservableObject {
     }
 
     /// The parsed colour when the buffer is a colour literal; drives the action-bar swatch.
+    /// This re-parses live while `detectedKinds` stays frozen during a manual edit, so the swatch
+    /// can disappear a keystroke before the badge does — intentional: the swatch must never show a
+    /// colour the buffer no longer parses as.
     var detectedColor: ColorLiteral? {
         guard let document, document.detectedKinds.contains(.color) else { return nil }
         return ColorLiteral.parse(document.working)
