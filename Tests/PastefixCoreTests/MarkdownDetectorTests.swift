@@ -16,6 +16,16 @@ import Testing
     ])
     func negatives(_ s: String) { #expect(!MarkdownDetector.looksLikeMarkdown(s)) }
 
+    @Test func shebangSuppressesDetection() {
+        // A script's `# comment` lines look like ATX headings; the shebang says otherwise.
+        #expect(!MarkdownDetector.looksLikeMarkdown("#!/bin/sh\n# install deps\nset -e\n- not a list either"))
+        #expect(!MarkdownDetector.looksLikeMarkdown("\n  #!/usr/bin/env python3\n# Title\n"))
+        // Without the shebang the same comment line still counts as a heading (documented limit).
+        #expect(MarkdownDetector.looksLikeMarkdown("# install deps\nset -e"))
+        // A shebang later in the text is just a line.
+        #expect(MarkdownDetector.looksLikeMarkdown("# Notes\n\n#!/bin/sh is how scripts start"))
+    }
+
     @Test func scanIsBounded() {
         let big = String(repeating: "plain line\n", count: 100_000) + "# heading far below the cap\n"
         #expect(!MarkdownDetector.looksLikeMarkdown(big))   // heading is beyond 64 KB / 400 lines

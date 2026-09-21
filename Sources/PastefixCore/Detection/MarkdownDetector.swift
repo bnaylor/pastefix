@@ -27,6 +27,9 @@ public enum MarkdownDetector {
         // Swift treats "\r\n" as a single Character, so splitting on "\n" alone never
         // breaks CRLF text into lines and every signal past the first is missed.
         head = head.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
+        // A shebang is as unambiguous a "this is a script" signal as exists: scripts are pasted
+        // often and their `# comment` lines would otherwise satisfy the one-signal heading rule.
+        if head.drop(while: { $0.isWhitespace }).hasPrefix("#!") { return false }
         var signals: Set<String> = []
         for (i, lineSub) in head.split(separator: "\n", omittingEmptySubsequences: false).enumerated() {
             if i >= maxLines { break }

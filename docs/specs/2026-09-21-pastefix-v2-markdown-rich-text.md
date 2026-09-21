@@ -56,6 +56,11 @@ this section is the source of truth where it disagrees with the rest of the docu
    input is near-unreachable by design — this is a defensive throw, not a path ordinary
    Markdown exercises.
 
+8. **Shebang short-circuit.** If the first non-blank line starts with `#!`, the text is a
+   script, not Markdown: detection returns false without scanning, so a script's `# comment`
+   lines can't satisfy the one-signal heading rule. Comment-heavy scripts pasted without their
+   shebang still detect (documented limit; revisit if it bites in practice).
+
 ## Scope
 
 **In scope:**
