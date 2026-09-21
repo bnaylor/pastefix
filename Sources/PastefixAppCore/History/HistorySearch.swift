@@ -17,7 +17,10 @@ public enum HistorySearch {
         let qChars = Array(q)
         var hits: [(HistorySearchResult, Int)] = []
         for (index, item) in items.enumerated() {
-            guard let (tier, _) = FuzzyMatch.match(qChars, in: haystack(for: item)) else { continue }
+            // Rank with the fold-once `tier`: the haystack is up to 2 KB per item and this runs
+            // for every item on every keystroke. `match` is paid only for the ranges, and only
+            // over the preview (<= 160 characters).
+            guard let tier = FuzzyMatch.tier(qChars, in: haystack(for: item)) else { continue }
             let preview = HistoryFormatting.previewText(for: item)
             let ranges = FuzzyMatch.match(qChars, in: preview)?.ranges ?? []
             hits.append((HistorySearchResult(item: item, matchedRanges: ranges, tier: tier), index))

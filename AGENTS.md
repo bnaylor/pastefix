@@ -103,7 +103,7 @@ Sources/PastefixAppCore/              # app pure model (depends on PastefixCore,
   SettingsStore.swift                 # UserDefaults persistence (wrap width, auto-hide, sidebar, scripts folder, per-transform enable/order, historyEnabled, historyMaxItems)
   TransformOverrides.swift            # per-transform enable/disable + drag-reordering
   PaletteOrdering.swift               # applicable-first stable partition on top of TransformOverrides
-  FuzzyMatch.swift                    # shared fold + tiered match (prefix/word-start/subsequence) + highlight ranges
+  FuzzyMatch.swift                    # shared fold + tiered match (prefix/word-start/subsequence) + highlight ranges; fold-once `tier` for ranking-only callers
   TransformSearch.swift               # ⌘K palette ranking, delegates matching to FuzzyMatch
   SidebarGrouping.swift               # groups transforms into sidebar sections by category (built-in order, then custom, then Scripts)
   History/

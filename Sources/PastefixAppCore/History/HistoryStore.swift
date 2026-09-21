@@ -65,6 +65,7 @@ public final class HistoryStore: ObservableObject {
     private static let writeDelay: Duration = .milliseconds(250)
     private static let richExtension = "rtfd"
     private static let imageExtension = "png"
+    private static let quarantinePrefix = "index.json.corrupt-"
 
     public init(directory: URL, limits: HistoryLimits = .init()) {
         self.directory = directory
@@ -143,6 +144,9 @@ public final class HistoryStore: ObservableObject {
         let ids = items.map(\.id)
         items.removeAll()
         ids.forEach(deleteBlobs(ofItemWith:))
+        // A quarantined index is a verbatim plaintext copy of the history it described, so
+        // Settings' "removes every remembered item and its files from disk" has to cover it.
+        removeQuarantinedIndexes()
         flush()
     }
 
@@ -246,6 +250,15 @@ public final class HistoryStore: ObservableObject {
         }
     }
 
+    /// Deletes every `index.json.corrupt-*` left by a previous quarantine.
+    private func removeQuarantinedIndexes() {
+        let fm = FileManager.default
+        guard let names = try? fm.contentsOfDirectory(atPath: directory.path) else { return }
+        for name in names where name.hasPrefix(Self.quarantinePrefix) {
+            try? fm.removeItem(at: directory.appendingPathComponent(name))
+        }
+    }
+
     // MARK: Index persistence
 
     /// What `load()` found: whether the in-memory index now differs from the file (so it must
@@ -261,7 +274,12 @@ public final class HistoryStore: ObservableObject {
         guard let data = try? Data(contentsOf: indexURL) else { return LoadOutcome() }
         let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
         guard let loaded = try? decoder.decode([HistoryItem].self, from: data) else {
-            let quarantine = directory.appendingPathComponent("index.json.corrupt-\(Int(Date().timeIntervalSince1970))")
+            // At most one quarantine ever exists: each holds the plaintext of every item in the
+            // history at the time it was written, and keeping a pile of them would mean a single
+            // bad byte leaves plaintext on disk indefinitely. Dropping the older one first also
+            // frees the name when two quarantines land in the same second.
+            removeQuarantinedIndexes()
+            let quarantine = directory.appendingPathComponent(Self.quarantinePrefix + "\(Int(Date().timeIntervalSince1970))")
             try? FileManager.default.moveItem(at: indexURL, to: quarantine)
             historyLog.error("history index unreadable; moved aside")
             return LoadOutcome(quarantined: true)

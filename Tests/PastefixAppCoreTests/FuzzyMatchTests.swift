@@ -21,4 +21,25 @@ import Testing
     }
     @Test func diacriticsAndCase() { #expect(m("cafe", "Café")! == (1, ["Café"])) }
     @Test func emptyHaystack() { #expect(m("a", "") == nil) }
+
+    /// `tier` is the ranking-only fast path (one fold for the whole haystack instead of one per
+    /// character). It must agree with `match` on the tier it reports for ordinary text; the one
+    /// deliberate divergence is the camel-case word-start rule, which `tier` does not apply.
+    @Test func tierAgreesWithMatchOnPlainText() {
+        for (q, hay) in [("inv", "Invoice 2026"),          // prefix
+                         ("2026", "Invoice 2026"),         // word-start after a separator
+                         ("notes", "meeting notes"),       // word-start
+                         ("ice6", "Invoice 2026"),         // subsequence
+                         ("zzz", "Invoice 2026"),          // miss
+                         ("cafe", "Café")] {               // non-ASCII fold
+            let qc = Array(FuzzyMatch.fold(q))
+            #expect(FuzzyMatch.tier(qc, in: hay) == FuzzyMatch.match(qc, in: hay)?.tier,
+                    "tier disagreed for query \(q) in \(hay)")
+        }
+    }
+    /// Documented divergence: separators only, no camel rule (see `tier`).
+    @Test func tierTreatsSeparatorsOnly() {
+        #expect(FuzzyMatch.tier(Array("case"), in: "camelCase") == 3)
+        #expect(FuzzyMatch.match(Array("case"), in: "camelCase")?.tier == 2)
+    }
 }

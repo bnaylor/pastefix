@@ -151,6 +151,37 @@ import Foundation
             #expect(names.contains { $0.hasPrefix("index.json.corrupt-") })
         }
     }
+    /// A quarantined index holds the plaintext of every item it described, so only the most
+    /// recent one is ever kept: a second corrupt index replaces the first rather than adding to it.
+    @Test func quarantineKeepsOnlyTheNewestCorruptIndex() throws {
+        try withDir { dir in
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            for payload in ["first garbage", "second garbage"] {
+                try Data(payload.utf8).write(to: dir.appendingPathComponent("index.json"))
+                HistoryStore(directory: dir).flush()
+            }
+            let corrupt = try FileManager.default.contentsOfDirectory(atPath: dir.path)
+                .filter { $0.hasPrefix("index.json.corrupt-") }
+            #expect(corrupt.count == 1)
+            let kept = try Data(contentsOf: dir.appendingPathComponent(corrupt[0]))
+            #expect(String(decoding: kept, as: UTF8.self) == "second garbage")
+        }
+    }
+    /// "Clear History" promises to remove every remembered item from disk; a quarantined index
+    /// is a full plaintext copy of the history, so it has to go too.
+    @Test func clearRemovesQuarantinedIndexes() throws {
+        try withDir { dir in
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            try Data("not json".utf8).write(to: dir.appendingPathComponent("index.json"))
+            let s = HistoryStore(directory: dir)
+            #expect(try FileManager.default.contentsOfDirectory(atPath: dir.path).contains { $0.hasPrefix("index.json.corrupt-") })
+            s.record(text("after recovery"))
+            s.clear()
+            let names = try FileManager.default.contentsOfDirectory(atPath: dir.path)
+            #expect(!names.contains { $0.hasPrefix("index.json.corrupt-") })
+            #expect(s.items.isEmpty)
+        }
+    }
     @Test func missingBlobDegradesOrDrops() throws {
         try withDir { dir in
             let s = HistoryStore(directory: dir)

@@ -16,6 +16,12 @@ import Foundation
         let s = String(repeating: "b", count: 160)
         #expect(HistoryFormatting.previewText(for: HistoryItem(plainText: s)) == s)
     }
+    /// The preview only ever shows two lines of at most 160 characters, so it must not walk a
+    /// whole 256 KB item to produce them: the input is bounded to the search haystack limit first.
+    @Test func previewBoundsItsInput() {
+        let item = HistoryItem(plainText: String(repeating: "a", count: 100_000))
+        #expect(HistoryFormatting.previewText(for: item) == String(repeating: "a", count: 159) + "…")
+    }
     @Test func previewForImage() {
         #expect(HistoryFormatting.previewText(for: HistoryItem(imageFile: "x.png", imagePixelWidth: 1280, imagePixelHeight: 800)) == "Image 1280×800")
         #expect(HistoryFormatting.previewText(for: HistoryItem(imageFile: "x.png")) == "Image")

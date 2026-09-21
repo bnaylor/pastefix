@@ -48,4 +48,33 @@ enum FuzzyMatch {
         ranges.append(range(runStart, prev + 1))
         return (3, ranges)
     }
+
+    /// Tier only (1 prefix, 2 word-start, 3 subsequence), with the whole haystack folded in a
+    /// single `folding` call instead of one call per character.
+    ///
+    /// `match` folds per character because its ranges have to map 1:1 onto the original string.
+    /// Ranking does not need ranges, and the per-character path costs one ICU call per character
+    /// — ~2048 of them per history item, per keystroke. Use this to rank and `match` only where a
+    /// highlight is actually drawn.
+    ///
+    /// Word starts here follow separators only: the camel-case rule `match` applies is aimed at
+    /// transform names ("camelCase"), not at clipboard text, and it cannot be evaluated against
+    /// the folded string anyway once a fold has changed the character count ("ß" -> "ss").
+    static func tier(_ q: [Character], in haystack: String) -> Int? {
+        let folded = Array(fold(haystack))
+        func hasPrefix(at start: Int) -> Bool {
+            guard start + q.count <= folded.count else { return false }
+            for o in 0..<q.count where folded[start + o] != q[o] { return false }
+            return true
+        }
+        if hasPrefix(at: 0) { return 1 }
+        guard folded.count >= q.count else { return nil }
+        for i in 1..<max(1, folded.count)
+        where wordSeparators.contains(folded[i - 1]) && !wordSeparators.contains(folded[i]) {
+            if hasPrefix(at: i) { return 2 }
+        }
+        var qi = 0
+        for c in folded where qi < q.count && c == q[qi] { qi += 1 }
+        return qi == q.count ? 3 : nil
+    }
 }

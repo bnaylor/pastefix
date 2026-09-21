@@ -4,7 +4,10 @@ public enum HistoryFormatting {
     /// First two non-blank lines, whitespace collapsed, ≤ 160 characters, "…" when cut.
     public static func previewText(for item: HistoryItem) -> String {
         if item.hasText, let text = item.plainText {
-            let lines = text.split(whereSeparator: \.isNewline)
+            // Two lines of at most 160 characters never need more than the first couple of KB,
+            // and an item can hold 256 KB: bound the input before splitting it, or every preview
+            // in the list walks the whole item on every keystroke.
+            let lines = text.prefix(HistorySearch.haystackLimit).split(whereSeparator: \.isNewline)
                 .map { $0.split(whereSeparator: \.isWhitespace).joined(separator: " ") }
                 .filter { !$0.isEmpty }
             var out = lines.prefix(2).joined(separator: "\n")
