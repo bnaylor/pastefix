@@ -56,7 +56,7 @@ The engine provides:
 - **Unified error handling** via typed `TransformError`; all transforms run off the main thread with configurable timeouts
 - **Script metadata** via magic comments (name, enabled flag, execution order)
 - **Filesystem watching** with debouncing for dynamic script discovery
-- **Content detection** — the panel recognises URLs and JSON and lists the transforms that apply to them first
+- **Content detection** — the panel recognises URLs, JSON, colour literals, JWTs, Base64, percent-encoding and HTML entities, and lists the transforms that apply to them first
 
 ## Built-in Transforms
 
@@ -148,7 +148,7 @@ Magic comments in the first 30 lines define script behavior. Recognized keys are
 ```
 
 - **Comment syntax:** lines are tolerant of comment markers (`#`, `//`, `*`, `/*`); the parser strips leading whitespace and any run of the individual characters space, tab, `#`, `/`, `*`
-- **Keys:** `name` (display name), `enabled` (true/false; default true), `order` (integer execution order; default 1000 for scripts), `kinds` (comma-separated list of `url`, `json`; a script with `kinds` is listed first in the ⌘K palette when that content is detected; unknown names ignored), `category` (free text, trimmed; groups the script under this heading in the sidebar; default `Scripts` when omitted; a custom category appears in the sidebar alphabetically after the built-in categories below)
+- **Keys:** `name` (display name), `enabled` (true/false; default true), `order` (integer execution order; default 1000 for scripts), `kinds` (comma-separated list of `url`, `json`, `color`, `jwt`, `base64`, `percentEncoded`, `htmlEntities`, matched case-insensitively — `percentencoded` and `PercentEncoded` both work; a script with `kinds` is listed first in the ⌘K palette when that content is detected; unknown names ignored), `category` (free text, trimmed; groups the script under this heading in the sidebar; default `Scripts` when omitted; a custom category appears in the sidebar alphabetically after the built-in categories below)
 - **Built-in order:** Rich→Plain (10), Transliterate (20), Wrap (30), Whitespace (40), Clean URL Tracking (50), URL → Markdown Link (60), camelCase (70), snake_case (71), kebab-case (72), CONSTANT_CASE (73), JSON Prettify (80), JSON Minify (81), Escape as JSON String (82), Base64 Encode (90), Base64 Decode (91), URL Encode (92), URL Decode (93), HTML Encode (94), HTML Decode (95), Decode JWT (96), Color → CSS Hex (100), Color → CSS rgb() (101), Color → CSS hsl() (102), Color → SwiftUI Color (103); user scripts at order 1000+ appear after built-ins unless explicitly reordered
 - **Malformed lines:** ignored silently
 

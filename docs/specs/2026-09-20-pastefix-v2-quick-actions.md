@@ -75,13 +75,18 @@ This plan adds the consumers.
 - `jwt`: `JWTDecoder.split(t)` succeeds — exactly two dots, three non-empty
   base64url segments (the third may be empty for `alg: none`), and the first
   decodes to a JSON object containing `"alg"`.
-- `base64`: not `jwt`; after removing ASCII whitespace `t` is ≥ 16 characters,
-  matches `^[A-Za-z0-9+/]+={0,2}$` or the base64url alphabet, decodes via
-  `Data(base64Encoded:options:.ignoreUnknownCharacters)` after padding to a
-  multiple of 4, and the result is valid UTF-8. *(Amended in review: "no NUL
-  bytes" was too narrow — `Base64Codec.looksLikeBase64` requires the decoded
-  text to be printable: tab/newline/CR are allowed, but no other C0 control,
-  no DEL, and no C1 control (0x80–0x9F). See `e2b0807`.)*
+- `base64`: not `jwt`; `Base64Codec.looksLikeBase64(t)`. *(Amended in review —
+  this paragraph now describes what shipped rather than what was planned; see
+  `e2b0807`.)* That is ≥ 16 characters after whitespace is filtered out, then
+  `Base64Codec.decodeText`: whitespace filtered, `-`/`_` folded to `+`/`/`, any
+  trailing `=` stripped and re-padded to a multiple of 4, the remaining
+  characters validated as ASCII alphanumerics plus `+` and `/` (so the
+  alphabet is checked explicitly rather than delegated), decoded with
+  `Data(base64Encoded:)` **without** `.ignoreUnknownCharacters` — the option
+  would silently drop junk and make almost any prose "decode" — and the bytes
+  required to be NUL-free valid UTF-8. `looksLikeBase64` then additionally
+  requires the decoded text to be printable: tab/newline/CR are allowed, but no
+  other C0 control, no DEL, and no C1 control (0x80–0x9F).
 - `percentEncoded`: `t` contains the regex `%[0-9A-Fa-f]{2}`.
 - `htmlEntities`: `t` contains `&(#[0-9]+|#x[0-9A-Fa-f]+|[A-Za-z][A-Za-z0-9]{1,31});`.
 
@@ -154,8 +159,16 @@ transforms:
   RFC 3986 unreserved set (`A–Z a–z 0–9 - . _ ~`) so `&`, `=`, `/`, space are
   all encoded (query-component semantics; space → `%20`, not `+`). Decode via
   `removingPercentEncoding`; `+` is left alone (predictable; form-encoding's
-  `+`-for-space is not assumed). `removingPercentEncoding == nil` → `invalidInput("Malformed percent-encoding")`.
-- HTML: encode `& < > " '` → `&amp; &lt; &gt; &quot; &#39;`. Decode reuses
+  `+`-for-space is not assumed). A `%(?![0-9A-Fa-f]{2})` pre-check rejects a `%`
+  that does not introduce two hex digits before decoding — `removingPercentEncoding`
+  returns the string unchanged for some malformed inputs rather than nil, so the
+  nil check alone would let `100%` through as a silent no-op. Either path →
+  `invalidInput("Malformed percent-encoding")`.
+- HTML: numeric references to C0 controls other than tab/LF/CR (`&#0;`,
+  `&#x1F;`) are **left verbatim** rather than decoded — splicing a NUL into the
+  working buffer truncates the value for anything downstream that speaks C
+  strings, and the rest are invisible rather than useful.
+  Encode `& < > " '` → `&amp; &lt; &gt; &quot; &#39;`. Decode reuses
   `URLSessionTitleFetcher.decodeEntities` (moved to a shared internal
   `HTMLEntities.decode` in `Detection/` or `Native/`, with the existing named
   table extended to the HTML4 Latin-1 set: `nbsp iexcl cent pound … yuml`
@@ -193,7 +206,7 @@ epoch seconds (roughly year 1970–3000) — `NSNumber` bridges `true`/`false` a
 | `builtin.color.hsl` | Color → CSS hsl() | 102 | `cssHSL` |
 | `builtin.color.swift` | Color → SwiftUI Color | 103 | `swiftUI` |
 
-All `[color]`. Input that fails to parse → `invalidInput("Not a colour literal")`.
+All `[color]`. Input that fails to parse → `invalidInput("Not a color literal")`.
 
 **`Transformer.swift`** — `TransformError` gains `case invalidInput(String)`.
 `TransformCategory` gains `data`, `colors`; `builtinOrder` becomes
@@ -216,7 +229,8 @@ add the explicit case for a clean message).
 - `PanelView.actionBar`: when `model.detectedColor` is non-nil, a
   `RoundedRectangle(cornerRadius: 3).fill(Color(red:green:blue:opacity:))`
   14×14 with a hairline secondary stroke, placed before the "Detected: …" text,
-  `.accessibilityLabel("Detected colour \(literal.cssHex)")`.
+  `.accessibilityLabel("Detected color \(literal.cssHex)")` (US spelling, matching
+  the transform names).
 - `AppModel.detectedSummary` unchanged (the new display names flow through).
 
 ## Data flow
@@ -274,7 +288,8 @@ and is corrected here.
 - `ContentDetectorTests` additions: each new kind's positive; negatives:
   `#fff` in prose (not `color`), a 15-char base64, base64 that decodes to
   binary, a JWT not also flagged `base64`, prose with `%` but no hex pair,
-  `&` without `;`; and combined `[.json]` after JWT decode output.
+  `&` without `;`; and that JWT decode output is not re-detected as JSON (the
+  trailing comment lines break strict JSON).
 - `TransformerRegistryTests`: ids/orders/categories for the fourteen;
   `builtinOrder` has six entries.
 - Every new transform's `metadata()` test asserts id, name, category, kinds.
