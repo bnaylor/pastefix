@@ -202,7 +202,9 @@ struct SettingsView: View {
                          : "Needs Accessibility permission to press ⌘V for you. Until then hotkeys copy the snippet only.")
                     Spacer()
                     if !SnippetPaster.isTrusted {
-                        Button("Request…") { _ = SnippetPaster.ensureTrusted() }
+                        // `requestTrust`, not `ensureTrusted`: the once-per-launch rule would make
+                        // an explicitly clicked button a no-op after the implicit prompt.
+                        Button("Request…") { SnippetPaster.requestTrust() }
                         Button("Open System Settings") { SnippetPaster.openAccessibilitySettings() }
                     }
                 }
@@ -232,12 +234,39 @@ struct SettingsView: View {
     private var shortcut: some View {
         Form {
             KeyboardShortcuts.Recorder("Summon Pastefix:", name: .summonPastefix)
+                .shortcutValidation { validateSummon($0, recording: .summonPastefix) }
             Text("Global hotkey to summon the panel from any app.")
                 .font(.caption).foregroundStyle(.secondary)
             KeyboardShortcuts.Recorder("Open history:", name: .summonHistory)
+                .shortcutValidation { validateSummon($0, recording: .summonHistory) }
         }
         .padding()
     }
+
+    /// The mirror of the Snippets tab's validation: a summon shortcut may not take a combo the
+    /// other summon or a pinned snippet already holds. Refusing from one side only would leave
+    /// the collision reachable by recording in the other order.
+    private func validateSummon(_ shortcut: KeyboardShortcuts.Shortcut,
+                                recording name: KeyboardShortcuts.Name) -> KeyboardShortcuts.ValidationResult {
+        let other: KeyboardShortcuts.Name = name == .summonPastefix ? .summonHistory : .summonPastefix
+        if KeyboardShortcuts.getShortcut(for: other) == shortcut {
+            return .disallow(reason: "Already used by Pastefix's other summon shortcut.")
+        }
+        if let clash = history.pinnedItems.first(where: {
+            KeyboardShortcuts.getShortcut(for: SnippetHotkeys.name(for: $0.id)) == shortcut
+        }) {
+            return .disallow(reason: "Already used by the snippet “\(SnippetRow.label(for: clash))”.")
+        }
+        return .allow
+    }
+
+    /// True when the combo is one of the app's own reserved summon shortcuts.
+    static func isSummonShortcut(_ shortcut: KeyboardShortcuts.Shortcut) -> Bool {
+        [KeyboardShortcuts.Name.summonPastefix, .summonHistory].contains {
+            KeyboardShortcuts.getShortcut(for: $0) == shortcut
+        }
+    }
+
 
     private struct TransformerRow: Identifiable {
         let id: String
@@ -321,6 +350,13 @@ struct SnippetRow: View {
                     // The library only checks the shortcut against menu items and system
                     // shortcuts; two snippets sharing a combo is ours to catch.
                     .shortcutValidation { shortcut in
+                        // The library's own ConflictPolicy has no category for another
+                        // KeyboardShortcuts.Name in the same app, so a snippet bound to a summon
+                        // combo would record, display and persist — and then silently lose, since
+                        // the delegate registers the summon names before the snippets.
+                        if SettingsView.isSummonShortcut(shortcut) {
+                            return .disallow(reason: "Already used by Pastefix's summon shortcut.")
+                        }
                         guard let clash = conflictingSnippet(with: shortcut) else { return .allow }
                         return .disallow(reason: "Already used by the snippet “\(Self.label(for: clash))”.")
                     }
@@ -343,7 +379,7 @@ struct SnippetRow: View {
     }
 
     /// What to call a snippet in the conflict message: its title, else a short piece of its text.
-    private static func label(for item: HistoryItem) -> String {
+    static func label(for item: HistoryItem) -> String {
         if let title = item.title, !title.isEmpty { return title }
         return String(HistoryFormatting.previewText(for: item).prefix(24))
     }

@@ -215,7 +215,11 @@ final class AppModel: ObservableObject {
     /// clipboard (`.copiedOnly`), which is a silent fallback by design; Settings shows the
     /// permission state rather than interrupting the paste.
     func pasteIntoPreviousApp(_ item: HistoryItem) {
-        let text = item.plainText ?? ""
+        // Nothing to paste as text (an image-only row): behave exactly like ⌘↵. Writing an empty
+        // pasteboard would destroy whatever the user had copied, and the ⌘V that followed would
+        // replace the target's selection with nothing — a silent delete they never asked for.
+        // `copyBack` writes the image and ends the session.
+        guard item.hasText, let text = item.plainText else { copyBack(item); return }
         let rich = history.richRTFD(for: item)
         _ = SnippetPaster.paste(text: text, richRTFD: rich, into: previousAppProvider())
         endSession()

@@ -1,5 +1,6 @@
 import AppKit
 import ApplicationServices
+import Carbon.HIToolbox
 
 /// Puts a snippet on the clipboard and pastes it into another app by posting ⌘V. Accessibility
 /// permission is required to post the key event; Pastefix uses it for nothing else — no event
@@ -38,6 +39,22 @@ enum SnippetPaster {
         if isTrusted { return true }
         guard !promptedThisLaunch else { return false }
         promptedThisLaunch = true
+        return promptForTrust()
+    }
+
+    /// Always prompts — for the explicit Settings button, where the user asked for it.
+    ///
+    /// `ensureTrusted`'s once-per-launch rule is right for the *implicit* prompt inside `paste`
+    /// and wrong here: a user who dismissed the first prompt by accident and then pressed
+    /// "Request…" would get a button that does literally nothing.
+    @discardableResult
+    static func requestTrust() -> Bool {
+        if isTrusted { return true }
+        promptedThisLaunch = true
+        return promptForTrust()
+    }
+
+    private static func promptForTrust() -> Bool {
         let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
         return AXIsProcessTrustedWithOptions(options)
     }
@@ -57,6 +74,17 @@ enum SnippetPaster {
     /// conditional on the frontmost re-check in `postWhenReady`, so it remains a prediction.
     static func paste(text: String, richRTFD: Data?, into app: NSRunningApplication?) -> Outcome {
         ClipboardBridge.write(text: text, richRTFD: richRTFD, imagePNG: nil)
+        // Bump before any early return: the clipboard is one slot, so *any* write invalidates a
+        // pending chain whose whole premise is "the clipboard holds my text". A request that is
+        // refused below still overwrote the clipboard, and an older chain left generation-current
+        // would go on to post someone else's snippet into its target.
+        //
+        // This does not close the boundary entirely: `AppModel.save`, `copyBack` and the ⌘K
+        // palette also write `NSPasteboard.general`, and a chain in flight across one of those
+        // will still post whatever they left behind. Closing that means invalidating from inside
+        // `ClipboardBridge.write`.
+        pendingGeneration &+= 1
+        let generation = pendingGeneration
         guard ensureTrusted() else { return .copiedOnly }
         // No target, a dead target, or ourselves: never post. Pastefix as the target means the
         // hotkey fired while our own panel was key, and a ⌘V would land in the editor or a search
@@ -66,8 +94,6 @@ enum SnippetPaster {
         if !app.isActive {
             guard app.activate(from: .current, options: []) else { return .copiedOnly }
         }
-        pendingGeneration &+= 1
-        let generation = pendingGeneration
         let target = app.processIdentifier
         let deadline = Date().addingTimeInterval(readyWait)
         DispatchQueue.main.asyncAfter(deadline: .now() + readyPoll) {
@@ -91,7 +117,15 @@ enum SnippetPaster {
     /// because the user switched to a third app) still ends in posting nothing.
     private static func postWhenReady(targetPID: pid_t, generation: Int, deadline: Date) {
         guard generation == pendingGeneration else { return }
-        let ready = NSEvent.modifierFlags.intersection(blockingModifiers).isEmpty
+        // `NSApp.keyWindow == nil` is not redundant with the frontmost check. The panel is an
+        // `.nonactivatingPanel`, which is precisely the style mask that lets it hold *key* focus
+        // while `NSApp.isActive` is false and another app is genuinely frontmost — summon, click
+        // another app, click back on the panel. Posting then plausibly routes ⌘V to our own
+        // editor or search field. Never post while any Pastefix window is key; folding it into
+        // the readiness test rather than the entry guard means a panel that closes during the
+        // wait still lets the paste through.
+        let ready = NSApp.keyWindow == nil
+            && NSEvent.modifierFlags.intersection(blockingModifiers).isEmpty
             && NSWorkspace.shared.frontmostApplication?.processIdentifier == targetPID
         guard ready else {
             guard Date() < deadline else { return }
@@ -107,12 +141,82 @@ enum SnippetPaster {
         // `.privateState`, not `.combinedSessionState`: the combined source merges live hardware
         // modifiers into the event we are building.
         let source = CGEventSource(stateID: .privateState)
-        guard let down = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: true),
-              let up = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: false) else { return }
+        let key = keyCodeForV()
+        guard let down = CGEvent(keyboardEventSource: source, virtualKey: key, keyDown: true),
+              let up = CGEvent(keyboardEventSource: source, virtualKey: key, keyDown: false) else { return }
         down.flags = .maskCommand
         up.flags = .maskCommand
         down.post(tap: .cghidEventTap)
         up.post(tap: .cghidEventTap)
+    }
+
+    /// ANSI "v". The fallback, and the answer on every QWERTY-derived layout.
+    private static let ansiVKeyCode: CGKeyCode = 9
+
+    /// The virtual key that produces "v" on the *current* keyboard layout.
+    ///
+    /// A `.cghidEventTap` post lands below the window server, which then derives the character
+    /// from the active layout — so a hardcoded 9 is "v" only on ANSI-derived layouts. On plain
+    /// Dvorak key 9 is "k", and ⌘K clears the scrollback in Terminal and inserts a link in Mail:
+    /// the same failure family as the Caps Lock and held-modifier bugs, a posted chord that means
+    /// something other than "paste". Resolved by translating each key code through the layout's
+    /// `uchr` data and taking the first that yields "v".
+    private static func keyCodeForV() -> CGKeyCode {
+        installLayoutObserverIfNeeded()
+        if let cached = cachedVKeyCode { return cached }
+        let resolved = resolveKeyCodeForV() ?? ansiVKeyCode
+        cachedVKeyCode = resolved
+        return resolved
+    }
+
+    /// Invalidated on `kTISNotifySelectedKeyboardInputSourceChanged`, which is a distributed
+    /// notification — the observer is installed once, lazily, alongside the first lookup.
+    private static var cachedVKeyCode: CGKeyCode?
+    private static var layoutObserverInstalled = false
+
+    private static func installLayoutObserverIfNeeded() {
+        guard !layoutObserverInstalled else { return }
+        layoutObserverInstalled = true
+        DistributedNotificationCenter.default().addObserver(
+            forName: NSNotification.Name(kTISNotifySelectedKeyboardInputSourceChanged as String),
+            object: nil,
+            queue: .main
+        ) { _ in
+            MainActor.assumeIsolated { cachedVKeyCode = nil }
+        }
+    }
+
+    private static func resolveKeyCodeForV() -> CGKeyCode? {
+        guard let source = TISCopyCurrentKeyboardLayoutInputSource()?.takeRetainedValue(),
+              let pointer = TISGetInputSourceProperty(source, kTISPropertyUnicodeKeyLayoutData)
+        else { return nil }
+        let layoutData = Unmanaged<CFData>.fromOpaque(pointer).takeUnretainedValue() as Data
+        return layoutData.withUnsafeBytes { raw -> CGKeyCode? in
+            guard let base = raw.baseAddress else { return nil }
+            let layout = base.assumingMemoryBound(to: UCKeyboardLayout.self)
+            var length = 0
+            var chars = [UniChar](repeating: 0, count: 4)
+            // 0…50 covers the alphanumeric block; beyond it are modifiers, the function row and
+            // the keypad, none of which can be the layout's "v".
+            for code in CGKeyCode(0)...CGKeyCode(50) {
+                // The *mask*, not the bit (which is 0, i.e. dead keys still on), and a fresh
+                // state per key so a dead key earlier in the scan cannot colour a later one.
+                var deadKeyState: UInt32 = 0
+                let status = UCKeyTranslate(layout,
+                                            UInt16(code),
+                                            UInt16(kUCKeyActionDown),
+                                            0,
+                                            UInt32(LMGetKbdType()),
+                                            OptionBits(kUCKeyTranslateNoDeadKeysMask),
+                                            &deadKeyState,
+                                            chars.count,
+                                            &length,
+                                            &chars)
+                guard status == noErr, length == 1 else { continue }
+                if String(utf16CodeUnits: chars, count: length) == "v" { return code }
+            }
+            return nil
+        }
     }
 
     static func openAccessibilitySettings() {

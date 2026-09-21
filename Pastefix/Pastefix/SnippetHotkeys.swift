@@ -37,8 +37,12 @@ final class SnippetHotkeys {
     }
 
     private func fire(_ id: UUID) {
-        guard let item = history.items.first(where: { $0.id == id && $0.pinned }),
-              let text = item.plainText else { return }
+        guard let item = history.items.first(where: { $0.id == id && $0.pinned }) else { return }
+        // An image-only pin has nothing to paste as text, and `SnippetPaster` must never be handed
+        // an empty string: it would clear the clipboard and post a ⌘V that deletes the target's
+        // selection. Images are refused at the pin gate now, but a pin recorded before that fix
+        // can still reach here, and a bound shortcut that does nothing at all is worse than a beep.
+        guard item.hasText, let text = item.plainText else { NSSound.beep(); return }
         // The hotkey itself does not activate Pastefix, but our panel might already be up
         // (`PanelController.show()` calls `NSApp.activate`), in which case the frontmost app is
         // us. `SnippetPaster` refuses that target rather than typing into our own editor or
