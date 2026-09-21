@@ -81,7 +81,8 @@ struct SettingsView: View {
                 HStack {
                     // Pins are counted apart from history: Clear History leaves them behind, so
                     // folding them into one total would misstate what the button is about to remove.
-                    Text("\(history.unpinnedItems.count) items · \(history.pinnedItems.count) pinned · \(HistoryFormatting.byteLabel(history.totalBytes))")
+                    // With no pins the segment is dropped rather than shown as "0 pinned".
+                    Text(historyCountLine)
                         .foregroundStyle(.secondary)
                     Spacer()
                     Button("Clear History…") { confirmClear = true }.disabled(history.items.isEmpty)
@@ -161,6 +162,13 @@ struct SettingsView: View {
         }
     }
 
+    private var historyCountLine: String {
+        var parts = ["\(history.unpinnedItems.count) items"]
+        if !history.pinnedItems.isEmpty { parts.append("\(history.pinnedItems.count) pinned") }
+        parts.append(HistoryFormatting.byteLabel(history.totalBytes))
+        return parts.joined(separator: " · ")
+    }
+
     private func removeSelected() {
         guard let selected = selectedExclusion else { return }
         settings.removeExcludedBundleID(selected)
@@ -199,13 +207,13 @@ struct SettingsView: View {
                         .foregroundStyle(SnippetPaster.isTrusted ? .green : .orange)
                     Text(SnippetPaster.isTrusted
                          ? "Ready — snippet hotkeys paste into the frontmost app."
-                         : "Needs Accessibility permission to press ⌘V for you. Until then hotkeys copy the snippet only.")
+                         : "Needs Accessibility permission to press ⌘V. Hotkeys copy the snippet until then.")
                     Spacer()
                     if !SnippetPaster.isTrusted {
                         // `requestTrust`, not `ensureTrusted`: the once-per-launch rule would make
                         // an explicitly clicked button a no-op after the implicit prompt.
                         Button("Request…") { SnippetPaster.requestTrust() }
-                        Button("Open System Settings") { SnippetPaster.openAccessibilitySettings() }
+                        Button("System Settings…") { SnippetPaster.openAccessibilitySettings() }
                     }
                 }
                 Text("Pastefix uses Accessibility only to send ⌘V. It never reads your keystrokes.")
@@ -266,7 +274,6 @@ struct SettingsView: View {
             KeyboardShortcuts.getShortcut(for: $0) == shortcut
         }
     }
-
 
     private struct TransformerRow: Identifiable {
         let id: String
@@ -337,15 +344,18 @@ struct SnippetRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack {
+                // `labelsHidden` keeps the placeholder out of the Form's leading gutter (the
+                // same trap the Privacy tab's Stepper hit); the field then takes the width left
+                // over by the recorder and Unpin.
                 TextField("Title", text: $title)
+                    .labelsHidden()
                     .textFieldStyle(.roundedBorder)
-                    .frame(maxWidth: 180)
+                    .frame(maxWidth: .infinity)
                     .focused($titleFocused)
                     .onSubmit { commitTitle() }
                     // Clicking straight from the field to another row loses the edit otherwise:
                     // a Settings window can be closed without ever submitting.
                     .onChange(of: titleFocused) { _, focused in if !focused { commitTitle() } }
-                Spacer()
                 KeyboardShortcuts.Recorder("", name: SnippetHotkeys.name(for: item.id))
                     // The library only checks the shortcut against menu items and system
                     // shortcuts; two snippets sharing a combo is ours to catch.

@@ -122,12 +122,16 @@ struct PanelView: View {
                     }
                     HStack {
                         Spacer()
-                        Button("Cancel") { showPinPopover = false }
+                        Button("Cancel") { cancelPin() }
                         Button("Pin", action: commitPin).keyboardShortcut(.defaultAction)
                     }
                 }
                 .padding()
                 .onAppear { pinTitleFocused = true }
+                // Clicking away dismisses the popover without going through Cancel, so the
+                // reset has to live here as well or the next ⌘⇧P reopens on a stale title and a
+                // stale error.
+                .onDisappear { pinTitle = ""; pinError = nil }
             }
             Spacer()
             Button { toggleHistory() } label: {
@@ -244,6 +248,12 @@ struct PanelView: View {
     private func closeHistory() {
         isHistoryOpen = false
         editorFocused = true
+    }
+
+    private func cancelPin() {
+        pinTitle = ""
+        pinError = nil
+        showPinPopover = false
     }
 
     private func commitPin() {
