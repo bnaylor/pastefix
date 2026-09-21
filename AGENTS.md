@@ -203,7 +203,7 @@ Also caught in review on `29c1d02`: a page truncated at the byte cap mid-charact
 *Engine (Plan 5):*
 - **Hand-written parsers must reject what Foundation accepts** (`15a2b7e`): `Character.isHexDigit` is true for fullwidth digits that `UInt8(_:radix:)` rejects, and `Double("nan")` survives `min`/`max` clamping — both crashed on pasted text until guarded (`isASCII`, `isFinite`).
 - **`JSONSerialization.data(withJSONObject:)` raises an ObjC exception, not a Swift error** (`e2b0807`): `-1e400` parses to `-inf`, and writing it aborts the process past any `try`; check `isValidJSONObject` (allowing safe fragments) before writing.
-- **Moving a helper changes its input size** (`767e34f`): the entity decoder converted each match's `NSRange` back to a `String.Index` range, which is O(offset) per match — quadratic, and completely harmless while its only caller was a `<title>` a few dozen characters long. Pointing it at the working buffer for "HTML Decode" made 1 MB of numeric references freeze the panel for ~25 s. Fixed by splicing on an `NSMutableString` with the UTF-16 offsets the regex already reports. **When a helper moves to a new call site, re-check its complexity against the new input bound** — the old bound was an assumption, not a property of the code.
+- **Moving a helper changes its input size** (`767e34f`): the entity decoder converted each match's `NSRange` back to a `String.Index` range, which is O(offset) per match — quadratic, and completely harmless while its only caller was a `<title>` a few dozen characters long. Pointing it at the working buffer for "HTML Decode" made 1 MB of numeric references freeze the panel for ~25 s. Fixed by splicing on an `NSMutableString` with the regex's own UTF-16 ranges (≈35× faster; ~0.7 s per MB). Still superlinear because each splice shifts the tail — a truly linear version appends into a fresh string — and native transforms have no input cap (#29). When a helper moves to a new call site, re-check its complexity against the new input bound.
 
 ## Definition of Done
 
@@ -230,7 +230,7 @@ When you **significantly expand the project** — a new target, subsystem, scrip
 | 2c — Auto-update | Sparkle, hardened runtime, release script | ✅ merged, [PR #5](https://github.com/bnaylor/pastefix/pull/5) (`0cc1082`) |
 | 3 — Content transforms | URL cleanup, Markdown link, case conversion, detection | ✅ merged, [PR #6](https://github.com/bnaylor/pastefix/pull/6) (`113bf42`) |
 | 4 — Action bar | ⌘K palette, sidebar, categories | ✅ merged, [PR #8](https://github.com/bnaylor/pastefix/pull/8) (`ff9c7b3`) |
-| 5 — Quick actions | JSON, encoders, JWT, colours, swatch | 🟡 in review on `feat/quick-actions`, PR pending |
+| 5 — Quick actions | JSON, encoders, JWT, colours, swatch | 🟡 in review, [PR #30](https://github.com/bnaylor/pastefix/pull/30) |
 
 Historical reference material for the 2007 and 2019 incarnations is vendored under [`docs/inputs/legacy/`](docs/inputs/legacy/).
 
