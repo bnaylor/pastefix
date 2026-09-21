@@ -149,7 +149,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .sink { [weak self] on in MainActor.assumeIsolated { self?.updateMonitor(enabled: on) } }
             .store(in: &cancellables)
         // Exclusion-list edits are rare and one at a time, so no debounce: rebuild the monitor
-        // so the new list takes effect on the very next poll.
+        // so the new list takes effect on the very next poll. The main-queue hop is load-bearing,
+        // not ceremony: @Published emits from willSet, so reading settings.historyExcludedBundleIDs
+        // synchronously here would hand the monitor the list from *before* the edit.
         settings.$historyExcludedBundleIDs.dropFirst().removeDuplicates().receive(on: DispatchQueue.main)
             .sink { [weak self] _ in MainActor.assumeIsolated { self?.rebuildMonitor() } }
             .store(in: &cancellables)

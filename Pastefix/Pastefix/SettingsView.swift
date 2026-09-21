@@ -65,8 +65,15 @@ struct SettingsView: View {
         Form {
             Section("History") {
                 Toggle("Remember clipboard history", isOn: $settings.historyEnabled)
-                Stepper("Keep last \(settings.historyMaxItems) items", value: $settings.historyMaxItems, in: 20...1000, step: 10)
-                    .disabled(!settings.historyEnabled)
+                // A titled Stepper puts its title in the Form's leading gutter, which leaves this
+                // row misaligned with the toggle above it. Label it by hand instead.
+                HStack {
+                    Text("Keep last \(settings.historyMaxItems) items")
+                    Spacer()
+                    Stepper("", value: $settings.historyMaxItems, in: 20...1000, step: 10)
+                        .labelsHidden()
+                }
+                .disabled(!settings.historyEnabled)
                 HStack {
                     Text("\(history.items.count) items · \(HistoryFormatting.byteLabel(history.totalBytes))").foregroundStyle(.secondary)
                     Spacer()
@@ -83,9 +90,22 @@ struct SettingsView: View {
                     }
                 }
                 .frame(minHeight: 120)
-                HStack {
-                    Button("Add App…") { addAppFromPanel() }
-                    Button("Add Identifier…") { showIdentifierPrompt = true }
+                // Four text buttons truncate at the 460pt window width ("Add Ap…", "Restore…"),
+                // so the adds collapse into the standard macOS +/− pair under the list.
+                HStack(spacing: 8) {
+                    Menu {
+                        Button("Application…") { addAppFromPanel() }
+                        Button("Identifier…") { showIdentifierPrompt = true }
+                    } label: {
+                        Image(systemName: "plus")
+                    }
+                    .menuIndicator(.hidden)
+                    .frame(width: 34)
+                    .help("Add an app, or a bundle identifier, to the exclusion list")
+                    // The popover hangs off a zero-size sibling rather than the Menu: presenting it
+                    // from the Menu itself races that menu's own dismissal.
+                    Color.clear
+                        .frame(width: 0, height: 0)
                         .popover(isPresented: $showIdentifierPrompt) {
                             VStack(alignment: .leading) {
                                 Text("Bundle identifier").font(.caption)
@@ -99,15 +119,17 @@ struct SettingsView: View {
                             }
                             .padding()
                         }
-                    Button("Remove") {
-                        if let selected = selectedExclusion {
-                            settings.removeExcludedBundleID(selected)
-                            selectedExclusion = nil
-                        }
-                    }
-                    .disabled(selectedExclusion == nil)
+                    Button { removeSelected() } label: { Image(systemName: "minus") }
+                        .frame(width: 34)
+                        .disabled(selectedExclusion == nil)
+                        .help("Remove the selected app from the exclusion list")
                     Spacer()
-                    Button("Restore Defaults") { settings.restoreDefaultExclusions() }
+                    Button("Restore Defaults") {
+                        settings.restoreDefaultExclusions()
+                        // The selected id may not survive the reset; a stale selection would leave
+                        // Remove enabled against a list that no longer contains it.
+                        selectedExclusion = nil
+                    }
                 }
                 Text("Copies made by browser password extensions come from the browser, not the manager; those are skipped when the extension marks them concealed, which 1Password, Bitwarden and Apple do.")
                     .font(.caption).foregroundStyle(.secondary)
@@ -126,6 +148,12 @@ struct SettingsView: View {
         } message: {
             Text("These items have no bundle identifier and were not added:\n\(noBundleIDNames.joined(separator: "\n"))")
         }
+    }
+
+    private func removeSelected() {
+        guard let selected = selectedExclusion else { return }
+        settings.removeExcludedBundleID(selected)
+        selectedExclusion = nil
     }
 
     private func commitIdentifier() {
@@ -220,8 +248,16 @@ struct ExcludedAppRow: View {
     var body: some View {
         let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID)
         HStack(spacing: 8) {
-            Image(nsImage: url.map { NSWorkspace.shared.icon(forFile: $0.path) } ?? NSWorkspace.shared.icon(for: .application))
-                .resizable().frame(width: 20, height: 20)
+            Group {
+                if let url {
+                    Image(nsImage: NSWorkspace.shared.icon(forFile: url.path)).resizable()
+                } else {
+                    // The generic document icon reads as a blank white rectangle at this size;
+                    // a dashed app outline says "not here" legibly.
+                    Image(systemName: "app.dashed").resizable().foregroundStyle(.secondary)
+                }
+            }
+            .frame(width: 20, height: 20)
             VStack(alignment: .leading, spacing: 0) {
                 Text(url.flatMap { FileManager.default.displayName(atPath: $0.path).replacingOccurrences(of: ".app", with: "") } ?? bundleID)
                     .foregroundStyle(url == nil ? AnyShapeStyle(.secondary) : AnyShapeStyle(.primary))
