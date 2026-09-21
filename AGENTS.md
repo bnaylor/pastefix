@@ -133,14 +133,16 @@ Pastefix/                             # the Xcode app (KeyboardShortcuts + Spark
     AppModel.swift                    # @MainActor ObservableObject: registry+document+clipboard+history; load(_:)/copyBack(_:), historyOverlayRequested
     HotkeyName.swift                  # KeyboardShortcuts recorder + display helper; summonPastefix (⌘⇧C) + summonHistory (⌘⇧V)
     FrontmostAppTracker.swift         # @MainActor tracker fed by NSWorkspace.didActivateApplicationNotification; context(window:) -> CaptureContext (source app determined before the read, Critical Invariant 12)
-    SettingsView.swift                # SwiftUI Settings window (General/Privacy/Shortcut/Transforms tabs); Privacy has the History section (moved from General) + Excluded Apps list, Shortcut a second recorder
+    SettingsView.swift                # SwiftUI Settings window (General/Privacy/Snippets/Shortcut/Transforms tabs); Privacy has the History section (moved from General) + Excluded Apps list + two-option Clear dialog, Snippets has Accessibility status + per-pin title/recorder/Unpin rows (shortcutValidation blocks duplicate combos), Shortcut a second recorder
     ClipboardBridge.swift             # NSPasteboard <-> ClipboardSnapshot; write(text:richRTFD:imagePNG:) for multi-representation copy-back
     PanelController.swift             # floating resizable NSPanel host (+ sidebar-driven resize, sidebar-aware minSize)
     PanelMetrics.swift                # panel/sidebar/palette sizes shared by SwiftUI and AppKit
-    PanelView.swift                   # editor + action bar + full-panel ⌘K/history overlay host + sidebar column + Esc owner
+    PanelView.swift                   # editor + action bar + full-panel ⌘K/history overlay host + sidebar column + Esc owner; toolbar pin button/⌘⇧P opens a title popover (pinCurrentBuffer)
     CommandPaletteView.swift          # ⌘K overlay: TransformSearch-ranked list, type/↑↓/↵/Esc
     PasteboardMonitor.swift           # polls changeCount 2x/sec; builds CaptureContext from FrontmostAppTracker before each read, refreshes it after; two-stage CaptureFilter chain (ConcealedTypeFilter + AppExclusionFilter) (Critical Invariant 12)
-    HistoryOverlayView.swift          # ⌘⇧V/⌘Y overlay: HistorySearch-ranked list, thumbnails, ↵/⌘↵/⌘⌫/Esc
+    HistoryOverlayView.swift          # ⌘⇧V/⌘Y overlay: HistorySearch-ranked list, thumbnails, ↵/⌘↵/⌘⌫/⌘P/⇧↵/Esc; Pinned/History sections
+    SnippetPaster.swift               # Accessibility-gated ⌘V poster: waits for modifiers released + target frontmost, .privateState CGEventSource, generation-superseded
+    SnippetHotkeys.swift              # per-pin KeyboardShortcuts.Name("snippet-<uuid>"); sync() registers/removeHandler as pins come and go
     SidebarView.swift                 # SidebarGrouping-driven, category-sectioned transform list
     UpdaterController.swift           # Sparkle SPUStandardUpdaterController wrapper (+ Debug feed override)
     Info.plist                        # SUFeedURL, SUPublicEDKey, SUEnableAutomaticChecks, SUScheduledCheckInterval
@@ -178,6 +180,7 @@ These are load-bearing; most were established the hard way (see "Things that hav
 - **Content kinds:** a transform that is *meant for* a kind sets `applicableKinds`; the palette promotes it, never hides others. Detection heuristics live only in `ContentDetector`.
 - **Poll the pasteboard on change, not on the tick.** `PasteboardMonitor` reads `NSPasteboard.general` at most once per `changeCount` change — never on a bare timer tick with no change — and reads rich content (RTFD) only when a rich type (`.rtf`/`.rtfd`/`.html`) is actually declared, the same Plan 2a lesson `ClipboardBridge` already relies on. Any new capture source must read the same way: sample types first, read once, and never assume a tick means new content.
 - **Capture filters get a `CaptureContext` built before the read and refreshed after it.** Attribution comes from the tracker's newest activation; exclusion checks every app the tracker saw within the poll window *plus* the live `NSWorkspace.frontmostApplication` id (unioned into `recentBundleIDs` as a fail-closed cross-check, never used for attribution). Don't remove either half.
+- Accessibility is requested only to post ⌘V (`SnippetPaster`); Pastefix never installs an event tap or observes keystrokes — keep it that way. A ⌘V is posted only after all modifiers are released and the target is verified frontmost; on any doubt, copy-only.
 - `OutputModeTransformer` is the only channel by which a transform influences Save. Render at save time from the live buffer; never cache rendered output on the document. Rendered HTML goes through the URL-scheme allowlist, and the RTF conversion input has `<img>` stripped so Save never touches the network.
 - **Browsing UIs stay dumb:** the ⌘K palette reads `enabledTransformers()` (applicable-first) and the sidebar reads `browsableTransformers()` (plain user order, no detection promotion, so a browse surface doesn't reshuffle with the clipboard); both render whatever a pure AppCore function hands back — ranking (`TransformSearch`), grouping (`SidebarGrouping`), and applicable-first ordering (`PaletteOrdering`) are pure functions in `PastefixAppCore`, not view logic. A view should never re-sort or re-filter the list itself.
 
@@ -285,6 +288,7 @@ When you **significantly expand the project** — a new target, subsystem, scrip
 | 6 — Clipboard history | `HistoryStore`, `PasteboardMonitor`, ⌘⇧V overlay, Settings | ✅ merged — PR #33 (`ba2793a`) — [spec](docs/specs/2026-09-21-pastefix-v2-clipboard-history.md), [plan](docs/plans/2026-09-21-pastefix-v2-clipboard-history.md) |
 | 7 — Sensitive-app exclusion | AppExclusionFilter, FrontmostAppTracker, Privacy tab, menu-bar pause | ✅ merged — PR #34 (`b2b5166`) — [spec](docs/specs/2026-09-21-pastefix-v2-sensitive-app-exclusion.md), [plan](docs/plans/2026-09-21-pastefix-v2-sensitive-app-exclusion.md) |
 | 8 — Markdown ↔ rich text | MarkdownHTML, MarkdownFromRich, OutputMode, Rich Text category | 🟡 in progress, branch feat/markdown-rich-text — [spec](docs/specs/2026-09-21-pastefix-v2-markdown-rich-text.md), [plan](docs/plans/2026-09-21-pastefix-v2-markdown-rich-text.md) |
+| 9 — Pinned snippets | pin/unpin, Pinned section, ⇧↵ paste, per-snippet hotkeys, Snippets tab | 🟡 in progress, branch feat/pinned-snippets — [spec](docs/specs/2026-09-21-pastefix-v2-pinned-snippets.md), [plan](docs/plans/2026-09-21-pastefix-v2-pinned-snippets.md) |
 
 Historical reference material for the 2007 and 2019 incarnations is vendored under [`docs/inputs/legacy/`](docs/inputs/legacy/).
 

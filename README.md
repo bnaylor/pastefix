@@ -44,12 +44,21 @@ History lives in `~/Library/Application Support/Pastefix/history/`, readable onl
 
 **Excluded apps.** Settings → Privacy also has an Excluded Apps list, seeded with common password managers (1Password, Bitwarden, Keychain Access, Apple Passwords, and others) — copies made in a listed app are never read into history, let alone recorded. (Summoning the editor with ⌘⇧C still reads whatever is on the clipboard, because you asked for it; saving from the editor writes it back, and that write is recorded like any other.) Add an app from `/Applications` or by typing its bundle identifier, remove entries, or **Restore Defaults** to get back the seed list. The app you copied from is decided *before* the clipboard is read, from whichever app was frontmost; if you switch apps within a second of copying, both the app you copied from and the app you switched to are treated as possible sources and the copy is skipped if either is excluded. One caveat: a browser extension's copy comes from the browser itself, not the password manager, so bundle-id exclusion can't catch it — those are instead skipped whenever the extension marks the copy concealed, which 1Password, Bitwarden, and Apple's own extensions all do.
 
+## Pinned snippets (Plan 9)
+
+Pin anything you want to keep past the normal history cap. Pin from the history overlay by highlighting a row and pressing **⌘P** (untitled), or from the editor with the pin button in the toolbar / **⌘⇧P**, which opens a popover for an optional title. Pinned items get their own **Pinned** section above History in the ⌘⇧V/⌘Y overlay, sorted newest-pinned first, and are exempt from the item cap and byte eviction — they never age out. **⇧↵** works on any row, pinned or not: it copies the item, hides the panel, and pastes it into whichever app was frontmost before you summoned Pastefix.
+
+**Per-snippet hotkeys.** Settings → Snippets lists every pin with an editable title, its own global-shortcut recorder, and Unpin. Recording a shortcut there and pressing it anywhere writes the snippet to the clipboard and sends ⌘V to the frontmost app; two pins can't be bound to the same combo. The first time a snippet hotkey (or ⇧↵) actually needs to press ⌘V for you, Pastefix asks for Accessibility permission — the only thing that permission is used for. Until it's granted, hotkeys still copy the snippet and beep once so you know to paste it yourself; ⇧↵ from the overlay copies and hides silently either way. Images can't be pinned yet.
+
+Clear History (Settings → Privacy) keeps your pinned snippets; only "Clear Everything" removes them too.
+
 ## Settings (Plan 2b)
 
-Pastefix includes a Settings window (⌘, or "Settings…" in the menu) with four tabs:
+Pastefix includes a Settings window (⌘, or "Settings…" in the menu) with five tabs:
 
 - **General:** Configure wrap width (default 400 columns), toggle auto-hide-on-blur (dismisses the panel when focus leaves), and choose a custom folder for user scripts (default `~/.config/pastefix/scripts/`).
-- **Privacy:** A **History** section (remember-history toggle, item-count stepper, Clear History) and an **Excluded Apps** section (add/remove apps whose copies are never read into history, Restore Defaults).
+- **Privacy:** A **History** section (remember-history toggle, item-count stepper, and a Clear History dialog offering "Clear N items" — unpinned only — or "Clear Everything") and an **Excluded Apps** section (add/remove apps whose copies are never read into history, Restore Defaults).
+- **Snippets:** An Accessibility status line ("ready" / "needs Accessibility permission", with a shortcut to open System Settings) and a list of pinned snippets, each with an editable title, a per-snippet global-shortcut recorder, and Unpin.
 - **Shortcut:** Rebind the global hotkey (default ⌘⇧C) and the history hotkey (default ⌘⇧V), each using an interactive keyboard recorder.
 - **Transforms:** Enable/disable individual transforms and drag to reorder them in the palette.
 

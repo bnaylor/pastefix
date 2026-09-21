@@ -13,6 +13,49 @@ timestamp: 2026-09-21T08:00:00Z
 Source: [issue #17](https://github.com/bnaylor/pastefix/issues/17). Builds on Plan 6
 (history store + overlay), Plan 7 (`FrontmostAppTracker`), and Plan 8 (rich items).
 
+## Amendments (post-implementation)
+
+The plan below was written before implementation; these are where the shipped code differs.
+
+1. **Shortcut names use a hyphen, not a dot.** `KeyboardShortcuts` rejects names containing
+   `.` (`isValidShortcutName`), so the per-pin name is `snippet-<uuid>`, not `snippet.<uuid>`.
+   Unpinning calls `KeyboardShortcuts.reset(name)` *then* `removeHandler(for: name)` — reset
+   first, so a re-pinned item starts with no recorded shortcut rather than inheriting the old
+   binding. `SnippetRow`'s `KeyboardShortcuts.Recorder` uses `.shortcutValidation` to refuse a
+   combo already bound to another pinned snippet (the library only checks against menu items
+   and system shortcuts, not sibling recorders).
+2. **`unpin` gives the item a fresh `capturedAt` and reinserts it at the top of `items`**,
+   rather than restoring its original capture position, and then re-applies `enforceLimits()`.
+   Unpinning a long-lived pin therefore always rejoins history as the newest item — it is never
+   immediately evicted by the cap it had been exempt from.
+3. **`clear()` and `clearAll()` are two separate methods, not one dialog-parameterized call.**
+   `clear()` removes unpinned items only (pins and their blobs survive); `clearAll()` removes
+   everything, including pins. The Privacy tab's confirmation offers both as separate buttons:
+   "Clear N items" (unpinned count) and "Clear Everything (N)" (total count).
+4. **Paste mechanics are more involved than "wait ~150ms, post ⌘V":** `SnippetPaster.paste`
+   writes the clipboard and requests activation synchronously, then polls every 20ms (up to a
+   1s deadline) for two conditions to hold together — no blocking modifier
+   (shift/control/option/command) is physically down, and the target process is really
+   frontmost — before posting ⌘V exactly once. Caps Lock is deliberately excluded from the
+   watched modifiers (it latches and would never clear). A timeout posts nothing; the clipboard
+   already has the snippet. The event is built from a `.privateState` `CGEventSource` (not
+   `.combinedSessionState`, which would merge in live hardware modifiers) carrying only
+   `.maskCommand`. A newer `paste` call bumps a generation counter that supersedes any older
+   pending post. The target is refused (copy-only, nothing posted) when it is `nil`,
+   terminated, Pastefix itself, or its activation request is refused. The hotkey path
+   (`SnippetHotkeys`) beeps on a copy-only outcome, since it has no UI to report through; the
+   overlay path (`pasteIntoPreviousApp`) is silent because the panel is visible feedback enough.
+5. **`pasteIntoPreviousApp` posts the paste (and activates the target) *before* calling
+   `endSession()` to hide the panel** — not after. Activation has to be requested while Pastefix
+   is still the active app so it can hand off cooperatively; requesting it after hiding asks for
+   an activation Pastefix no longer owns, which macOS is more likely to refuse or reorder. "The
+   previous app" is `FrontmostAppTracker.previousApp` — the most recent non-Pastefix app the
+   tracker saw activated — injected into `AppModel` via `previousAppProvider`.
+6. **⌘P in the overlay re-points the highlight at the toggled item after re-ranking.** Pinning
+   or unpinning re-sorts `results` (pins move to/from the Pinned section), so `togglePinSelected`
+   looks up the toggled item's new index and moves `selection` there — otherwise a second ⌘P
+   (the natural "undo that") would land on a different row.
+
 ## Scope
 
 **In scope:**
@@ -53,9 +96,9 @@ pinning from the ⌘K palette (transforms only).
 | ⌘P in the overlay | Toggles pin on the highlighted row, untitled; titles are set from the editor popover or Settings | Keeps the overlay keyboard-only; a title prompt there would steal focus from search. |
 | ⇧↵ | Copy the row to the clipboard, hide the panel, activate the previous app, send ⌘V; falls back to copy + hide when not trusted | The CopyClip loop in one keystroke; applies to every row, not only pins. |
 | Previous app | `FrontmostAppTracker.previousApp` — the most recent non-Pastefix `NSRunningApplication` it saw | Already tracking activations for Plan 7. |
-| Sending ⌘V | `CGEvent` key down/up for virtual key 9 with `.maskCommand`, posted to `.cghidEventTap`, ~150 ms after activating the target | The standard approach; needs Accessibility (`AXIsProcessTrusted`). |
+| Sending ⌘V | `CGEvent` key down/up for virtual key 9 with `.maskCommand` from a `.privateState` source, posted to `.cghidEventTap` only once shift/control/option/command are all up and the target is verified frontmost (polled every 20 ms, 1 s deadline; timeout posts nothing) | The standard approach; needs Accessibility (`AXIsProcessTrusted`). Waiting on modifiers and frontmost avoids posting a chord (e.g. ⌥⌘V) or into the wrong app — see Amendment 4. |
 | Permission UX | `SnippetPaster.ensureTrusted()` calls `AXIsProcessTrustedWithOptions` with the prompt option at most once per launch; the Snippets tab shows "Paste with hotkey: ready / needs Accessibility" and an "Open System Settings" button | The system prompt is the canonical UI; we only add status and a shortcut to the pane. |
-| Hotkey identity | `KeyboardShortcuts.Name("snippet.<uuid>")`; unpin resets and disables it | The library persists bindings by name in UserDefaults; deriving from the id makes cleanup exact. |
+| Hotkey identity | `KeyboardShortcuts.Name("snippet-<uuid>")` (hyphen — the library rejects a dot); unpin resets the recorded shortcut, then removes the handler | The library persists bindings by name in UserDefaults; deriving from the id makes cleanup exact. See Amendment 1. |
 | Hotkey action | Write clipboard (text + RTFD when present) → paste into `NSWorkspace.frontmostApplication` (no activation needed) | The user is already where they want the text. |
 | Unpin in Settings | "Unpin" (item returns to normal history, subject to eviction), not delete | Least destructive; ⌘⌫ in the overlay still deletes. |
 
@@ -95,20 +138,24 @@ first, then original index. `HistorySearchResult` unchanged.
   frontmost app if that isn't us.
 - **`SnippetPaster.swift`** (new, `@MainActor enum`):
   ```swift
-  enum PasteOutcome { case pasted, copiedOnly }
+  enum Outcome { case pasted, copiedOnly }
   static var isTrusted: Bool { AXIsProcessTrusted() }
   static func ensureTrusted() -> Bool   // prompts via AXIsProcessTrustedWithOptions once per launch
-  static func paste(text: String, richRTFD: Data?, into app: NSRunningApplication?) -> PasteOutcome
+  static func paste(text: String, richRTFD: Data?, into app: NSRunningApplication?) -> Outcome
       // ClipboardBridge.write(text:richRTFD:imagePNG:nil); guard isTrusted else { _ = ensureTrusted(); return .copiedOnly }
-      // if let app, !app.isActive { app.activate() }; after 150 ms post ⌘V (key 9) down+up via CGEvent
+      // reject nil/terminated/self as a target; else activate(from:.current) and schedule postWhenReady
+      // postWhenReady polls every 20ms (1s deadline) until no blocking modifier is down AND the
+      // target is frontmost, then posts ⌘V once via a .privateState CGEventSource — see Amendment 4
   static func openAccessibilitySettings()  // x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility
   ```
 - **`SnippetHotkeys.swift`** (new, `@MainActor final class`): owns `registered: Set<UUID>`;
   `sync(pins:)` registers `KeyboardShortcuts.onKeyUp(for: name(id))` for new ids (handler:
   look the item up by id in the store at fire time, then `SnippetPaster.paste(into: NSWorkspace.shared.frontmostApplication)`)
-  and, for ids no longer pinned, `KeyboardShortcuts.reset(name)` + `disable(name)`.
-  Handlers stay registered for the process lifetime (the library has no unregister); a
-  handler whose id is no longer pinned is a no-op. `static func name(for id: UUID) -> KeyboardShortcuts.Name`.
+  and, for ids no longer pinned, `KeyboardShortcuts.reset(name)` followed by
+  `KeyboardShortcuts.removeHandler(for: name)` — reset first, so a later re-pin of the same id
+  starts with no recorded shortcut rather than inheriting the old binding. `static func
+  name(for id: UUID) -> KeyboardShortcuts.Name` returns `snippet-<uuid>` (hyphen, not dot; see
+  Amendment 1).
 - **`AppDelegate`**: owns `snippetHotkeys`; calls `sync` at launch and on
   `history.$items` changes (debounced 200 ms, main queue, `removeDuplicates` on the set of
   pinned ids).
@@ -160,7 +207,7 @@ tier tie → pin first. `HistoryFormattingTests`: unchanged.
 Automated app pass (controller): ⌘⇧V, highlight, ⌘P → index shows `pinned: true`; relaunch
 keeps it; cap 20 with 25 captures keeps the pin; editor ⌘⇧P with a title → pinned item with
 title; Settings recorder can't be driven by AX reliably → bind the hotkey by writing the
-KeyboardShortcuts UserDefaults entry for `snippet.<uuid>` (documented in the plan),
+KeyboardShortcuts UserDefaults entry for `snippet-<uuid>` (documented in the plan),
 relaunch, open TextEdit, press the combo via System Events, read the TextEdit document →
 text present (requires Accessibility granted to the Debug build — one manual click); ⇧↵ from
 the overlay with TextEdit as the previous app pastes there. Screenshot: Pinned section.
