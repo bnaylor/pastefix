@@ -56,6 +56,14 @@ import Testing
         #expect(ScriptMetadata.parse("# pastefix: name = X").kinds == nil)
     }
 
+    /// The camelCase kinds are matched case-insensitively against the raw values, so a header can
+    /// spell them naturally ("percentEncoded") or flat ("percentencoded").
+    @Test func parsesCamelCaseKindsCaseInsensitively() {
+        #expect(ScriptMetadata.parse("# pastefix: kinds = percentEncoded, HTMLEntities").kinds == [.percentEncoded, .htmlEntities])
+        #expect(ScriptMetadata.parse("# pastefix: kinds = percentencoded").kinds == [.percentEncoded])
+        #expect(ScriptMetadata.parse("# pastefix: kinds = htmlentities").kinds == [.htmlEntities])
+    }
+
     @Test func parsesCategory() {
         #expect(ScriptMetadata.parse("# pastefix: category = Text").category == "Text")
         #expect(ScriptMetadata.parse("# pastefix: category =   Spaced Out  ").category == "Spaced Out")

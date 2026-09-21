@@ -122,9 +122,17 @@ struct PanelView: View {
             .keyboardShortcut(isPaletteOpen ? nil : KeyboardShortcut("k", modifiers: .command))
             .disabled(model.isApplying)
             .accessibilityLabel("Find a transform")
+            if let color = model.detectedColor {
+                RoundedRectangle(cornerRadius: 3)
+                    .fill(Color(.sRGB, red: color.red, green: color.green, blue: color.blue, opacity: color.alpha))
+                    .overlay(RoundedRectangle(cornerRadius: 3).strokeBorder(.secondary.opacity(0.4), lineWidth: 0.5))
+                    .frame(width: 14, height: 14)
+                    .accessibilityLabel("Detected color \(color.cssHex)")
+            }
             if let summary = model.detectedSummary {
                 Text("Detected: \(summary)")
                     .font(.caption)
+                    .lineLimit(1)
                     .foregroundStyle(.secondary)
                     .accessibilityLabel("Detected content: \(summary)")
             }

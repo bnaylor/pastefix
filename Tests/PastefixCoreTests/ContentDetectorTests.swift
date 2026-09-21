@@ -31,5 +31,44 @@ import Foundation
     @Test func displayNames() {
         #expect(ContentKind.url.displayName == "URL")
         #expect(ContentKind.json.displayName == "JSON")
+        #expect(ContentKind.color.displayName == "Color")
+        #expect(ContentKind.jwt.displayName == "JWT")
+        #expect(ContentKind.base64.displayName == "Base64")
+        #expect(ContentKind.percentEncoded.displayName == "Percent-encoded")
+        #expect(ContentKind.htmlEntities.displayName == "HTML entities")
+        #expect(ContentKind.allCases.count == 7)
+    }
+    @Test func colorKind() {
+        #expect(ContentDetector.detect("#ff0080") == [.color])
+        #expect(ContentDetector.detect(" hsl(120 50% 50%) ") == [.color])
+        #expect(ContentDetector.detect("use #fff for white") == [])
+    }
+    @Test func jwtKindExcludesBase64() {
+        let t = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"
+        #expect(ContentDetector.detect(t) == [.jwt])
+    }
+    @Test func base64Kind() {
+        #expect(ContentDetector.detect("SGVsbG8sIHdvcmxkLiBUaGlzIGlzIHRleHQu") == [.base64])
+        #expect(ContentDetector.detect("SGVsbG8sIHdv\ncmxkLiBUaGlzIGlzIHRleHQu") == [.base64])
+        #expect(ContentDetector.detect("aMOpbGxv") == [])                    // too short
+        #expect(ContentDetector.detect("internationalization") == [])       // decodes to junk
+        #expect(ContentDetector.detect("AAAAAAAAAAAAAAAA") == [])            // NULs
+    }
+    @Test func percentEncodedKind() {
+        #expect(ContentDetector.detect("see a%20b in prose") == [.percentEncoded])
+        #expect(ContentDetector.detect("100% sure") == [])
+    }
+    @Test func htmlEntitiesKind() {
+        #expect(ContentDetector.detect("Tom &amp; Jerry") == [.htmlEntities])
+        #expect(ContentDetector.detect("caf&eacute; &#8212; &#x2014;") == [.htmlEntities])
+        #expect(ContentDetector.detect("Tom & Jerry; fine") == [])
+    }
+    @Test func decodedJWTOutputIsNotReDetected() async throws {
+        let t = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"
+        let out = try await JWTDecode().apply(.init(text: t))
+        // The trailing comment lines break strict JSON; the detector sees the leading "{" and JSONSerialization fails → not json.
+        // That is acceptable: document it. Assert only that it is not mis-detected as jwt/base64.
+        #expect(ContentDetector.detect(out).isDisjoint(with: [.jwt, .base64]))
+        #expect(!ContentDetector.detect(out).contains(.json))
     }
 }

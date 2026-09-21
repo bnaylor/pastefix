@@ -24,6 +24,9 @@ public enum TransformError: Error, Equatable {
     case timeout
     case nonZeroExit(code: Int32, stderr: String)
     case scriptFailed(String)
+    /// Input could not be interpreted by the transform (bad Base64, malformed JSON, not a
+    /// colour…). The buffer is left unchanged.
+    case invalidInput(String)
 }
 
 public protocol Transformer: Identifiable, Sendable {
@@ -52,7 +55,9 @@ public enum TransformCategory {
     public static let characters = "Characters"
     public static let urls = "URLs"
     public static let `case` = "Case"
+    public static let data = "Data"
+    public static let colors = "Colors"
     public static let scripts = "Scripts"
     /// Display order for the built-in categories; custom ones follow alphabetically, then Scripts.
-    public static let builtinOrder = [layout, characters, urls, `case`]
+    public static let builtinOrder = [layout, characters, urls, `case`, data, colors]
 }

@@ -33,6 +33,20 @@ public struct TransformerRegistry {
             (71, "snake_case", CaseConvert(style: .snake)),
             (72, "kebab-case", CaseConvert(style: .kebab)),
             (73, "CONSTANT_CASE", CaseConvert(style: .constant)),
+            (80, "JSON Prettify", JSONPrettify()),
+            (81, "JSON Minify", JSONMinify()),
+            (82, "Escape as JSON String", JSONEscape()),
+            (90, "Base64 Encode", Encode(codec: .base64)),
+            (91, "Base64 Decode", Decode(codec: .base64)),
+            (92, "URL Encode", Encode(codec: .url)),
+            (93, "URL Decode", Decode(codec: .url)),
+            (94, "HTML Encode", Encode(codec: .html)),
+            (95, "HTML Decode", Decode(codec: .html)),
+            (96, "Decode JWT", JWTDecode()),
+            (100, "Color → CSS Hex", ColorConvert(style: .hex)),
+            (101, "Color → CSS rgb()", ColorConvert(style: .rgb)),
+            (102, "Color → CSS hsl()", ColorConvert(style: .hsl)),
+            (103, "Color → SwiftUI Color", ColorConvert(style: .swift)),
         ]
 
         for url in discoverScriptFiles() {

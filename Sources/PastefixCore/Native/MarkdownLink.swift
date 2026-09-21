@@ -201,30 +201,7 @@ public struct URLSessionTitleFetcher: TitleFetcher {
         return collapsed.isEmpty ? nil : collapsed
     }
 
-    static func decodeEntities(_ s: String) -> String {
-        var out = s
-        // Numeric references first so "&amp;#39;" style double-encoding isn't mis-decoded.
-        for pattern in ["&#x([0-9A-Fa-f]+);", "&#([0-9]+);"] {
-            let options: NSRegularExpression.Options = pattern.contains("x") ? [.caseInsensitive] : []
-            guard let re = try? NSRegularExpression(pattern: pattern, options: options) else { continue }
-            let ns = out as NSString
-            var result = out
-            for m in re.matches(in: out, range: NSRange(location: 0, length: ns.length)).reversed() {
-                let digits = ns.substring(with: m.range(at: 1))
-                let code = pattern.contains("x") ? UInt32(digits, radix: 16) : UInt32(digits)
-                if let code, let scalar = Unicode.Scalar(code), let r = Range(m.range, in: result) {
-                    result.replaceSubrange(r, with: String(Character(scalar)))
-                }
-            }
-            out = result
-        }
-        // Named references in a fixed order, with "&amp;" last, so "&amp;lt;" decodes to the
-        // literal text "&lt;" rather than "<" — Dictionary iteration order would make this
-        // nondeterministic.
-        let named: [(String, String)] = [("&lt;", "<"), ("&gt;", ">"), ("&quot;", "\""), ("&apos;", "'"), ("&nbsp;", " "), ("&amp;", "&")]
-        for (k, v) in named { out = out.replacingOccurrences(of: k, with: v) }
-        return out
-    }
+    static func decodeEntities(_ s: String) -> String { HTMLEntities.decode(s) }
 }
 
 /// Refuses a redirect whose destination we would not have fetched in the first place — an

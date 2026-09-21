@@ -75,10 +75,18 @@ This plan adds the consumers.
 - `jwt`: `JWTDecoder.split(t)` succeeds — exactly two dots, three non-empty
   base64url segments (the third may be empty for `alg: none`), and the first
   decodes to a JSON object containing `"alg"`.
-- `base64`: not `jwt`; after removing ASCII whitespace `t` is ≥ 16 characters,
-  matches `^[A-Za-z0-9+/]+={0,2}$` or the base64url alphabet, decodes via
-  `Data(base64Encoded:options:.ignoreUnknownCharacters)` after padding to a
-  multiple of 4, and the result is valid UTF-8 containing no NUL bytes.
+- `base64`: not `jwt`; `Base64Codec.looksLikeBase64(t)`. *(Amended in review —
+  this paragraph now describes what shipped rather than what was planned; see
+  `e2b0807`.)* That is ≥ 16 characters after whitespace is filtered out, then
+  `Base64Codec.decodeText`: whitespace filtered, `-`/`_` folded to `+`/`/`, any
+  trailing `=` stripped and re-padded to a multiple of 4, the remaining
+  characters validated as ASCII alphanumerics plus `+` and `/` (so the
+  alphabet is checked explicitly rather than delegated), decoded with
+  `Data(base64Encoded:)` **without** `.ignoreUnknownCharacters` — the option
+  would silently drop junk and make almost any prose "decode" — and the bytes
+  required to be NUL-free valid UTF-8. `looksLikeBase64` then additionally
+  requires the decoded text to be printable: tab/newline/CR are allowed, but no
+  other C0 control, no DEL, and no C1 control (0x80–0x9F).
 - `percentEncoded`: `t` contains the regex `%[0-9A-Fa-f]{2}`.
 - `htmlEntities`: `t` contains `&(#[0-9]+|#x[0-9A-Fa-f]+|[A-Za-z][A-Za-z0-9]{1,31});`.
 
@@ -103,6 +111,16 @@ hex uses `Int((c * 255).rounded())`; HSL prints integer degrees and integer
 percentages; alpha prints up to 3 decimals with trailing zeros trimmed
 (`0.5`, `0.333`).
 
+*Amended in review (`15a2b7e`):* `parseHex` rejects hex digits that satisfy
+`Character.isHexDigit` but are not ASCII (e.g. fullwidth digits), since
+`UInt8(_:radix:)` rejects them and would otherwise force-unwrap to a crash.
+Numeric parsing (`channel`, `hue`, alpha, percent) rejects non-finite `Double`
+values (`nan`, `inf`, `-inf`) and hex-float tokens (anything containing `x`,
+e.g. `0x1p3`) that `Double.init(_:)` would otherwise accept — both survive
+naive `min`/`max` clamping. Separately, `hasAlpha` gates on the *rounded*
+8-bit alpha (`Int((alpha * 255).rounded()) < 255`), not the raw `Double`, so
+an alpha of `0.9999` (rounds to 255) prints with no alpha channel at all.
+
 **`Native/JSONActions.swift`** (new) — three transforms:
 
 | id | name | order | kinds | behaviour |
@@ -112,6 +130,14 @@ percentages; alpha prints up to 3 decimals with trailing zeros trimmed
 | `builtin.json.escape` | Escape as JSON String | 82 | nil | Wraps the entire buffer as one JSON string literal (quotes, backslashes, control chars, newlines escaped); never fails. |
 
 `.sortedKeys` is a deliberate choice: deterministic output. Note it in README.
+
+*Amended in review (`e2b0807`):* `JSONReformat.render` also guards non-finite
+numbers. `JSONSerialization.data(withJSONObject:)` raises an Objective-C
+exception rather than throwing a Swift error — uncatchable by `try` — and a
+value like `-1e400` parses to `-inf` and would abort the process on write.
+`render` checks `isValidJSONObject` first (allowing the safe scalar fragments
+`String`/`NSNull`/finite `NSNumber`) and throws
+`invalidInput("Not valid JSON: number out of range")` instead of writing.
 
 **`Native/Encoders.swift`** (new) — one `enum Codec { case base64, url, html }`
 and two structs `Encode(codec:)` / `Decode(codec:)`, registered as six
@@ -133,8 +159,16 @@ transforms:
   RFC 3986 unreserved set (`A–Z a–z 0–9 - . _ ~`) so `&`, `=`, `/`, space are
   all encoded (query-component semantics; space → `%20`, not `+`). Decode via
   `removingPercentEncoding`; `+` is left alone (predictable; form-encoding's
-  `+`-for-space is not assumed). `removingPercentEncoding == nil` → `invalidInput("Malformed percent-encoding")`.
-- HTML: encode `& < > " '` → `&amp; &lt; &gt; &quot; &#39;`. Decode reuses
+  `+`-for-space is not assumed). A `%(?![0-9A-Fa-f]{2})` pre-check rejects a `%`
+  that does not introduce two hex digits before decoding — `removingPercentEncoding`
+  returns the string unchanged for some malformed inputs rather than nil, so the
+  nil check alone would let `100%` through as a silent no-op. Either path →
+  `invalidInput("Malformed percent-encoding")`.
+- HTML: numeric references to C0 controls other than tab/LF/CR (`&#0;`,
+  `&#x1F;`) are **left verbatim** rather than decoded — splicing a NUL into the
+  working buffer truncates the value for anything downstream that speaks C
+  strings, and the rest are invisible rather than useful.
+  Encode `& < > " '` → `&amp; &lt; &gt; &quot; &#39;`. Decode reuses
   `URLSessionTitleFetcher.decodeEntities` (moved to a shared internal
   `HTMLEntities.decode` in `Detection/` or `Native/`, with the existing named
   table extended to the HTML4 Latin-1 set: `nbsp iexcl cent pound … yuml`
@@ -158,6 +192,11 @@ numbers; the `(expired)`/`(valid)` suffix compares `exp` with the current date.
 A payload that is not a JSON object still decodes (arrays/scalars are printed
 as-is). Failure to decode either segment → `invalidInput("Not a decodable JWT")`.
 
+*Amended in review (`e2b0807`):* a timestamp claim is skipped (no comment
+line) when its JSON value is a boolean or falls outside `0...32_503_680_000`
+epoch seconds (roughly year 1970–3000) — `NSNumber` bridges `true`/`false` as
+1/0, and an absurd magnitude is not a meaningful date to render.
+
 **`Native/ColorConvert.swift`** (new) — one struct `ColorConvert(style:)`:
 
 | id | name | order | style output |
@@ -167,7 +206,7 @@ as-is). Failure to decode either segment → `invalidInput("Not a decodable JWT"
 | `builtin.color.hsl` | Color → CSS hsl() | 102 | `cssHSL` |
 | `builtin.color.swift` | Color → SwiftUI Color | 103 | `swiftUI` |
 
-All `[color]`. Input that fails to parse → `invalidInput("Not a colour literal")`.
+All `[color]`. Input that fails to parse → `invalidInput("Not a color literal")`.
 
 **`Transformer.swift`** — `TransformError` gains `case invalidInput(String)`.
 `TransformCategory` gains `data`, `colors`; `builtinOrder` becomes
@@ -190,7 +229,8 @@ add the explicit case for a clean message).
 - `PanelView.actionBar`: when `model.detectedColor` is non-nil, a
   `RoundedRectangle(cornerRadius: 3).fill(Color(red:green:blue:opacity:))`
   14×14 with a hairline secondary stroke, placed before the "Detected: …" text,
-  `.accessibilityLabel("Detected colour \(literal.cssHex)")`.
+  `.accessibilityLabel("Detected color \(literal.cssHex)")` (US spelling, matching
+  the transform names).
 - `AppModel.detectedSummary` unchanged (the new display names flow through).
 
 ## Data flow
@@ -199,9 +239,17 @@ Summon with `#ff0080` → detector returns `[.color]` → action bar shows a
 magenta swatch and "Detected: Color" → ⌘K lists the four Color transforms
 first → ↵ on "Color → CSS hsl()" → `ColorConvert.apply` → buffer becomes
 `hsl(330 100% 50%)` → still `[.color]`, swatch unchanged. Summon with a JWT →
-`[.jwt]` → "Decode JWT" first → output is JSON → detector now says `[.json]` →
-JSON Prettify/Minify promoted. Summon with prose containing `%20` →
-`[.percentEncoded]` → URL Decode promoted; applying it decodes in place.
+`[.jwt]` → "Decode JWT" first → output is pretty JSON followed by trailing
+`// exp: …` / `// signature not verified` comment lines. Summon with prose
+containing `%20` → `[.percentEncoded]` → URL Decode promoted; applying it
+decodes in place.
+
+*Amended in review:* the JWT output is **not** re-detected as `[.json]`. The
+`json` kind requires the trimmed buffer to parse outright
+(`JSONSerialization.jsonObject`), and the trailing `//` comment lines are not
+valid JSON, so parsing fails and JSON Prettify/Minify are never promoted for
+a just-decoded JWT — the sentence above describing that promotion was wrong
+and is corrected here.
 
 ## Error handling
 
@@ -240,7 +288,8 @@ JSON Prettify/Minify promoted. Summon with prose containing `%20` →
 - `ContentDetectorTests` additions: each new kind's positive; negatives:
   `#fff` in prose (not `color`), a 15-char base64, base64 that decodes to
   binary, a JWT not also flagged `base64`, prose with `%` but no hex pair,
-  `&` without `;`; and combined `[.json]` after JWT decode output.
+  `&` without `;`; and that JWT decode output is not re-detected as JSON (the
+  trailing comment lines break strict JSON).
 - `TransformerRegistryTests`: ids/orders/categories for the fourteen;
   `builtinOrder` has six entries.
 - Every new transform's `metadata()` test asserts id, name, category, kinds.

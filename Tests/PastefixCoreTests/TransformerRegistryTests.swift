@@ -18,6 +18,10 @@ import Foundation
             "builtin.richtoplain", "builtin.transliterate", "builtin.wrapreflow", "builtin.whitespace",
             "builtin.urlclean", "builtin.markdownlink",
             "builtin.case.camel", "builtin.case.snake", "builtin.case.kebab", "builtin.case.constant",
+            "builtin.json.pretty", "builtin.json.minify", "builtin.json.escape",
+            "builtin.base64.encode", "builtin.base64.decode", "builtin.url.encode", "builtin.url.decode",
+            "builtin.html.encode", "builtin.html.decode", "builtin.jwt.decode",
+            "builtin.color.hex", "builtin.color.rgb", "builtin.color.hsl", "builtin.color.swift",
         ])
     }
 
@@ -47,7 +51,7 @@ import Foundation
         let dir = FileManager.default.temporaryDirectory
             .appendingPathComponent("does-not-exist-\(UUID().uuidString)")
         let reg = TransformerRegistry(config: .init(scriptsDirectory: dir, wrapWidth: 80))
-        #expect(reg.load().count == 10)   // built-ins only, no crash
+        #expect(reg.load().count == 24)   // built-ins only, no crash
     }
 
     @Test func scriptKindsSurfaceAsApplicableKinds() throws {
@@ -72,7 +76,15 @@ import Foundation
         #expect(byID["builtin.urlclean"] == TransformCategory.urls)
         #expect(byID["builtin.markdownlink"] == TransformCategory.urls)
         for style in ["camel", "snake", "kebab", "constant"] { #expect(byID["builtin.case.\(style)"] == TransformCategory.case) }
-        #expect(TransformCategory.builtinOrder == ["Layout", "Characters", "URLs", "Case"])
+        let dataIDs = [
+            "builtin.json.pretty", "builtin.json.minify", "builtin.json.escape",
+            "builtin.base64.encode", "builtin.base64.decode", "builtin.url.encode", "builtin.url.decode",
+            "builtin.html.encode", "builtin.html.decode", "builtin.jwt.decode",
+        ]
+        for id in dataIDs { #expect(byID[id] == TransformCategory.data) }
+        let colorIDs = ["builtin.color.hex", "builtin.color.rgb", "builtin.color.hsl", "builtin.color.swift"]
+        for id in colorIDs { #expect(byID[id] == TransformCategory.colors) }
+        #expect(TransformCategory.builtinOrder == ["Layout", "Characters", "URLs", "Case", "Data", "Colors"])
     }
 
     @Test func scriptCategorySurfaces() throws {
