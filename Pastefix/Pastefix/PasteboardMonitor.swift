@@ -10,9 +10,15 @@ import PastefixAppCore
 /// copy, the user may already have switched apps. The tracker's `CaptureContext` names the app
 /// that was frontmost when the change was noticed plus everyone frontmost within the poll
 /// window, so an exclusion can be applied at stage 1 — before any content is read — even when
-/// the true source is no longer frontmost (Critical Invariant 12). The context is sampled twice,
-/// once for each stage, so stage 2 also sees any app that came forward during the read; the
-/// second, refreshed sample is what lands on the candidate.
+/// the true source is no longer frontmost (Critical Invariant 12).
+///
+/// The context is sampled once per stage. The second sample is NOT a chance to notice an app
+/// that came forward during the read: `tick` holds the main thread throughout, so no activation
+/// notification can be delivered between the two samples (unless the read itself spins the
+/// runloop, which the rich-text importer can). What it buys is that stage 2 judges by the same
+/// rule as stage 1 against the tracker's latest state, including the live
+/// `NSWorkspace.frontmostApplication` cross-check the tracker folds into `recentBundleIDs`.
+/// Attribution on the candidate is the tracker's newest activation, from that second sample.
 @MainActor
 final class PasteboardMonitor {
     private let pasteboard: NSPasteboard
@@ -71,10 +77,11 @@ final class PasteboardMonitor {
             lastChangeCount = count - 1
             return
         }
-        // Stage 2: gate again on the full candidate and on a freshly sampled context — the read
-        // can take real time, and an app that came forward during it is a possible source too —
-        // over the union of the types sampled before and after the read. The union is
-        // load-bearing, not belt-and-braces: because
+        // Stage 2: gate again on the full candidate and on a re-sampled context — the same rule
+        // as stage 1 applied to the tracker's latest state and its live frontmost cross-check
+        // (it will usually be identical to `context`; see the type comment) — over the union of
+        // the types sampled before and after the read. The union is load-bearing, not
+        // belt-and-braces: because
         // `setData`/`setString` do not bump `changeCount` (see above), an unchanged count
         // proves only that nobody called `clearContents`/`declareTypes` again — types can
         // still have been ADDED to this same change since the pre-read sample. A writer that
@@ -83,7 +90,7 @@ final class PasteboardMonitor {
         let finalTypes = Array(Set(types).union(pasteboard.types ?? []))
         let refreshed = tracker.context(window: windowSeconds)
         guard filters.allSatisfy({ $0.shouldCapture(candidate, types: finalTypes, context: refreshed) }) else { return }
-        // Attribution is the refreshed context's source, not anything `read` saw.
+        // Attribution is the tracker's newest activation, not anything `read` saw.
         candidate.sourceBundleID = refreshed.sourceBundleID
         candidate.sourceAppName = refreshed.sourceAppName
         onCapture(candidate)

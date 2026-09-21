@@ -12,13 +12,16 @@ import PastefixAppCore
 @MainActor
 final class FrontmostAppTracker {
     private var entries: [RecentApps.Entry] = []
-    private var observer: NSObjectProtocol?
+    private let workspace: NSWorkspace
     private let retention: TimeInterval = 5
 
     init(workspace: NSWorkspace = .shared) {
+        self.workspace = workspace
         if let app = workspace.frontmostApplication { record(app, at: Date()) }
-        observer = workspace.notificationCenter.addObserver(forName: NSWorkspace.didActivateApplicationNotification,
-                                                            object: workspace, queue: .main) { [weak self] note in
+        // The returned token is deliberately not stored: the notification center owns it, and
+        // this observer is never removed (see the class note above).
+        _ = workspace.notificationCenter.addObserver(forName: NSWorkspace.didActivateApplicationNotification,
+                                                     object: workspace, queue: .main) { [weak self] note in
             guard let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication else { return }
             MainActor.assumeIsolated { self?.record(app, at: Date()) }
         }
@@ -34,8 +37,19 @@ final class FrontmostAppTracker {
     /// Context for a change noticed now: the current app as source, plus everything frontmost
     /// within `window`. An app with no bundle identifier (the empty id above) is never reported
     /// as a source or a recent id — an empty string must not be matchable by an exclusion entry.
+    ///
+    /// `entries` only holds activations the notification stream has already delivered to us, and
+    /// a delivery can lose the race with the poll timer in the same runloop pass (or arrive after
+    /// a main-thread stall such as the TIFF re-encode). So `NSWorkspace.frontmostApplication` is
+    /// cross-checked in and unioned into `recentBundleIDs`: it can only ever WIDEN the set an
+    /// exclusion can match, never change attribution, which stays the newest tracked activation.
+    /// This narrows the window rather than closing it — `NSWorkspace`'s own frontmost cache is
+    /// updated asynchronously too, so a blocked main thread can leave it just as stale as ours.
     func context(window: TimeInterval, now: Date = Date()) -> CaptureContext {
-        let recent = RecentApps.window(entries: entries, now: now, window: window).filter { !$0.isEmpty }
+        var recent = RecentApps.window(entries: entries, now: now, window: window).filter { !$0.isEmpty }
+        if let live = workspace.frontmostApplication?.bundleIdentifier, !live.isEmpty, !recent.contains(live) {
+            recent.insert(live, at: 0)   // newest first
+        }
         let current = entries.last
         return CaptureContext(sourceBundleID: current?.bundleID.isEmpty == false ? current?.bundleID : nil,
                               sourceAppName: current?.appName, recentBundleIDs: recent)
