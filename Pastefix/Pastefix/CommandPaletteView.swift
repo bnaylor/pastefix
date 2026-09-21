@@ -27,7 +27,10 @@ struct CommandPaletteView: View {
                 .accessibilityLabel("Close transform palette")
                 .accessibilityAddTraits(.isButton)
             card
-                .frame(width: 520)
+                .frame(maxWidth: PanelMetrics.paletteCardWidth)
+                // maxWidth + horizontal padding rather than a fixed width: on a panel narrower
+                // than the card, the card shrinks instead of overflowing off both edges.
+                .padding(.horizontal, 24)
                 .padding(.top, 40)
         }
         .onAppear { fieldFocused = true }
@@ -76,11 +79,22 @@ struct CommandPaletteView: View {
             }
             .font(.caption).foregroundStyle(.secondary)
             .padding(.horizontal, 12).padding(.vertical, 8)
+            // ⌘K toggles: while the palette is open the action bar's button is under the
+            // backdrop, so the shortcut lives here instead (PanelView drops its binding for as
+            // long as we exist, so only one ⌘K is ever registered). Zero-sized and transparent
+            // rather than `.hidden()`, which would still reserve a button's worth of layout.
+            Button("Close transform palette", action: onClose)
+                .keyboardShortcut("k", modifiers: .command)
+                .frame(width: 0, height: 0)
+                .opacity(0)
+                .accessibilityHidden(true)
         }
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
         .shadow(radius: 20)
         .onKeyPress(.upArrow) { move(-1, count: items.count); return .handled }
         .onKeyPress(.downArrow) { move(+1, count: items.count); return .handled }
+        // Cancel's `.cancelAction` already closes the palette first; this is a harmless
+        // duplicate that keeps Esc working even if that button is ever disabled or removed.
         .onKeyPress(.escape) { onClose(); return .handled }
     }
 
@@ -88,9 +102,11 @@ struct CommandPaletteView: View {
         HStack {
             VStack(alignment: .leading, spacing: 2) {
                 Text(highlightedName(result))
-                if let category = result.transformer.category {
-                    Text(category).font(.caption).foregroundStyle(.secondary)
-                }
+                // Uncategorised transforms are shown under "Scripts" in the sidebar; the
+                // subtitle says the same thing so the two surfaces agree.
+                Text(result.transformer.category ?? TransformCategory.scripts)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
             Spacer()
             if isSelected {

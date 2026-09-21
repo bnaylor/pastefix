@@ -16,11 +16,14 @@ struct PanelView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            toolbar
-            Divider()
-            HStack(spacing: 0) {
-                ZStack {
+        // The palette is a sibling of the whole panel, not of the editor: its backdrop has to
+        // dim and swallow clicks for the toolbar, sidebar and action bar too, or a "modal"
+        // overlay would leave live controls showing through around its edges.
+        ZStack {
+            VStack(spacing: 0) {
+                toolbar
+                Divider()
+                HStack(spacing: 0) {
                     VStack(spacing: 0) {
                         TextEditor(text: workingBinding)
                             .font(.system(.body, design: .monospaced))
@@ -31,22 +34,27 @@ struct PanelView: View {
                             errorBanner(error)
                         }
                     }
-                    if isPaletteOpen {
-                        CommandPaletteView(model: model, onClose: closePalette)
-                            .transition(.opacity)
-                            // A sidebar-started apply must not leave a live palette behind.
-                            .disabled(model.isApplying)
+                    if settings.showSidebar {
+                        Divider()
+                        SidebarView(model: model)
                     }
                 }
-                if settings.showSidebar {
-                    Divider()
-                    SidebarView(model: model)
-                }
+                Divider()
+                actionBar
             }
-            Divider()
-            actionBar
+            if isPaletteOpen {
+                CommandPaletteView(model: model, onClose: closePalette)
+                    .transition(.opacity)
+                    // A sidebar-started apply must not leave a live palette behind.
+                    .disabled(model.isApplying)
+            }
         }
-        .frame(minWidth: settings.showSidebar ? 780 : 560, minHeight: 380)
+        .frame(
+            minWidth: settings.showSidebar
+                ? PanelMetrics.minContentWidthWithSidebar
+                : PanelMetrics.minContentWidth,
+            minHeight: PanelMetrics.minContentHeight
+        )
         .animation(.easeInOut(duration: 0.15), value: settings.showSidebar)
         .animation(.easeInOut(duration: 0.1), value: isPaletteOpen)
         // A new session always starts with the palette closed.
@@ -75,10 +83,13 @@ struct PanelView: View {
             .help(settings.showSidebar ? "Hide Transforms Sidebar (⌘⇧L)" : "Show Transforms Sidebar (⌘⇧L)")
             .accessibilityLabel(settings.showSidebar ? "Hide Transforms Sidebar" : "Show Transforms Sidebar")
             .keyboardShortcut("l", modifiers: [.command, .shift])
-            // Cancel stays enabled during a slow transform. Its Esc binding is detached while
-            // the palette is open so a first Esc closes the palette, not the panel.
-            Button("Cancel") { model.cancel() }
-                .keyboardShortcut(isPaletteOpen ? nil : .cancelAction)
+            // Cancel stays enabled during a slow transform, and owns Esc outright: one key with
+            // two meanings, resolved here rather than by attaching and detaching the binding.
+            // Esc with the palette open closes the palette; Esc with it closed cancels the
+            // panel. Keeping the shortcut permanently attached means there is never a frame in
+            // which nothing claims Esc.
+            Button("Cancel") { escape() }
+                .keyboardShortcut(.cancelAction)
             Button("Save") { model.save() }
                 .keyboardShortcut("s", modifiers: .command)
                 .disabled(model.isApplying)
@@ -105,7 +116,10 @@ struct PanelView: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .keyboardShortcut("k", modifiers: .command)
+            // Only one ⌘K can exist at a time: while the palette is open this button is still
+            // in the hierarchy (just under the backdrop), and the palette's own hidden button
+            // takes over the shortcut to close it. Two live bindings would be ambiguous.
+            .keyboardShortcut(isPaletteOpen ? nil : KeyboardShortcut("k", modifiers: .command))
             .disabled(model.isApplying)
             .accessibilityLabel("Find a transform")
             if let summary = model.detectedSummary {
@@ -125,6 +139,11 @@ struct PanelView: View {
 
     private func togglePalette() {
         if isPaletteOpen { closePalette() } else { isPaletteOpen = true }
+    }
+
+    /// Esc: close the palette if it is open, otherwise end the session.
+    private func escape() {
+        if isPaletteOpen { closePalette() } else { model.cancel() }
     }
 
     private func closePalette() {

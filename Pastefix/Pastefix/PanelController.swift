@@ -6,10 +6,12 @@ final class PanelController: NSObject, NSWindowDelegate {
     private let panel: NSPanel
     var onResignKey: (() -> Void)?   // wired for Plan 2b auto-hide-on-blur
 
-    /// Narrowest content the editor is usable at; mirrors PanelView's `minWidth`.
-    private static let minContentWidth: CGFloat = 560
     /// Last value handed to `setSidebarVisible`, so repeated calls are no-ops.
     private var sidebarVisible = false
+    /// True only when *this* code grew the frame to make room for the sidebar. Hiding the
+    /// sidebar hands that width back only if we took it; a panel the user sized (or one that
+    /// was already wide enough) keeps its width, so toggling is never lossy.
+    private var didWidenForSidebar = false
 
     init(rootView: NSView) {
         panel = NSPanel(
@@ -24,7 +26,7 @@ final class PanelController: NSObject, NSWindowDelegate {
         panel.hidesOnDeactivate = false
         panel.titlebarAppearsTransparent = true
         panel.titleVisibility = .hidden
-        panel.minSize = NSSize(width: Self.minContentWidth, height: 380)
+        panel.minSize = NSSize(width: PanelMetrics.minContentWidth, height: PanelMetrics.minContentHeight)
         panel.contentView = rootView
         super.init()
         panel.delegate = self
@@ -35,7 +37,14 @@ final class PanelController: NSObject, NSWindowDelegate {
     /// the value already applied does nothing, so a settings write that doesn't flip the
     /// flag never nudges the frame. The SwiftUI `minWidth` alone can't do this — AppKit
     /// won't grow a window past its current frame just because its content wants more.
-    func setSidebarVisible(_ visible: Bool, width: CGFloat = 220) {
+    func setSidebarVisible(_ visible: Bool, width: CGFloat = PanelMetrics.sidebarWidth) {
+        // The floor tracks the content on *every* call, even the idempotent ones: SwiftUI's
+        // `minWidth` states what the content needs, but only `minSize` stops the user dragging
+        // the panel narrower than that and squeezing the editor to nothing behind the sidebar.
+        panel.minSize = NSSize(
+            width: visible ? PanelMetrics.minContentWidthWithSidebar : PanelMetrics.minContentWidth,
+            height: PanelMetrics.minContentHeight
+        )
         guard sidebarVisible != visible else { return }
         sidebarVisible = visible
 
@@ -44,11 +53,13 @@ final class PanelController: NSObject, NSWindowDelegate {
         let targetContentWidth: CGFloat
         if visible {
             // Already wide enough to hold editor + sidebar: leave the user's size alone.
-            guard contentWidth < Self.minContentWidth + width else { return }
+            guard contentWidth < PanelMetrics.minContentWidth + width else { return }
             targetContentWidth = contentWidth + width
+            didWidenForSidebar = true
         } else {
-            // Only hand the space back if it's actually there to hand back.
-            guard contentWidth >= Self.minContentWidth + width else { return }
+            // Only hand back width we added, and only if it is still there to hand back.
+            guard didWidenForSidebar, contentWidth >= PanelMetrics.minContentWidth + width else { return }
+            didWidenForSidebar = false
             targetContentWidth = contentWidth - width
         }
 

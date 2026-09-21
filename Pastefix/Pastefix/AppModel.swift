@@ -59,6 +59,13 @@ final class AppModel: ObservableObject {
         return PaletteOrdering.order(enabled, for: document.detectedKinds)
     }
 
+    /// Enabled transforms in the user's order, without detection-based promotion — for browse
+    /// surfaces (the sidebar) that should not reshuffle with the clipboard.
+    func browsableTransformers() -> [any Transformer] {
+        guard let document else { return [] }
+        return transformers.filter { TransformCoordinator.isEnabled($0, for: document) }
+    }
+
     /// "URL", "URL, JSON", or nil when nothing was detected.
     var detectedSummary: String? {
         guard let kinds = document?.detectedKinds, !kinds.isEmpty else { return nil }
