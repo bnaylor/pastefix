@@ -1,0 +1,53 @@
+import Testing
+@testable import PastefixCore
+
+@Suite struct ColorLiteralTests {
+    private func p(_ s: String) -> ColorLiteral? { ColorLiteral.parse(s) }
+    private func rgb255(_ c: ColorLiteral) -> [Int] { [c.red, c.green, c.blue].map { Int(($0 * 255).rounded()) } }
+
+    @Test func hexForms() {
+        #expect(rgb255(p("#fff")!) == [255, 255, 255])
+        #expect(p("#ffff")?.alpha == 1)
+        #expect(rgb255(p("#FF0080")!) == [255, 0, 128])
+        #expect(p("#ff008080")?.alpha == 128.0 / 255.0)
+        #expect(rgb255(p("  #abc  ")!) == [170, 187, 204])
+    }
+    @Test func rgbForms() {
+        #expect(rgb255(p("rgb(255, 0, 128)")!) == [255, 0, 128])
+        #expect(p("rgb(255 0 128 / 0.5)")?.alpha == 0.5)
+        #expect(rgb255(p("rgb(100%, 0%, 50%)")!) == [255, 0, 128])
+        #expect(p("rgba(255,0,128,50%)")?.alpha == 0.5)
+        #expect(rgb255(p("RGB(300, -5, 12)")!) == [255, 0, 12])   // clamped
+    }
+    @Test func hslForms() {
+        #expect(rgb255(p("hsl(330, 100%, 50%)")!) == [255, 0, 128])
+        #expect(rgb255(p("hsl(-30 100% 50%)")!) == [255, 0, 128])   // hue wraps to 330
+        #expect(p("hsla(330deg 100% 50% / .25)")?.alpha == 0.25)
+        #expect(rgb255(p("hsl(0 0% 50%)")!) == [128, 128, 128])
+    }
+    @Test func rejects() {
+        for bad in ["#ggg", "#12345", "rgb(1,2)", "red", "#fff extra", "hsl(1 2 3 4 5)", "", "rgb()", "rgb(a,b,c)"] {
+            #expect(p(bad) == nil, Comment(rawValue: bad))
+        }
+    }
+    @Test func formatting() {
+        let c = p("#ff0080")!
+        #expect(c.cssHex == "#ff0080")
+        #expect(c.cssRGB == "rgb(255 0 128)")
+        #expect(c.cssHSL == "hsl(330 100% 50%)")
+        #expect(c.swiftUI == "Color(red: 1.000, green: 0.000, blue: 0.502)")
+        let t = p("rgb(255 0 128 / 0.5)")!
+        #expect(t.cssHex == "#ff008080")
+        #expect(t.cssRGB == "rgb(255 0 128 / 0.5)")
+        #expect(t.cssHSL == "hsl(330 100% 50% / 0.5)")
+        #expect(t.swiftUI == "Color(red: 1.000, green: 0.000, blue: 0.502, opacity: 0.500)")
+        #expect(p("rgb(0 0 0 / 0.3333)")!.cssRGB == "rgb(0 0 0 / 0.333)")
+    }
+    @Test func roundTrips() {
+        for hex in ["#000000", "#ffffff", "#ff0080", "#122436", "#204060", "#80ff00"] {
+            let c = p(hex)!
+            #expect(p(c.cssRGB)!.cssHex == hex, Comment(rawValue: hex))
+            #expect(p(c.cssHSL)!.cssHex == hex, Comment(rawValue: hex))   // integer HSL loses ≤1/255; adjust expectation only if a listed colour provably cannot round-trip
+        }
+    }
+}
