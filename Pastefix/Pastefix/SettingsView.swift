@@ -82,7 +82,7 @@ struct SettingsView: View {
                 Text("Items marked private by password managers are never recorded.").font(.caption).foregroundStyle(.secondary)
             }
             Section("Excluded apps") {
-                Text("Copies made in these apps are never read or remembered.")
+                Text("Copies made in these apps are never read into history or remembered.")
                     .font(.caption).foregroundStyle(.secondary)
                 List(selection: $selectedExclusion) {
                     ForEach(settings.historyExcludedBundleIDs, id: \.self) { id in

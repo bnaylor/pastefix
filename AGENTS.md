@@ -170,7 +170,7 @@ These are load-bearing; most were established the hard way (see "Things that hav
 - **Network in a transform** happens only through an injected protocol (`TitleFetcher`) with a hard timeout and a byte cap, and the transform races it against its own bound so a hung fetcher cannot hang the app. `TransformCoordinator` has no timeout of its own for native transforms, so any transform that can block must bound itself (as `MarkdownLink` does). Tests inject a stub; no test opens a socket.
 - **Content kinds:** a transform that is *meant for* a kind sets `applicableKinds`; the palette promotes it, never hides others. Detection heuristics live only in `ContentDetector`.
 - **Poll the pasteboard on change, not on the tick.** `PasteboardMonitor` reads `NSPasteboard.general` at most once per `changeCount` change — never on a bare timer tick with no change — and reads rich content (RTFD) only when a rich type (`.rtf`/`.rtfd`/`.html`) is actually declared, the same Plan 2a lesson `ClipboardBridge` already relies on. Any new capture source must read the same way: sample types first, read once, and never assume a tick means new content.
-- **Capture filters get a `CaptureContext` built before the read and refreshed after it; the tracker, not `NSWorkspace.frontmostApplication`, is the source of truth for attribution and exclusion.**
+- **Capture filters get a `CaptureContext` built before the read and refreshed after it.** Attribution comes from the tracker's newest activation; exclusion checks every app the tracker saw within the poll window *plus* the live `NSWorkspace.frontmostApplication` id (unioned into `recentBundleIDs` as a fail-closed cross-check, never used for attribution). Don't remove either half.
 - **Browsing UIs stay dumb:** the ⌘K palette reads `enabledTransformers()` (applicable-first) and the sidebar reads `browsableTransformers()` (plain user order, no detection promotion, so a browse surface doesn't reshuffle with the clipboard); both render whatever a pure AppCore function hands back — ranking (`TransformSearch`), grouping (`SidebarGrouping`), and applicable-first ordering (`PaletteOrdering`) are pure functions in `PastefixAppCore`, not view logic. A view should never re-sort or re-filter the list itself.
 
 ## Things that have bitten us
@@ -234,6 +234,11 @@ Also caught in review on `29c1d02`: a page truncated at the byte cap mid-charact
 - **TIFF byte heuristic rejected the wrong images** (`2da9a1a`): "PNG ≤ 4× TIFF" is false for screenshots (15–40×). Gate on header pixel count; the remaining main-actor conversion cost is #32.
 - **Fuzzy folding per character per keystroke** (`3c64bbb`): ~140 ms per keystroke at 200 × 4 KB items. Fold each haystack once for the tier; per-character matching only on the ≤160-char preview; the overlay caches results in `@State`.
 - **⌘⌫ is a field-editor binding** (`0966c97`): `onKeyPress` never sees it inside a focused `TextField`; use a hidden key-equivalent `Button`, as ⌘K/⌘Y already do.
+
+*Sensitive-app exclusion (Plan 7):*
+- **Activation notifications lose races** (`49c718b`): the tracker only knows activations already delivered, and a tick holds the main thread, so the "refreshed" post-read context can't learn anything new. Cross-check the live frontmost id into the reject set; say plainly in comments what a second sample can and cannot see.
+- **A settings value written as the wrong `defaults` type is silently ignored** (automated pass): JSON-backed settings are stored as `Data`; `defaults write -string` never reaches the app. Test hooks must write `-data <hex>`.
+- **SwiftUI `Form` puts a titled `Stepper`'s label in the leading gutter** (`73604f8`): use `HStack { Text; Spacer; Stepper("").labelsHidden() }`; and four text buttons don't fit a 460 pt settings pane — use +/− controls.
 
 ## Definition of Done
 
