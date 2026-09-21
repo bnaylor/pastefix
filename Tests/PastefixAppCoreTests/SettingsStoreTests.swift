@@ -105,4 +105,27 @@ import Foundation
             #expect(s2.historyEnabled == false && s2.historyMaxItems == 1000)
         }
     }
+
+    @Test func exclusionsDefaultToSeedsAndEmptyStaysEmpty() {
+        withFreshDefaults { d in
+            let s = SettingsStore(defaults: d)
+            #expect(s.historyExcludedBundleIDs == ExclusionSeeds.passwordManagers)
+            s.historyExcludedBundleIDs = []
+            #expect(SettingsStore(defaults: d).historyExcludedBundleIDs.isEmpty)
+        }
+    }
+    @Test func addRemoveRestoreExclusions() {
+        withFreshDefaults { d in
+            let s = SettingsStore(defaults: d)
+            s.historyExcludedBundleIDs = []
+            s.addExcludedBundleID("  com.example.App ")
+            s.addExcludedBundleID("COM.EXAMPLE.APP")
+            s.addExcludedBundleID("")
+            #expect(s.historyExcludedBundleIDs == ["com.example.App"])
+            s.removeExcludedBundleID("com.example.app")
+            #expect(s.historyExcludedBundleIDs.isEmpty)
+            s.restoreDefaultExclusions()
+            #expect(SettingsStore(defaults: d).historyExcludedBundleIDs == ExclusionSeeds.passwordManagers)
+        }
+    }
 }

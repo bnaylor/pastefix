@@ -39,13 +39,16 @@ Pastefix remembers what you copy: plain text, formatted (rich) text, and images,
 
 Copying the same thing again moves it back to the top of the list rather than adding a duplicate, and keeps crediting the app that originally put it on the clipboard — reusing an item from history doesn't relabel it as coming from Pastefix. Items that password managers and similar tools mark as concealed, transient, or auto-generated are never recorded, including a few legacy marker conventions older apps still use.
 
-History lives in `~/Library/Application Support/Pastefix/history/`, readable only by your user account. **Settings → General** has a History section to turn capture off, change how many items are kept, or clear everything; **Settings → Shortcut** rebinds ⌘⇧V. Note that ⌘⇧V is also "Paste and Match Style" in some apps — that conflict is a deliberate tradeoff for the more memorable default, and the hotkey is rebindable if it collides with something you use.
+History lives in `~/Library/Application Support/Pastefix/history/`, readable only by your user account. **Settings → Privacy** has a History section to turn capture off, change how many items are kept, or clear everything; **Settings → Shortcut** rebinds ⌘⇧V. Note that ⌘⇧V is also "Paste and Match Style" in some apps — that conflict is a deliberate tradeoff for the more memorable default, and the hotkey is rebindable if it collides with something you use. The menu bar also carries a **Clipboard History** checkmark item that toggles capture on the fly; while it's off the menu-bar icon switches to a pause glyph so it's obvious at a glance that nothing is being recorded.
+
+**Excluded apps.** Settings → Privacy also has an Excluded Apps list, seeded with common password managers (1Password, Bitwarden, Keychain Access, Apple Passwords, and others) — copies made in a listed app are never read into history, let alone recorded. (Summoning the editor with ⌘⇧C still reads whatever is on the clipboard, because you asked for it; saving from the editor writes it back, and that write is recorded like any other.) Add an app from `/Applications` or by typing its bundle identifier, remove entries, or **Restore Defaults** to get back the seed list. The app you copied from is decided *before* the clipboard is read, from whichever app was frontmost; if you switch apps within a second of copying, both the app you copied from and the app you switched to are treated as possible sources and the copy is skipped if either is excluded. One caveat: a browser extension's copy comes from the browser itself, not the password manager, so bundle-id exclusion can't catch it — those are instead skipped whenever the extension marks the copy concealed, which 1Password, Bitwarden, and Apple's own extensions all do.
 
 ## Settings (Plan 2b)
 
-Pastefix includes a Settings window (⌘, or "Settings…" in the menu) with three tabs:
+Pastefix includes a Settings window (⌘, or "Settings…" in the menu) with four tabs:
 
-- **General:** Configure wrap width (default 400 columns), toggle auto-hide-on-blur (dismisses the panel when focus leaves), choose a custom folder for user scripts (default `~/.config/pastefix/scripts/`), and a **History** section (remember-history toggle, item-count stepper, Clear History).
+- **General:** Configure wrap width (default 400 columns), toggle auto-hide-on-blur (dismisses the panel when focus leaves), and choose a custom folder for user scripts (default `~/.config/pastefix/scripts/`).
+- **Privacy:** A **History** section (remember-history toggle, item-count stepper, Clear History) and an **Excluded Apps** section (add/remove apps whose copies are never read into history, Restore Defaults).
 - **Shortcut:** Rebind the global hotkey (default ⌘⇧C) and the history hotkey (default ⌘⇧V), each using an interactive keyboard recorder.
 - **Transforms:** Enable/disable individual transforms and drag to reorder them in the palette.
 

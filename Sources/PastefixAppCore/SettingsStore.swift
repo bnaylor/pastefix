@@ -21,6 +21,7 @@ public final class SettingsStore: ObservableObject {
             defaults.set(historyMaxItems, forKey: Key.historyMaxItems)
         }
     }
+    @Published public var historyExcludedBundleIDs: [String] { didSet { Self.writeJSON(historyExcludedBundleIDs, to: defaults, key: Key.historyExcluded) } }
 
     public init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -32,6 +33,7 @@ public final class SettingsStore: ObservableObject {
         self.transformOrder = Self.readJSON([String: Int].self, from: defaults, key: Key.order) ?? [:]
         self.historyEnabled = (defaults.object(forKey: Key.historyEnabled) as? Bool) ?? true
         self.historyMaxItems = min(max((defaults.object(forKey: Key.historyMaxItems) as? Int) ?? 200, 20), 1000)
+        self.historyExcludedBundleIDs = Self.readJSON([String].self, from: defaults, key: Key.historyExcluded) ?? ExclusionSeeds.passwordManagers
     }
 
     public var scriptsDirectoryURL: URL {
@@ -42,6 +44,16 @@ public final class SettingsStore: ObservableObject {
     public func resetScriptsDirectoryToDefault() {
         scriptsDirectoryPath = Self.defaultScriptsPath
     }
+
+    public func addExcludedBundleID(_ raw: String) {
+        let id = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !id.isEmpty, !historyExcludedBundleIDs.contains(where: { $0.caseInsensitiveCompare(id) == .orderedSame }) else { return }
+        historyExcludedBundleIDs.append(id)
+    }
+    public func removeExcludedBundleID(_ id: String) {
+        historyExcludedBundleIDs.removeAll { $0.caseInsensitiveCompare(id) == .orderedSame }
+    }
+    public func restoreDefaultExclusions() { historyExcludedBundleIDs = ExclusionSeeds.passwordManagers }
 
     static let defaultScriptsPath: String = {
         FileManager.default.homeDirectoryForCurrentUser
@@ -57,6 +69,7 @@ public final class SettingsStore: ObservableObject {
         static let order = "pastefix.transformOrder"
         static let historyEnabled = "pastefix.historyEnabled"
         static let historyMaxItems = "pastefix.historyMaxItems"
+        static let historyExcluded = "pastefix.historyExcludedBundleIDs"
     }
 
     private static func writeJSON<T: Encodable>(_ value: T, to defaults: UserDefaults, key: String) {
