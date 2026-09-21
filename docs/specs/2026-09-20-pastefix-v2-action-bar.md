@@ -316,7 +316,7 @@ disable/reorder is reflected in both surfaces; the old horizontal bar is gone.
   add `category` to "Script Metadata" with the built-in category table.
 - `AGENTS.md`: layout entries (`TransformSearch.swift`, `SidebarGrouping.swift`,
   `SidebarView.swift`, `CommandPaletteView.swift`); note under "Patterns":
-  *browsing UIs read `enabledTransformers()`; ordering/grouping/searching are
+  *the palette reads `enabledTransformers()` (applicable-first), the sidebar reads `browsableTransformers()` (user order); ordering/grouping/searching are
   pure functions in AppCore*; a "bitten us" entry only if something bites;
   status table row for Plan 4.
 

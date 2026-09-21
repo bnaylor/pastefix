@@ -1,6 +1,6 @@
 # Pastefix v2 Action Bar Revamp: ⌘K Palette + Sidebar (Plan 4) — Implementation Plan
 
-> ## 🟡 STATUS: IN REVIEW — implemented on `feat/action-bar` 2026-09-20; PR pending.
+> ## 🟡 STATUS: IN REVIEW — implemented on `feat/action-bar` 2026-09-20; [PR #8](https://github.com/bnaylor/pastefix/pull/8) open.
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 >
