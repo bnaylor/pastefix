@@ -50,8 +50,8 @@ algorithms (iconv `ASCII//TRANSLIT` with a lossy fallback; line splitting on
 word boundaries).
 
 v2 is a category change, not an incremental update: from "invisible auto-cleaner"
-to "clipboard power-tool." The full v2 roadmap is tiered (First/Soon/Later) in
-`docs/inputs/initial_requirements.md`. This spec deliberately narrows to the
+to "clipboard power-tool." The full v2 roadmap was tiered (First/Soon/Later) in the original requirements document; it now lives as
+[GitHub issues labelled `tier: first` / `tier: soon` / `tier: later`](https://github.com/bnaylor/pastefix/issues?q=is%3Aissue+label%3A%22tier%3A+first%22%2C%22tier%3A+soon%22%2C%22tier%3A+later%22) (the file was retired 2026-09-20 once its shipped items were done). This spec deliberately narrows to the
 foundation and the pipeline so the shell/JS runtime surface is de-risked early.
 
 ## Distribution model

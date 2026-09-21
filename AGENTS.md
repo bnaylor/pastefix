@@ -221,6 +221,8 @@ When you **significantly expand the project** — a new target, subsystem, scrip
 
 Historical reference material for the 2007 and 2019 incarnations is vendored under [`docs/inputs/legacy/`](docs/inputs/legacy/).
 
+**Roadmap** — the remaining v2 goals are [GitHub issues](https://github.com/bnaylor/pastefix/issues) labelled `tier: first`, `tier: soon`, `tier: later` (the original tiers from the retired `docs/inputs/initial_requirements.md`). New feature work starts from an issue, gets a spec under `docs/specs/`, then a plan; the PR closes the issue.
+
 - **Design specs:** `docs/specs/YYYY-MM-DD-feature-name.md`
 - **Implementation plans:** `docs/plans/YYYY-MM-DD-feature-name.md`
 - **Reviews:** `docs/reviews/YYYY-MM-DD-feature-name-review.md`

@@ -13,7 +13,7 @@ Originally copied from `~/Source/pastefix-save` (2007) and `~/Source/Pastefix`
 |---|---|---|
 | `README-2019.md` | 2019 | The best prose description of v1's behavior — the feature list, the Split/Refresh/Autohide semantics, and the preference set. Cited by `docs/specs/2026-08-11-pastefix-v2-foundation-pipeline.md`. |
 | `TextProc-2007.h/.m` | 2007 | The classic transform algorithms. Also cited by the foundation spec. |
-| `TODO-2019.txt` | 2019 | Where the "user-defined transform pipeline" idea originates. Cited by `../initial_requirements.md`. |
+| `TODO-2019.txt` | 2019 | Where the "user-defined transform pipeline" idea originates. Cited by the original requirements document (retired 2026-09-20; its remaining items are GitHub issues labelled `tier: *`). |
 | `TODO-2007.txt` | 2007 | The original wishlist; most of it shipped by v0.9.3. |
 | `BUGS-2007.txt` | 2007 | One entry, a deliberate WONTFIX about splitting lines with no spaces. |
 | `Interpreter-2019.h/.m`, `PerlInterpreter-2019.h/.m` | 2019 | The abandoned scripting attempt — see below. |
