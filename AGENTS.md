@@ -267,7 +267,7 @@ When you **significantly expand the project** — a new target, subsystem, scrip
 | 4 — Action bar | ⌘K palette, sidebar, categories | ✅ merged, [PR #8](https://github.com/bnaylor/pastefix/pull/8) (`ff9c7b3`) |
 | 5 — Quick actions | JSON, encoders, JWT, colours, swatch | ✅ merged, [PR #30](https://github.com/bnaylor/pastefix/pull/30) (`ba0a829`) |
 | 6 — Clipboard history | `HistoryStore`, `PasteboardMonitor`, ⌘⇧V overlay, Settings | ✅ merged — PR #33 (`ba2793a`) — [spec](docs/specs/2026-09-21-pastefix-v2-clipboard-history.md), [plan](docs/plans/2026-09-21-pastefix-v2-clipboard-history.md) |
-| 7 — Sensitive-app exclusion | AppExclusionFilter, FrontmostAppTracker, Privacy tab, menu-bar pause | 🟡 in progress, branch feat/sensitive-app-exclusion — [spec](docs/specs/2026-09-21-pastefix-v2-sensitive-app-exclusion.md), [plan](docs/plans/2026-09-21-pastefix-v2-sensitive-app-exclusion.md) |
+| 7 — Sensitive-app exclusion | AppExclusionFilter, FrontmostAppTracker, Privacy tab, menu-bar pause | ✅ merged — PR #34 (`b2b5166`) — [spec](docs/specs/2026-09-21-pastefix-v2-sensitive-app-exclusion.md), [plan](docs/plans/2026-09-21-pastefix-v2-sensitive-app-exclusion.md) |
 
 Historical reference material for the 2007 and 2019 incarnations is vendored under [`docs/inputs/legacy/`](docs/inputs/legacy/).
 
@@ -282,6 +282,7 @@ Historical reference material for the 2007 and 2019 incarnations is vendored und
 
 - **Conventional commits** (`feat(core):`, `fix(core):`, `docs:`, `refactor:` …). Commit at natural stopping points, not in one giant dump.
 - **Co-credit the agent** in commit trailers (`Co-Authored-By: Claude …` / Gemini / etc.).
+- **`main` is protected and merged branches auto-delete on GitHub.** Even doc-only changes go through a PR; don't try to push to `main` directly, and don't bother deleting remote branches after merge.
 - **PR everything that maps to a feature or a bug fix.** Do the work on a branch, open a PR against `main`, and let review run. Commit directly to `main` only for genuinely trivial changes (doc typos, comments, `.gitignore`) or a real emergency — which, for a clipboard app, should be vanishingly rare. Keep `main` releasable.
 - Comments explain non-obvious *why*, not *what*; match the surrounding file's density and idiom. No emoji in code or commit subjects. No orphan `TODO`/`FIXME` without a tracked issue.
 - No premature abstraction — the codebase is still small.

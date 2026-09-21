@@ -1,6 +1,6 @@
 ---
 type: spec
-status: approved
+status: implemented
 id: 2026-09-21-pastefix-v2-sensitive-app-exclusion
 title: Pastefix v2 — Sensitive-App Exclusion for Clipboard History (Plan 7)
 description: Never record clipboard items copied from password managers and other user-listed apps; determine the source app before the pasteboard is read, fail closed across app switches, seed the list with common managers, edit it in a new Privacy tab, and add a menu-bar pause toggle.

@@ -1,6 +1,6 @@
 # Pastefix v2 Sensitive-App Exclusion (Plan 7) — Implementation Plan
 
-> ## 🟡 STATUS: IN PROGRESS — branch feat/sensitive-app-exclusion
+> ## ✅ STATUS: COMPLETE — merged to main via PR #34 (`b2b5166`, 2026-09-21)
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 >
