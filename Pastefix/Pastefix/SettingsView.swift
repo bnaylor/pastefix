@@ -15,11 +15,15 @@ struct SettingsView: View {
     @State private var showIdentifierPrompt = false
     @State private var newIdentifier = ""
     @State private var noBundleIDNames: [String] = []
+    /// Bumped when the app comes to front so the Accessibility status re-reads `AXIsProcessTrusted`:
+    /// the grant happens in System Settings, outside anything SwiftUI would observe.
+    @State private var trustTick = 0
 
     var body: some View {
         TabView {
             general.tabItem { Label("General", systemImage: "gearshape") }
             privacy.tabItem { Label("Privacy", systemImage: "hand.raised") }
+            snippets.tabItem { Label("Snippets", systemImage: "pin") }
             shortcut.tabItem { Label("Shortcut", systemImage: "keyboard") }
             transforms.tabItem { Label("Transforms", systemImage: "slider.horizontal.3") }
         }
@@ -75,11 +79,15 @@ struct SettingsView: View {
                 }
                 .disabled(!settings.historyEnabled)
                 HStack {
-                    Text("\(history.items.count) items · \(HistoryFormatting.byteLabel(history.totalBytes))").foregroundStyle(.secondary)
+                    // Pins are counted apart from history: Clear History leaves them behind, so
+                    // folding them into one total would misstate what the button is about to remove.
+                    Text("\(history.unpinnedItems.count) items · \(history.pinnedItems.count) pinned · \(HistoryFormatting.byteLabel(history.totalBytes))")
+                        .foregroundStyle(.secondary)
                     Spacer()
                     Button("Clear History…") { confirmClear = true }.disabled(history.items.isEmpty)
                 }
-                Text("Items marked private by password managers are never recorded.").font(.caption).foregroundStyle(.secondary)
+                Text("Items marked private by password managers are never recorded. Pinned snippets are kept by Clear History.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
             Section("Excluded apps") {
                 Text("Copies made in these apps are never read into history or remembered.")
@@ -137,9 +145,12 @@ struct SettingsView: View {
         }
         .padding()
         .alert("Clear clipboard history?", isPresented: $confirmClear) {
-            Button("Clear \(history.items.count) items", role: .destructive) { history.clear() }
+            Button("Clear \(history.unpinnedItems.count) items", role: .destructive) { history.clear() }
+            Button("Clear Everything (\(history.items.count))", role: .destructive) { history.clearAll() }
             Button("Cancel", role: .cancel) {}
-        } message: { Text("This removes every remembered item and its files from disk.") }
+        } message: {
+            Text("Clearing history removes remembered copies and their files from disk. Pinned snippets are kept unless you clear everything.")
+        }
         .alert("No bundle identifier", isPresented: Binding(
             get: { !noBundleIDNames.isEmpty },
             set: { if !$0 { noBundleIDNames = [] } }
@@ -178,6 +189,44 @@ struct SettingsView: View {
             }
         }
         if !missing.isEmpty { noBundleIDNames = missing }
+    }
+
+    private var snippets: some View {
+        Form {
+            Section("Paste with hotkey") {
+                HStack {
+                    Image(systemName: SnippetPaster.isTrusted ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                        .foregroundStyle(SnippetPaster.isTrusted ? .green : .orange)
+                    Text(SnippetPaster.isTrusted
+                         ? "Ready — snippet hotkeys paste into the frontmost app."
+                         : "Needs Accessibility permission to press ⌘V for you. Until then hotkeys copy the snippet only.")
+                    Spacer()
+                    if !SnippetPaster.isTrusted {
+                        Button("Request…") { _ = SnippetPaster.ensureTrusted() }
+                        Button("Open System Settings") { SnippetPaster.openAccessibilitySettings() }
+                    }
+                }
+                Text("Pastefix uses Accessibility only to send ⌘V. It never reads your keystrokes.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            // Trust is read straight from TCC rather than from published state, so the section has
+            // to be rebuilt by hand after the user returns from System Settings.
+            .id(trustTick)
+            Section("Pinned snippets") {
+                if history.pinnedItems.isEmpty {
+                    Text("No pinned snippets yet. Pin from the history overlay (⌘P) or the editor (⌘⇧P).")
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(history.pinnedItems) { item in
+                        SnippetRow(item: item, history: history)
+                    }
+                }
+            }
+        }
+        .formStyle(.grouped)
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            trustTick += 1
+        }
     }
 
     private var shortcut: some View {
@@ -236,6 +285,67 @@ struct SettingsView: View {
             settings.scriptsDirectoryPath = url.path
             model.reload()
         }
+    }
+}
+
+/// One pinned snippet: its editable title, its global hotkey, and Unpin.
+///
+/// Unpin does not touch the recorder — `HistoryStore.unpin` drops the pin, and the app delegate's
+/// `SnippetHotkeys.sync()` resets the recorded shortcut as it tears the handler down. Clearing it
+/// here as well would be a second writer to the same UserDefaults key.
+struct SnippetRow: View {
+    let item: HistoryItem
+    @ObservedObject var history: HistoryStore
+    @State private var title: String
+    @FocusState private var titleFocused: Bool
+
+    init(item: HistoryItem, history: HistoryStore) {
+        self.item = item
+        self.history = history
+        _title = State(initialValue: item.title ?? "")
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                TextField("Title", text: $title)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(maxWidth: 180)
+                    .focused($titleFocused)
+                    .onSubmit { commitTitle() }
+                    // Clicking straight from the field to another row loses the edit otherwise:
+                    // a Settings window can be closed without ever submitting.
+                    .onChange(of: titleFocused) { _, focused in if !focused { commitTitle() } }
+                Spacer()
+                KeyboardShortcuts.Recorder("", name: SnippetHotkeys.name(for: item.id))
+                    // The library only checks the shortcut against menu items and system
+                    // shortcuts; two snippets sharing a combo is ours to catch.
+                    .shortcutValidation { shortcut in
+                        guard let clash = conflictingSnippet(with: shortcut) else { return .allow }
+                        return .disallow(reason: "Already used by the snippet “\(Self.label(for: clash))”.")
+                    }
+                Button("Unpin") { history.unpin(item.id) }
+            }
+            Text(HistoryFormatting.previewText(for: item))
+                .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+        }
+    }
+
+    private func commitTitle() {
+        guard title != (item.title ?? "") else { return }
+        history.rename(item.id, title: title)
+    }
+
+    private func conflictingSnippet(with shortcut: KeyboardShortcuts.Shortcut) -> HistoryItem? {
+        history.pinnedItems.first {
+            $0.id != item.id && KeyboardShortcuts.getShortcut(for: SnippetHotkeys.name(for: $0.id)) == shortcut
+        }
+    }
+
+    /// What to call a snippet in the conflict message: its title, else a short piece of its text.
+    private static func label(for item: HistoryItem) -> String {
+        if let title = item.title, !title.isEmpty { return title }
+        return String(HistoryFormatting.previewText(for: item).prefix(24))
     }
 }
 
