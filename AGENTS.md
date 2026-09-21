@@ -217,6 +217,16 @@ Also caught in review on `29c1d02`: a page truncated at the byte cap mid-charact
 - **`JSONSerialization.data(withJSONObject:)` raises an ObjC exception, not a Swift error** (`e2b0807`): `-1e400` parses to `-inf`, and writing it aborts the process past any `try`; check `isValidJSONObject` (allowing safe fragments) before writing.
 - **Moving a helper changes its input size** (`767e34f`): the entity decoder converted each match's `NSRange` back to a `String.Index` range, which is O(offset) per match — quadratic, and completely harmless while its only caller was a `<title>` a few dozen characters long. Pointing it at the working buffer for "HTML Decode" made 1 MB of numeric references freeze the panel for ~25 s. Fixed by splicing on an `NSMutableString` with the regex's own UTF-16 ranges (≈35× faster; ~0.7 s per MB). Still superlinear because each splice shifts the tail — a truly linear version appends into a fresh string — and native transforms have no input cap (#29). When a helper moves to a new call site, re-check its complexity against the new input bound.
 
+*Clipboard history (Plan 6) — the persistence layer and the capture path each needed two review rounds; all three blockers were invisible to a green build:*
+- **Blob names trusted from `index.json`** (`df73481`): reads and deletes used the stored file name, so a crafted `"imageFile": "../x"` gave arbitrary read (onto the clipboard) and delete. Blob paths derive only from the item id; anything else is treated as missing at load.
+- **Deletes weren't durable** (`df73481`, `44d0881`): `remove`/`clear`/cap trims only scheduled the debounced index write, so a crash inside 250 ms resurrected cleared items as text. Deletions flush synchronously; record stays debounced.
+- **Quarantine sweep ate the evidence** (`44d0881`): after quarantining a corrupt index the orphan sweep deleted every blob it referenced. Skip the sweep on that launch; `clear()` also removes quarantine files.
+- **Store built with the default cap, user cap applied later** (`bf34f73`): init trimmed to 200 on every launch for anyone above it. Construct with the configured limits; clamp and debounce cap changes from Settings (`@Published` emits pre-clamp, and stepper autorepeat evicts per step).
+- **Types sampled after the content read** (`bf34f73`, `1ea4d06`): a concealed marker landing mid-read could record a password under the next item's types. Sample types first, re-check `changeCount` after the read, and run the stage-2 filter on the union of pre- and post-read types. Polling still can't honour a marker an app adds after our tick has read the item.
+- **TIFF byte heuristic rejected the wrong images** (`2da9a1a`): "PNG ≤ 4× TIFF" is false for screenshots (15–40×). Gate on header pixel count; the remaining main-actor conversion cost is #32.
+- **Fuzzy folding per character per keystroke** (`3c64bbb`): ~140 ms per keystroke at 200 × 4 KB items. Fold each haystack once for the tier; per-character matching only on the ≤160-char preview; the overlay caches results in `@State`.
+- **⌘⌫ is a field-editor binding** (`0966c97`): `onKeyPress` never sees it inside a focused `TextField`; use a hidden key-equivalent `Button`, as ⌘K/⌘Y already do.
+
 ## Definition of Done
 
 Before opening or updating a PR:

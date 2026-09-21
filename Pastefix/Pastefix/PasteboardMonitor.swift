@@ -107,7 +107,7 @@ final class PasteboardMonitor {
     /// know its PNG size until it has produced the PNG, so a TIFF inside the pixel ceiling below
     /// is still decoded and re-encoded on the main actor, and only then can the byte cap — here
     /// or in `HistoryStore.record` — reject the result. Moving that conversion off the main actor
-    /// is tracked as a follow-up issue; the pixel ceiling is the cheap bound in the meantime.
+    /// is tracked as #32; the pixel ceiling is the cheap bound in the meantime.
     static func read(_ pb: NSPasteboard, maxImageBytes: Int) -> CaptureCandidate? {
         var c = CaptureCandidate()
         c.plainText = pb.string(forType: .string)

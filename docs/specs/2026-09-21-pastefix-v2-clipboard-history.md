@@ -75,6 +75,15 @@ read of this spec.
 7. **⌘⇧V shadows "Paste and Match Style"** in apps that bind that command to
    the same combination. Kept by decision — it's the natural mnemonic and the
    hotkey is rebindable in Settings → Shortcut.
+8. **Polling limit on the concealed guarantee.** The monitor honours a
+   concealed/transient marker that is present when it reads the item, and the
+   stage-2 filter re-samples types after the read. A marker an app adds only
+   *after* our tick has already read and recorded the item cannot be honoured;
+   real password managers write the marker in the same burst as the content,
+   which is covered. Verified in the manual pass: same-burst and legacy markers
+   are skipped; a marker delayed by 700 ms was not.
+9. **Deferred:** TIFF→PNG conversion (and the thumbnail read) still run on the
+   main actor — #32.
 
 ## Scope
 
