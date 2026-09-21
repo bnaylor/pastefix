@@ -1,6 +1,6 @@
 # Pastefix v2 Per-type Quick Actions (Plan 5) — Implementation Plan
 
-> ## 🟡 STATUS: IN REVIEW — implemented on `feat/quick-actions` 2026-09-20; [PR #30](https://github.com/bnaylor/pastefix/pull/30) open. Includes the ⌘K Return regression fix.
+> ## ✅ STATUS: COMPLETE — merged to `main` as [PR #30](https://github.com/bnaylor/pastefix/pull/30) (`ba0a829`), 2026-09-20. Closes issue #11; includes the ⌘K Return regression fix.
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 >
