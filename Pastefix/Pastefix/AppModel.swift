@@ -19,6 +19,11 @@ final class AppModel: ObservableObject {
     let history: HistoryStore
     var onEndSession: (() -> Void)?
 
+    /// The app to paste a snippet into once Pastefix hides, supplied by the delegate from
+    /// `FrontmostAppTracker`. A closure rather than a stored app so the value is read at paste
+    /// time, not at whatever moment the model happened to be wired up.
+    var previousAppProvider: () -> NSRunningApplication? = { nil }
+
     /// Bumped on every summon and every dismissal. An in-flight transform captures the
     /// value it started under, so a result from a session the user has since dismissed
     /// can't land in a newer one — `document != nil` alone doesn't catch a dismiss-then-
