@@ -1,6 +1,6 @@
 ---
 type: spec
-status: approved
+status: implemented
 id: 2026-09-21-pastefix-v2-clipboard-history
 title: Pastefix v2 — Clipboard History (Plan 6)
 description: Continuous pasteboard capture (text, rich text, images within a budget) into a persisted, capped history; a ⌘⇧V history overlay in the panel with fuzzy search, load-into-editor and copy-back; Settings for capture, size, and clearing; a CaptureFilter hook for the sensitive-app exclusions of issue #10.

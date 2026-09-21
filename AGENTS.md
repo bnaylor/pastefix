@@ -253,7 +253,7 @@ When you **significantly expand the project** — a new target, subsystem, scrip
 | 3 — Content transforms | URL cleanup, Markdown link, case conversion, detection | ✅ merged, [PR #6](https://github.com/bnaylor/pastefix/pull/6) (`113bf42`) |
 | 4 — Action bar | ⌘K palette, sidebar, categories | ✅ merged, [PR #8](https://github.com/bnaylor/pastefix/pull/8) (`ff9c7b3`) |
 | 5 — Quick actions | JSON, encoders, JWT, colours, swatch | ✅ merged, [PR #30](https://github.com/bnaylor/pastefix/pull/30) (`ba0a829`) |
-| 6 — Clipboard history | `HistoryStore`, `PasteboardMonitor`, ⌘⇧V overlay, Settings | ⬜ in progress, branch `feat/clipboard-history` — [spec](docs/specs/2026-09-21-pastefix-v2-clipboard-history.md), [plan](docs/plans/2026-09-21-pastefix-v2-clipboard-history.md) |
+| 6 — Clipboard history | `HistoryStore`, `PasteboardMonitor`, ⌘⇧V overlay, Settings | ✅ merged — PR #33 (`ba2793a`) — [spec](docs/specs/2026-09-21-pastefix-v2-clipboard-history.md), [plan](docs/plans/2026-09-21-pastefix-v2-clipboard-history.md) |
 
 Historical reference material for the 2007 and 2019 incarnations is vendored under [`docs/inputs/legacy/`](docs/inputs/legacy/).
 

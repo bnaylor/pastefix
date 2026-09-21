@@ -1,6 +1,6 @@
 # Pastefix v2 Clipboard History (Plan 6) — Implementation Plan
 
-> ## 🟡 STATUS: IN PROGRESS — branch feat/clipboard-history
+> ## ✅ STATUS: COMPLETE — merged to main via PR #33 (`ba2793a`, 2026-09-21)
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 >
