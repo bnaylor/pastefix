@@ -157,8 +157,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .sink { [weak self] _ in MainActor.assumeIsolated { self?.rebuildMonitor() } }
             .store(in: &cancellables)
 
-        // Pasting a snippet targets the app the user was in before Pastefix took focus.
-        model.previousAppProvider = { [weak self] in self?.frontmostTracker.previousApp }
+        // Pasting a snippet targets the app the user was in before Pastefix took focus — but only
+        // while we actually hold the front. A click onto the floating panel makes it key without
+        // activating us (`.nonactivatingPanel`, so no activation notification), which would leave
+        // the tracker reporting the app from before the user's last detour. When we are not the
+        // active app the frontmost one is, by definition, what the user is typing into — the same
+        // rule `SnippetHotkeys.fire` uses.
+        model.previousAppProvider = { [weak self] in
+            NSApp.isActive ? self?.frontmostTracker.previousApp : NSWorkspace.shared.frontmostApplication
+        }
 
         // One global shortcut per pinned snippet, re-synced whenever the pin set changes.
         snippetHotkeys.sync()

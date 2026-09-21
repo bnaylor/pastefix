@@ -9,11 +9,21 @@ enum SnippetPaster {
     enum Outcome: Equatable { case pasted, copiedOnly }
     private static var promptedThisLaunch = false
 
-    /// How long the target gets to come forward before we look for it again.
-    private static let activationSettle: TimeInterval = 0.15
-    /// How long we will wait for the user to release the hotkey's modifiers (see `postWhenReady`).
-    private static let modifierWait: TimeInterval = 1.0
-    private static let modifierPoll: TimeInterval = 0.02
+    /// How long `postWhenReady` will wait for the target to come forward and the user to let go
+    /// of the hotkey's modifiers, and how often it re-checks.
+    private static let readyWait: TimeInterval = 1.0
+    private static let readyPoll: TimeInterval = 0.02
+
+    /// The modifiers that would re-interpret our ⌘V into a different chord, and so the only ones
+    /// worth waiting on. Deliberately NOT `.deviceIndependentFlagsMask`: that includes
+    /// `.capsLock`, which latches — with Caps Lock on it is reported continuously with no key
+    /// held, so waiting for it to clear means never pasting at all. `.function`, `.numericPad`
+    /// and `.help` are excluded for the same reason they are harmless: they do not affect ⌘V.
+    private static let blockingModifiers: NSEvent.ModifierFlags = [.shift, .control, .option, .command]
+
+    /// Identifies the newest paste request. The clipboard is one slot, so two pastes inside the
+    /// wait window cannot both be right: the newest wins and older chains stop without posting.
+    private static var pendingGeneration = 0
 
     static var isTrusted: Bool { AXIsProcessTrusted() }
 
@@ -56,30 +66,40 @@ enum SnippetPaster {
         if !app.isActive {
             guard app.activate(from: .current, options: []) else { return .copiedOnly }
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + activationSettle) {
-            postWhenReady(targetPID: app.processIdentifier, deadline: Date().addingTimeInterval(modifierWait))
+        pendingGeneration &+= 1
+        let generation = pendingGeneration
+        let target = app.processIdentifier
+        let deadline = Date().addingTimeInterval(readyWait)
+        DispatchQueue.main.asyncAfter(deadline: .now() + readyPoll) {
+            postWhenReady(targetPID: target, generation: generation, deadline: deadline)
         }
         return .pasted
     }
 
-    /// Posts ⌘V only once the user has let go of everything and the target really is frontmost.
+    /// Posts ⌘V once — and only once — both conditions hold: no blocking modifier is down, and the
+    /// target really is the frontmost app. Both share one deadline, and a timeout posts nothing;
+    /// the clipboard already holds the snippet, so the user can ⌘V themselves.
     ///
-    /// `onKeyUp` fires on key-*up* of the shortcut's character key, so a ⌥⌘1 hotkey still has ⌥⌘
-    /// physically down at this point, and `.cghidEventTap` re-derives live hardware modifiers
-    /// below the window server: our ⌘V would arrive as ⌥⌘V, which in Finder is *Move Items Here*.
-    /// Setting `flags` on the event does not clear that hardware state, so we wait for it instead.
-    /// On timeout we deliberately post nothing — the clipboard already holds the snippet.
-    private static func postWhenReady(targetPID: pid_t, deadline: Date) {
-        guard NSEvent.modifierFlags.intersection(.deviceIndependentFlagsMask).isEmpty else {
+    /// The modifier half: `onKeyUp` fires on key-*up* of the shortcut's character key, so a ⌥⌘1
+    /// hotkey still has ⌥⌘ physically down at this point, and `.cghidEventTap` re-derives live
+    /// hardware modifiers below the window server — our ⌘V would arrive as ⌥⌘V, which in Finder
+    /// is *Move Items Here*. Setting `flags` on the event does not clear that hardware state.
+    ///
+    /// The frontmost half: `activate` only *requests* activation, and a busy target, App Nap or a
+    /// Space switch can take longer than one tick to land. Retrying rather than bailing on the
+    /// first mismatch is strictly safer, not laxer — a target that never comes forward (including
+    /// because the user switched to a third app) still ends in posting nothing.
+    private static func postWhenReady(targetPID: pid_t, generation: Int, deadline: Date) {
+        guard generation == pendingGeneration else { return }
+        let ready = NSEvent.modifierFlags.intersection(blockingModifiers).isEmpty
+            && NSWorkspace.shared.frontmostApplication?.processIdentifier == targetPID
+        guard ready else {
             guard Date() < deadline else { return }
-            DispatchQueue.main.asyncAfter(deadline: .now() + modifierPoll) {
-                postWhenReady(targetPID: targetPID, deadline: deadline)
+            DispatchQueue.main.asyncAfter(deadline: .now() + readyPoll) {
+                postWhenReady(targetPID: targetPID, generation: generation, deadline: deadline)
             }
             return
         }
-        // Activation is asynchronous and can be refused after the fact; without this the ⌘V types
-        // the clipboard into whatever happens to be frontmost now.
-        guard NSWorkspace.shared.frontmostApplication?.processIdentifier == targetPID else { return }
         postCommandV()
     }
 

@@ -427,14 +427,22 @@ struct HistoryOverlayView: View {
     /// The overlay stays open: pinning is a curation gesture, and the row re-ranks under the
     /// cursor (the store publishes, `onChange(of: history.items)` re-ranks) so the user can see
     /// it land in the Pinned section.
+    /// Pinning re-ranks the list under the highlight, so the selection has to follow the item.
+    /// Left where it was, `selection` would designate a *different* row: a second ⌘P — the natural
+    /// "undo that" — would then pin an unrelated item, or unpin whichever pin slid into its place,
+    /// and `HistoryStore.unpin` clears the title, so two taps could silently destroy a label.
+    /// The store mutates synchronously, so the new order is readable immediately; the later
+    /// `onChange(of: history.items)` refresh re-ranks to the same value and is a no-op.
     private func togglePinSelected() {
         guard let item = selectedItem() else { return }
         model.togglePin(item)
+        refreshResults()
+        selection = results.firstIndex { $0.item.id == item.id } ?? clampedSelection(in: results)
     }
 
-    /// Closes first, like `open`/`copyBackSelection`: `pasteIntoPreviousApp` ends the session and
-    /// orders the panel out synchronously, and the paste is aimed at the app we came from — the
-    /// overlay must be gone before the ⌘V lands.
+    /// Dismisses the overlay first — `onClose` only collapses the overlay within the panel, it
+    /// does not hide the panel or change activation, so the ⇧↵ paste that follows still runs while
+    /// Pastefix is the active app (which is what `SnippetPaster` needs to hand over activation).
     private func pasteSelected() {
         guard let item = selectedItem() else { return }
         onClose()

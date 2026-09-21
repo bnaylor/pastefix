@@ -201,19 +201,24 @@ final class AppModel: ObservableObject {
         return history.pinText(doc.working, richRTFD: doc.origin.richRTFD, title: title) != nil
     }
 
-    /// Copies the item, hides the panel, and pastes it into the app the user came from.
+    /// Copies the item, pastes it into the app the user came from, and hides the panel.
     ///
-    /// The target is resolved *before* `endSession()`: hiding the panel changes activation, so a
-    /// provider read afterwards can report whatever the window server promoted in our place. The
-    /// paste outcome is deliberately ignored — without Accessibility the snippet is still on the
+    /// Both the target read and the paste happen *before* `endSession()`, and the order is
+    /// load-bearing rather than tidy. `endSession()` hides the panel synchronously, so afterwards
+    /// the provider would report whatever the window server promoted in our place, and — the part
+    /// that actually breaks — `SnippetPaster` would be asking for cooperative activation as a
+    /// background agent that no longer owns it, which macOS 14+ is entitled to refuse. Hiding
+    /// after is safe: `paste` only requests activation and schedules the ⌘V, which re-checks the
+    /// frontmost app before it fires.
+    ///
+    /// The outcome is deliberately ignored — without Accessibility the snippet is still on the
     /// clipboard (`.copiedOnly`), which is a silent fallback by design; Settings shows the
     /// permission state rather than interrupting the paste.
     func pasteIntoPreviousApp(_ item: HistoryItem) {
         let text = item.plainText ?? ""
         let rich = history.richRTFD(for: item)
-        let target = previousAppProvider()
+        _ = SnippetPaster.paste(text: text, richRTFD: rich, into: previousAppProvider())
         endSession()
-        _ = SnippetPaster.paste(text: text, richRTFD: rich, into: target)
     }
 
     private func endSession() {
