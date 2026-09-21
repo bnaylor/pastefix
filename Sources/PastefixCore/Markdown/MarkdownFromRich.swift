@@ -2,7 +2,7 @@ import Foundation
 import AppKit
 
 /// RTFD → GitHub-flavoured Markdown. Best effort: headings, lists, emphasis, links, code;
-/// tables flattened, attachments dropped.
+/// tables become pipe-separated rows without a header separator, attachments are dropped.
 ///
 /// Two things are worth knowing about the source material. RTF carries no heading concept
 /// — `NSParagraphStyle.headerLevel` survives an HTML→attributed conversion (how browser
@@ -20,7 +20,15 @@ public enum MarkdownFromRich {
         return convert(a)
     }
 
-    struct Line { var text: String; var isCode: Bool; var isList: Bool }
+    /// Which table cell a line came from, so `join` can put a row back on one line.
+    struct CellRef: Equatable { var table: ObjectIdentifier; var row: Int }
+
+    struct Line {
+        var text: String
+        var isCode = false
+        var isList = false
+        var cell: CellRef?
+    }
 
     static func convert(_ a: NSAttributedString) -> String {
         let ns = a.string as NSString
@@ -33,35 +41,43 @@ public enum MarkdownFromRich {
             guard pr.length > 0 else { break }
             defer { loc = NSMaxRange(pr) }
             let content = NSRange(location: pr.location, length: pr.length - newlineSuffixLength(ns, pr))
-            guard content.length > 0 else { lines.append(Line(text: "", isCode: false, isList: false)); continue }
+            guard content.length > 0 else { lines.append(Line(text: "")); continue }
             let attrs = a.attributes(at: content.location, effectiveRange: nil)
             let ps = attrs[.paragraphStyle] as? NSParagraphStyle
             let sub = a.attributedSubstring(from: content)
 
-            // Table cells are flattened to plain lines; Markdown tables need a shape RTF
-            // doesn't reliably give us (header row, column count), so we don't guess.
+            // A table cell is its own paragraph; `join` stitches a row back together from the
+            // block's table identity and row index. No header separator is emitted — RTF has
+            // no notion of a header row, so guessing one would misrepresent the table.
             if !(ps?.textBlocks.isEmpty ?? true) {
-                lines.append(Line(text: inlineMarkdown(sub), isCode: false, isList: false)); continue
+                let block = ps?.textBlocks.compactMap { $0 as? NSTextTableBlock }.last
+                let cell = block.map { CellRef(table: ObjectIdentifier($0.table), row: $0.startingRow) }
+                lines.append(Line(text: inlineMarkdown(sub), cell: cell)); continue
             }
             if isWholly(sub, where: isMono) {
-                lines.append(Line(text: sub.string, isCode: true, isList: false)); continue
+                lines.append(Line(text: sub.string, isCode: true)); continue
             }
-            var text = inlineMarkdown(sub)
             if let lists = ps?.textLists, let list = lists.last {
-                text = stripMarker(text)
-                let indent = String(repeating: "  ", count: lists.count - 1)
-                if list.markerFormat.rawValue.contains("decimal") {
+                // Strip the baked marker from the *attributed* string, before styling: when the
+                // marker shares the item's run (WebKit gives it the item's own font) a later
+                // string-level strip would be looking at "**•\tall bold item**" and miss it.
+                var text = inlineMarkdown(strippingMarker(sub))
+                let indent = String(repeating: " ", count: lists.dropLast().reduce(0) { $0 + markerWidth($1) })
+                if isOrdered(list) {
                     let n = (listCounters[ObjectIdentifier(list)] ?? (list.startingItemNumber - 1)) + 1
                     listCounters[ObjectIdentifier(list)] = n
                     text = "\(indent)\(n). \(text)"
                 } else {
                     text = "\(indent)- \(text)"
                 }
-                lines.append(Line(text: text, isCode: false, isList: true)); continue
+                lines.append(Line(text: text, isList: true)); continue
             }
             let level = headingLevel(sub, headerLevel: ps?.headerLevel ?? 0, bodySize: bodySize)
-            if level > 0 { text = String(repeating: "#", count: level) + " " + stripEmphasis(text) }
-            lines.append(Line(text: text, isCode: false, isList: false))
+            // The paragraph being wholly bold is what made it a heading, so re-emitting that
+            // bold as `**` would just be noise; italic, code, strikethrough and links stay.
+            var text = inlineMarkdown(sub, suppressingBold: level > 0)
+            if level > 0 { text = String(repeating: "#", count: level) + " " + text }
+            lines.append(Line(text: text))
         }
         return join(lines)
     }
@@ -85,6 +101,19 @@ public enum MarkdownFromRich {
         var i = 0
         while i < lines.count {
             let line = lines[i]
+            if let first = line.cell {
+                var rows: [String] = []
+                var row: [String] = []
+                var currentRow = first
+                while i < lines.count, let cell = lines[i].cell, cell.table == first.table {
+                    if cell != currentRow { rows.append(row.joined(separator: " | ")); row = []; currentRow = cell }
+                    row.append(trimTrailing(lines[i].text))
+                    i += 1
+                }
+                rows.append(row.joined(separator: " | "))
+                blocks.append(rows.joined(separator: "\n"))
+                continue
+            }
             if line.isCode {
                 var block = ["```"]
                 while i < lines.count, lines[i].isCode { block.append(lines[i].text); i += 1 }
@@ -126,7 +155,10 @@ public enum MarkdownFromRich {
         var isPlain: Bool { !mono && !bold && !italic && !strike && link == nil }
     }
 
-    private static func inlineMarkdown(_ s: NSAttributedString) -> String {
+    /// `suppressingBold` is set for headings. Dropping bold from the style *before* the runs
+    /// are merged is what makes `bold("Head ") + boldItalic("x") + bold(" tail")` collapse to
+    /// `Head *x* tail`: the two plain runs now compare equal to nothing in between them.
+    private static func inlineMarkdown(_ s: NSAttributedString, suppressingBold: Bool = false) -> String {
         let ns = s.string as NSString
         var runs: [(style: Style, text: String)] = []
         s.enumerateAttributes(in: NSRange(location: 0, length: s.length)) { attrs, range, _ in
@@ -136,7 +168,7 @@ public enum MarkdownFromRich {
             var style = Style()
             if let font = attrs[.font] as? NSFont {
                 style.mono = isMono(font)
-                style.bold = isBold(font)
+                style.bold = isBold(font) && !suppressingBold
                 style.italic = isItalic(font)
             }
             if let raw = attrs[.strikethroughStyle] as? Int, raw != 0 { style.strike = true }
@@ -224,30 +256,27 @@ public enum MarkdownFromRich {
         return 0
     }
 
-    // MARK: - Text fixups
+    // MARK: - List markers
 
-    /// A wholly bold heading has already been wrapped in `**` by `inlineMarkdown`; the
-    /// hashes say "heading" on their own.
-    static func stripEmphasis(_ text: String) -> String {
-        var s = text
-        for marker in ["**", "*", "~~"] {
-            while s.hasPrefix(marker), s.hasSuffix(marker), s.count > 2 * marker.count {
-                s = String(s.dropFirst(marker.count).dropLast(marker.count))
-            }
-        }
-        return s
-    }
+    static func isOrdered(_ list: NSTextList) -> Bool { list.markerFormat.rawValue.contains("decimal") }
 
-    // The trailing "." / ")" is optional because WebKit's HTML → attributed conversion writes
-    // an ordered-list marker as a bare number ("\t1\tfirst"), not "\t1.\tfirst".
-    private static let markerPattern = try! NSRegularExpression(pattern: #"^[\t ]*([•◦▪‣\-\*]|\d+[.)]?)?[\t ]+"#)
+    /// The content column of the Markdown marker we emit: `"1. "` is three, `"- "` is two.
+    /// A nested item has to be indented past its *parent's* marker or cmark reads it as a
+    /// sibling rather than a child — two spaces under an ordered parent flattens the list.
+    private static func markerWidth(_ list: NSTextList) -> Int { isOrdered(list) ? 3 : 2 }
 
-    /// AppKit bakes the list marker into the paragraph text (`"\t1.\tfirst"`); we re-emit
-    /// our own, so the original has to go. Only ever called on list paragraphs — on ordinary
-    /// prose the number branch would happily eat a leading year.
-    static func stripMarker(_ text: String) -> String {
-        let ns = text as NSString
-        guard let m = markerPattern.firstMatch(in: text, range: NSRange(location: 0, length: ns.length)) else { return text }
-        return ns.substring(from: NSMaxRange(m.range))
+    // Deliberately narrow: a marker glyph or number *delimited by a tab*, which is the only
+    // shape AppKit and WebKit produce ("\t•\tone", "\t1.\tfirst", and WebKit's unpunctuated
+    // "\t1\tfirst"). Anything looser eats real content, because the RTF writer drops the baked
+    // marker entirely — an RTFD list item reading "2024 was a year" is all content.
+    private static let markerPattern = try! NSRegularExpression(pattern: #"^\t?(?:[•◦▪‣\-\*]|\d+[.)]?)\t"#)
+
+    /// Removes AppKit's baked-in list marker, attributes and all, so inline styling sees only
+    /// the item's own text.
+    static func strippingMarker(_ s: NSAttributedString) -> NSAttributedString {
+        let ns = s.string as NSString
+        let full = NSRange(location: 0, length: ns.length)
+        guard let m = markerPattern.firstMatch(in: s.string, range: full) else { return s }
+        return s.attributedSubstring(from: NSRange(location: m.range.length, length: ns.length - m.range.length))
     }
 }
