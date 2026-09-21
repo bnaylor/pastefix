@@ -98,6 +98,8 @@ Each is a zero-configuration `Transformer` conforming to the protocol:
 
 These three make up the **Rich Text** category (see the table below).
 
+**Preview.** The eye button (⌘⇧M) swaps the editor for a read-only rendering of the buffer as Markdown; it's tinted when Markdown is detected. Images aren't shown and previews are limited to 64 KB. Esc returns to the editor.
+
 ### Data
 
 - **JSON Prettify:** Reformats JSON with 2-space indentation. Output keys are always sorted, so runs are deterministic.

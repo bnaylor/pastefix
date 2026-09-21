@@ -112,3 +112,30 @@ Sources/PastefixAppCore/MarkdownPreview.swift      # new
 Pastefix/Pastefix/MarkdownPreviewView.swift        # new
 Pastefix/Pastefix/PanelView.swift                  # toggle, state, Esc arbitration
 ```
+
+## Amendments (post-implementation)
+
+Two places where the shipped `PanelView.swift` refines what's written above:
+
+- **Focus hop on close.** "Closing the preview returns focus to the editor" (Decisions table) holds,
+  but the mechanism differs from the overlays. `closePalette()`/`closeHistory()` set
+  `editorFocused = true` synchronously, because the editor is already in the view tree underneath
+  the overlay. `closePreview()` sets `isPreviewing = false` first — at that instant the
+  `TextEditor` doesn't exist yet (it renders on the next pass) — so the focus assignment is
+  deferred one turn via `Task { @MainActor in editorFocused = true }`. Same end state, different
+  reason: the preview *replaces* the editor rather than sitting on top of it.
+- **Button enabled state while an overlay is open.** The Scope bullet says the Preview toggle is
+  "disabled while an overlay is open," but the shipped button's `.disabled(...)` only covers
+  `model.document == nil || model.isApplying` (matching the Architecture section's snippet, which
+  never mentions overlay state). While the palette or history overlay is open the button stays
+  enabled by that modifier; it's inert in practice only because the overlay is a sibling `ZStack`
+  layer with an opaque backdrop that swallows clicks to the toolbar underneath (same as the ⌘K and
+  ⌘Y buttons), and because `.keyboardShortcut` for ⌘⇧M is set to `nil` while either overlay is
+  open. No user-visible bug, but "disabled" in the Scope bullet overstates what the `.disabled()`
+  modifier itself does.
+- **`previewText` on close.** Not addressed above: `closePreview()` leaves `previewText` holding
+  the last-rendered `NSAttributedString` rather than clearing it. Harmless — the view is only
+  shown while `isPreviewing`, and `togglePreview()` calls `scheduleRender(immediate: true)` before
+  the preview is shown again — but worth noting since nothing resets it explicitly except a new
+  session (`sessionGeneration` change resets `isPreviewing`, not `previewText`, though the same
+  immediate re-render on next open covers it).
