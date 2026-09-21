@@ -1,6 +1,6 @@
 ---
 type: spec
-status: approved
+status: implemented
 id: 2026-09-21-pastefix-v2-markdown-rich-text
 title: Pastefix v2 — Markdown ↔ Rich Text (Plan 8)
 description: Rich → Markdown transform over the clipboard's RTFD; Markdown → Rich Text transform that arms an output mode so Save writes HTML + RTF + the Markdown source; Markdown content detection; a Foundation-only Markdown → HTML renderer; a "Rich Text" transform category.
