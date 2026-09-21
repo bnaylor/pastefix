@@ -59,6 +59,21 @@ import Testing
         #expect(t.swiftUI == "Color(red: 1.000, green: 0.000, blue: 0.502, opacity: 0.500)")
         #expect(p("rgb(0 0 0 / 0.3333)")!.cssRGB == "rgb(0 0 0 / 0.333)")
     }
+    /// The initialiser is public, so a non-finite component must clamp rather than trap in
+    /// `Int(_:)` during formatting. Non-finite alpha becomes 1 (opaque) — the safe default.
+    @Test func nonFiniteComponentsClampToZero() {
+        let c = ColorLiteral(red: .nan, green: .infinity, blue: -.infinity, alpha: .nan)
+        #expect(c.cssHex == "#000000")
+        #expect(c.cssRGB == "rgb(0 0 0)")
+        #expect(c.cssHSL == "hsl(0 0% 0%)")
+        #expect(ColorLiteral(red: 2, green: -1, blue: .nan, alpha: .infinity).cssHex == "#ff0000")
+    }
+
+    /// A hue that rounds to 360 must print as 0.
+    @Test func hueWrapsAtThreeSixty() {
+        #expect(p("hsl(359.9999 100% 50%)")!.cssHSL == "hsl(0 100% 50%)")
+    }
+
     @Test func roundTrips() {
         for hex in ["#000000", "#ffffff", "#ff0080", "#141414", "#603010", "#80ff00"] {
             let c = p(hex)!

@@ -31,6 +31,12 @@ import Foundation
     @Test func displayNames() {
         #expect(ContentKind.url.displayName == "URL")
         #expect(ContentKind.json.displayName == "JSON")
+        #expect(ContentKind.color.displayName == "Color")
+        #expect(ContentKind.jwt.displayName == "JWT")
+        #expect(ContentKind.base64.displayName == "Base64")
+        #expect(ContentKind.percentEncoded.displayName == "Percent-encoded")
+        #expect(ContentKind.htmlEntities.displayName == "HTML entities")
+        #expect(ContentKind.allCases.count == 7)
     }
     @Test func colorKind() {
         #expect(ContentDetector.detect("#ff0080") == [.color])
@@ -57,11 +63,12 @@ import Foundation
         #expect(ContentDetector.detect("caf&eacute; &#8212; &#x2014;") == [.htmlEntities])
         #expect(ContentDetector.detect("Tom & Jerry; fine") == [])
     }
-    @Test func decodedJWTOutputIsJSON() async throws {
+    @Test func decodedJWTOutputIsNotReDetected() async throws {
         let t = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"
         let out = try await JWTDecode().apply(.init(text: t))
         // The trailing comment lines break strict JSON; the detector sees the leading "{" and JSONSerialization fails → not json.
         // That is acceptable: document it. Assert only that it is not mis-detected as jwt/base64.
         #expect(ContentDetector.detect(out).isDisjoint(with: [.jwt, .base64]))
+        #expect(!ContentDetector.detect(out).contains(.json))
     }
 }

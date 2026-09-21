@@ -22,7 +22,7 @@ public struct ColorConvert: Transformer {
     }
 
     public func apply(_ input: TransformInput) async throws -> String {
-        guard let c = ColorLiteral.parse(input.text) else { throw TransformError.invalidInput("Not a colour literal") }
+        guard let c = ColorLiteral.parse(input.text) else { throw TransformError.invalidInput("Not a color literal") }
         switch style {
         case .hex: return c.cssHex
         case .rgb: return c.cssRGB

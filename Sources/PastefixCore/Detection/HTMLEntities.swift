@@ -8,18 +8,28 @@ enum HTMLEntities {
         for (pattern, radix) in [("&#[xX]([0-9A-Fa-f]+);", 16), ("&#([0-9]+);", 10)] {
             guard let re = try? NSRegularExpression(pattern: pattern) else { continue }
             let ns = out as NSString
-            var result = out
+            // Splice on an NSMutableString, indexed by the same UTF-16 offsets the regex reports.
+            // Converting each NSRange to a String.Index range instead is O(offset) per match, i.e.
+            // quadratic in the buffer: a 1 MB paste of numeric references took ~25 s.
+            let ms = NSMutableString(string: out)
             for m in re.matches(in: out, range: NSRange(location: 0, length: ns.length)).reversed() {
                 let digits = ns.substring(with: m.range(at: 1))
                 guard let code = UInt32(digits, radix: radix), let scalar = Unicode.Scalar(code),
-                      let r = Range(m.range, in: result) else { continue }
-                result.replaceSubrange(r, with: String(Character(scalar)))
+                      !isDisallowedControl(scalar) else { continue }
+                ms.replaceCharacters(in: m.range, with: String(Character(scalar)))
             }
-            out = result
+            out = ms as String
         }
         // Named references in a fixed order with "&amp;" LAST so "&amp;lt;" → "&lt;".
         for (name, value) in named { out = out.replacingOccurrences(of: "&\(name);", with: value) }
         return out
+    }
+
+    /// C0 controls other than tab/LF/CR are left as entity text: decoding "&#0;" would splice a
+    /// NUL into the buffer, which truncates the value for anything downstream that speaks C
+    /// strings, and the rest of the range is invisible rather than useful.
+    private static func isDisallowedControl(_ scalar: Unicode.Scalar) -> Bool {
+        scalar.value < 0x20 && scalar != "\t" && scalar != "\n" && scalar != "\r"
     }
 
     /// HTML4 Latin-1 (U+00A0…U+00FF, in code-point order), common typographic names, then the

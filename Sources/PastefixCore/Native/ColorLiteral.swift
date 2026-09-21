@@ -4,9 +4,14 @@ import Foundation
 public struct ColorLiteral: Equatable, Sendable {
     public var red: Double, green: Double, blue: Double, alpha: Double
 
+    /// The initialiser is public, so it must survive NaN and infinity: `min`/`max` pass NaN
+    /// through, and the formatters would then trap in `Int(_:)`. Non-finite colour channels
+    /// become 0; a non-finite alpha becomes 1, so the value stays opaque rather than invisible.
     public init(red: Double, green: Double, blue: Double, alpha: Double = 1) {
-        self.red = min(max(red, 0), 1); self.green = min(max(green, 0), 1)
-        self.blue = min(max(blue, 0), 1); self.alpha = min(max(alpha, 0), 1)
+        self.red = red.isFinite ? min(max(red, 0), 1) : 0
+        self.green = green.isFinite ? min(max(green, 0), 1) : 0
+        self.blue = blue.isFinite ? min(max(blue, 0), 1) : 0
+        self.alpha = alpha.isFinite ? min(max(alpha, 0), 1) : 1
     }
 
     // MARK: Parsing
@@ -125,7 +130,8 @@ public struct ColorLiteral: Equatable, Sendable {
     }
     public var cssHSL: String {
         let (h, s, l) = hsl
-        return "hsl(\(Int(h.rounded())) \(Int((s * 100).rounded()))% \(Int((l * 100).rounded()))%" + (hasAlpha ? " / \(cssAlpha))" : ")")
+        // 359.9999 rounds to 360, which is the same hue as 0 and not a value CSS should print.
+        return "hsl(\(Int(h.rounded()) % 360) \(Int((s * 100).rounded()))% \(Int((l * 100).rounded()))%" + (hasAlpha ? " / \(cssAlpha))" : ")")
     }
     public var swiftUI: String {
         let base = String(format: "Color(red: %.3f, green: %.3f, blue: %.3f", red, green, blue)

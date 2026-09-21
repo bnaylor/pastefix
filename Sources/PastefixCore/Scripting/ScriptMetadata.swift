@@ -33,8 +33,13 @@ public struct ScriptMetadata: Equatable, Sendable {
             case "enabled": md.enabled = (value.lowercased() == "true")
             case "order": md.order = Int(value)
             case "kinds":
-                let parsed = value.split(separator: ",")
-                    .compactMap { ContentKind(rawValue: $0.trimmingCharacters(in: .whitespaces).lowercased()) }
+                // Match case-insensitively against the raw values rather than lowercasing into
+                // `ContentKind(rawValue:)`: the camelCase kinds ("percentEncoded") never match once
+                // the token has been lowercased.
+                let parsed = value.split(separator: ",").compactMap { part -> ContentKind? in
+                    let token = part.trimmingCharacters(in: .whitespaces).lowercased()
+                    return ContentKind.allCases.first { $0.rawValue.lowercased() == token }
+                }
                 md.kinds = parsed.isEmpty ? nil : Set(parsed)
             case "category":
                 let trimmed = value.trimmingCharacters(in: .whitespaces)

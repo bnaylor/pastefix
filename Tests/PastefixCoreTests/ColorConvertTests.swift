@@ -9,7 +9,7 @@ import Testing
         #expect(try await ColorConvert(style: .swift).apply(.init(text: " #FF0080 ")) == "Color(red: 1.000, green: 0.000, blue: 0.502)")
     }
     @Test func invalidInputThrows() async {
-        await #expect(throws: TransformError.invalidInput("Not a colour literal")) {
+        await #expect(throws: TransformError.invalidInput("Not a color literal")) {
             _ = try await ColorConvert(style: .hex).apply(.init(text: "hello"))
         }
     }
