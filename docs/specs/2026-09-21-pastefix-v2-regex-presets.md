@@ -13,6 +13,38 @@ timestamp: 2026-09-21T14:00:00Z
 Source: [issue #12](https://github.com/bnaylor/pastefix/issues/12). Builds on Plan 1's registry
 and overrides, Plan 4's palette/sidebar, and the bounded-regex lessons of Plans 8 and 11.
 
+## Amendments (post-implementation)
+
+The plan below was written before implementation; these are where the shipped code differs.
+
+1. **`.reportProgress` is load-bearing for the deadline, not decorative.**
+   `NSRegularExpression.enumerateMatches` only invokes its block when it finds a match, unless
+   `.reportProgress` is passed, in which case it also invokes the block periodically *during* a
+   single long match attempt. Without the option, a catastrophically backtracking pattern (e.g.
+   `(a+)+$` against a non-matching run) spends its entire budget inside one `enumerateMatches`
+   call with the block never invoked, so `RegexPresetTransformer.replace`'s
+   `ContinuousClock`-deadline check is never reached — measured 10.9 s unthrown against the
+   outer 3 s timeout race. `enumerateMatches(options: [.reportProgress], …)` must never be
+   "simplified" to `[]`.
+2. **`RegexPresetTransformer.preview(_:preset:deadline:)` is a public wrapper**, not part of the
+   `apply`/`replace` pair the spec's Architecture section shows. It exists because the Settings
+   preview needs both the replaced output and a match count, and `replace` — deliberately
+   `internal`, since running a preset for real is `apply`'s job — isn't visible from the app
+   target. `preview` runs `replace` once, then a second `enumerateMatches` pass to count
+   matches, and both passes share one absolute `ContinuousClock.Instant` deadline supplied by
+   the caller so the pair is bounded by that deadline once, not twice.
+3. **An empty pattern currently compiles and matches everywhere.**
+   `NSRegularExpression(pattern: "", options:)` succeeds and produces a zero-length match at
+   every position, so a preset with an empty pattern is savable today —
+   `PresetsSettingsView.isSavable` only checks that the pattern compiles and the name isn't
+   blank — and runs as a real transform once saved. The spec's "does it compile" lint doesn't
+   catch this; the editor will refuse an empty pattern explicitly in a later wave.
+4. **The preview's count pass stops at 1 when `replaceAll` is off.** `preview` mirrors
+   `replace`'s early stop: when a preset only replaces the first match, counting past it would
+   report matches the transform never actually replaced, so both of `preview`'s
+   `enumerateMatches` passes set `stop.pointee = true` after the first match when
+   `preset.replaceAll` is `false`.
+
 ## Scope
 
 **In scope:**
