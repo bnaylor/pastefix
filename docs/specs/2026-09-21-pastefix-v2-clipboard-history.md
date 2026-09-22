@@ -90,7 +90,7 @@ read of this spec.
    mode, so on the main actor that stall lands during menu tracking. `read`
    therefore returns the raw TIFF plus its header pixel size and converts
    nothing; `tick` runs stage 2 as usual (provisionally — the candidate has no
-   image yet) and then queues the bytes on a conversion slot (only `Data` and
+   image yet) and then hands the bytes to the conversion lane (only `Data` and
    `Int` cross), and the capture happens from the completion, back on the main
    actor. Everything that can change while the conversion runs is decided there
    and not before: the change count is re-checked, and the stage-2 filters run
@@ -103,25 +103,40 @@ read of this spec.
    describes a different change, so the late-marker check cannot be performed
    at all, and recording anyway would file an older image above the thing the
    user copied after it. Both drops are logged (`os.Logger`, category
-   "history"), since nothing else would show them. Attribution stays the
-   pre-conversion sample, since the source app is determined before the read
-   and a second later the newest activation may be an app the user switched to
-   after copying; only the exclusion check gets the widened set of recent
-   bundle ids — which means switching to an *excluded* app during the
+   "history") at `.notice`, since nothing else would show them and `.debug` is
+   neither persisted nor present in the default release stream. Attribution
+   stays the pre-conversion sample, since the source app is determined before
+   the read and a second later the newest activation may be an app the user
+   switched to after copying; only the exclusion check gets the widened set of
+   recent bundle ids — which means switching to an *excluded* app during the
    conversion window drops a capture the pre-conversion pass had approved,
-   accepted as the fail-closed direction. At most one conversion runs at a
-   time: they queue on a serial slot, one superseded before it starts (by a
-   newer change or by `stop()`, both via the generation number) is skipped, and
-   one already running finishes anyway because ImageIO offers no cancellation
-   point — cancelling the wrapper task would not have bounded the work, which
-   is why the slot exists. A conversion that fails or produces a PNG over the
+   accepted as the fail-closed direction. At most one conversion runs at a time
+   process-wide: `TIFFConversionSlot.shared` is one lane with one waiting slot,
+   and one superseded before it starts (by a newer change or by `stop()`, both
+   via the generation number) is skipped, while one already running finishes
+   anyway because `NSBitmapImageRep` offers no cancellation point — cancelling
+   the wrapper task would not have bounded the work, which is why the lane
+   exists. The lane holds a single waiter rather than a queue, and a second
+   arrival displaces the one waiting: queueing would have bounded the
+   concurrent decodes while leaving every queued block holding its own source
+   TIFF, so a burst would keep three TIFFs alive waiting for one decode instead
+   of running three at once. Peak is two TIFFs and one bitmap. It is shared
+   rather than owned by the monitor because editing the exclusion list rebuilds
+   `PasteboardMonitor`, and a per-instance lane would let the outgoing
+   monitor's in-flight decode run alongside the incoming one's; the generation
+   counter is minted by the lane for the same reason, so that a rebuilt monitor
+   supersedes its predecessor's pending work rather than racing it with a
+   colliding number. A conversion that fails or produces a PNG over the
    budget records the item's text if it has any and nothing otherwise —
    `PendingImage.resolve` in `PastefixAppCore`, the one testable piece of this.
    The overlay's thumbnail blob read and ImageIO decode moved off the main
    actor the same way, keyed by item id: the decoded image is installed for the
    id it was loaded for whether or not the row that asked for it survived, or a
    row filtered out mid-load and brought straight back would sit on the grey
-   placeholder for good.
+   placeholder for good. A blob that will not decode is a different thing from
+   a slow one — `HistoryStore` sets `imageFile` only after an atomic write, so
+   a failure means missing or corrupt — and is logged once and remembered for
+   the session rather than re-read on every appearance.
 
 ## Scope
 
