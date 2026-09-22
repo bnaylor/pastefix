@@ -82,6 +82,15 @@ import PastefixCore
         #expect(d.detectedKinds == [.url])
     }
 
+    @Test func secretMatchesPinnedAtDiscreteEvents() {
+        var d = PasteDocument(origin: ClipboardSnapshot(plainText: "AKIAIOSFODNN7EXAMPLE", richRTFD: nil))
+        #expect(d.secretMatches.map(\.kind) == [.awsAccessKey] && d.detectedKinds.contains(.secret))
+        d.setWorking("plain now")                      // manual edit: not re-detected
+        #expect(d.secretMatches.count == 1)
+        d.pushState("plain now")                       // discrete event
+        #expect(d.secretMatches.isEmpty && !d.detectedKinds.contains(.secret))
+    }
+
     @Test func outputModeDefaultsSurvivesPushResetsOnRefresh() {
         var d = PasteDocument(origin: ClipboardSnapshot(plainText: "a", richRTFD: nil))
         #expect(d.outputMode == .plain)

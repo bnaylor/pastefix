@@ -392,6 +392,21 @@ import Foundation
             #expect(names == ["index.json"])
         }
     }
+    @Test func containsSecretFlagSetAtCaptureAndDecodesLegacyFalse() throws {
+        try withDir { dir in
+            let s = HistoryStore(directory: dir)
+            let a = s.record(text("token=9f8e7d6c5b4a39281706f5e4d3c2b1a0"))!; let b = s.record(text("hello"))!
+            let img = s.record(CaptureCandidate(imagePNG: png(1)))!
+            #expect(a.containsSecret && !b.containsSecret && !img.containsSecret)
+            let p = s.pinText("AKIAIOSFODNN7EXAMPLE", richRTFD: nil, title: nil)!
+            #expect(p.containsSecret)
+            s.flush()
+            #expect(HistoryStore(directory: dir).items.first { $0.id == a.id }?.containsSecret == true)
+            let legacy = #"[{"id":"00000000-0000-0000-0000-000000000002","capturedAt":"2026-09-01T00:00:00Z","plainText":"AKIAIOSFODNN7EXAMPLE","byteCount":20}]"#
+            try Data(legacy.utf8).write(to: dir.appendingPathComponent("index.json"))
+            #expect(HistoryStore(directory: dir).items[0].containsSecret == false)   // not recomputed at load
+        }
+    }
     @Test func pinFieldsPersistAndOldIndexesLoad() throws {
         try withDir { dir in
             let s = HistoryStore(directory: dir)

@@ -22,22 +22,26 @@ public struct HistoryItem: Identifiable, Codable, Equatable, Sendable {
     public var pinnedAt: Date?
     /// Optional user-supplied label, shown instead of the preview and searched alongside the body.
     public var title: String?
+    /// Whether `SecretDetector` found a match in `plainText` at capture (or pin-time promotion).
+    /// Never recomputed at load: `load()` stays pure, so an index written before Plan 11 decodes
+    /// to `false` rather than re-scanning every item's text on every launch.
+    public var containsSecret: Bool = false
 
     public init(id: UUID = UUID(), capturedAt: Date = Date(), plainText: String? = nil,
                 richRTFDFile: String? = nil, imageFile: String? = nil,
                 imagePixelWidth: Int? = nil, imagePixelHeight: Int? = nil, imageHash: String? = nil,
                 sourceBundleID: String? = nil, sourceAppName: String? = nil, byteCount: Int = 0,
-                pinned: Bool = false, pinnedAt: Date? = nil, title: String? = nil) {
+                pinned: Bool = false, pinnedAt: Date? = nil, title: String? = nil, containsSecret: Bool = false) {
         self.id = id; self.capturedAt = capturedAt; self.plainText = plainText
         self.richRTFDFile = richRTFDFile; self.imageFile = imageFile
         self.imagePixelWidth = imagePixelWidth; self.imagePixelHeight = imagePixelHeight; self.imageHash = imageHash
         self.sourceBundleID = sourceBundleID; self.sourceAppName = sourceAppName; self.byteCount = byteCount
-        self.pinned = pinned; self.pinnedAt = pinnedAt; self.title = title
+        self.pinned = pinned; self.pinnedAt = pinnedAt; self.title = title; self.containsSecret = containsSecret
     }
 
     private enum CodingKeys: String, CodingKey {
         case id, capturedAt, plainText, richRTFDFile, imageFile, imagePixelWidth, imagePixelHeight
-        case imageHash, sourceBundleID, sourceAppName, byteCount, pinned, pinnedAt, title
+        case imageHash, sourceBundleID, sourceAppName, byteCount, pinned, pinnedAt, title, containsSecret
     }
 
     /// Hand-written so an index written before pinning existed still loads: every key added
@@ -58,6 +62,7 @@ public struct HistoryItem: Identifiable, Codable, Equatable, Sendable {
         pinned = try c.decodeIfPresent(Bool.self, forKey: .pinned) ?? false
         pinnedAt = try c.decodeIfPresent(Date.self, forKey: .pinnedAt)
         title = try c.decodeIfPresent(String.self, forKey: .title)
+        containsSecret = try c.decodeIfPresent(Bool.self, forKey: .containsSecret) ?? false
     }
 
     public var kind: Kind {

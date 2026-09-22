@@ -1,6 +1,7 @@
 import Foundation
 import CryptoKit
 import os
+import PastefixCore
 
 /// File-scope so the off-main index writer can log without touching main-actor state.
 private let historyLog = Logger(subsystem: "net.scromp.Pastefix", category: "history")
@@ -132,6 +133,10 @@ public final class HistoryStore: ObservableObject {
             item.imageFile = Self.blobName(id, ext: Self.imageExtension)
             bytes += image.count
         }
+        // Text only: an image capture is never scanned, even if it also carries plain text.
+        if item.imageFile == nil, let t = text {
+            item.containsSecret = !SecretDetector.scan(t).isEmpty
+        }
         guard item.hasText || item.imageFile != nil else {
             // The item is abandoned (e.g. the image write failed and there is no text left),
             // so anything already written for it would be an orphan.
@@ -227,6 +232,7 @@ public final class HistoryStore: ObservableObject {
     @discardableResult
     public func pinText(_ text: String, richRTFD: Data?, title: String?, now: Date = Date()) -> HistoryItem? {
         if let i = items.firstIndex(where: { $0.imageFile == nil && $0.plainText == text }) {
+            items[i].containsSecret = !SecretDetector.scan(text).isEmpty
             pin(items[i].id, title: title, now: now)
             return items[i]
         }
