@@ -89,24 +89,39 @@ read of this spec.
    PNG the image budget then discards, and the poll timer runs in `.common`
    mode, so on the main actor that stall lands during menu tracking. `read`
    therefore returns the raw TIFF plus its header pixel size and converts
-   nothing; `tick` runs stage 2 as usual and then hands the bytes to a detached
-   task (only `Data` and `Int` cross), and the capture happens from the
-   completion, back on the main actor. Everything that can change while the
-   conversion runs is decided there and not before: the change count is
-   re-checked (a pasteboard that turned over drops the item, the same rule as
-   the post-read check), and the stage-2 filters run again over the types
-   approved earlier *unioned with those declared now* — `setData` still doesn't
-   bump the change count, and the conversion window is far wider than the
-   read's. Attribution stays the pre-conversion sample, since the source app is
-   determined before the read and a second later the newest activation may be
-   an app the user switched to after copying; only the exclusion check gets the
-   widened set of recent bundle ids. One conversion is in flight at a time,
-   superseded by a generation number (and by `stop()`). A conversion that fails
-   or produces a PNG over the budget records the item's text if it has any and
-   nothing otherwise — `PendingImage.resolve` in `PastefixAppCore`, the one
-   testable piece of this. The overlay's thumbnail blob read and ImageIO decode
-   moved off the main actor the same way, keyed by item id so a row recycled
-   mid-load can't install the wrong thumbnail.
+   nothing; `tick` runs stage 2 as usual (provisionally — the candidate has no
+   image yet) and then queues the bytes on a conversion slot (only `Data` and
+   `Int` cross), and the capture happens from the completion, back on the main
+   actor. Everything that can change while the conversion runs is decided there
+   and not before: the change count is re-checked, and the stage-2 filters run
+   again over the types approved earlier *unioned with those declared now* —
+   `setData` still doesn't bump the change count, and the conversion window is
+   far wider than the read's. A pasteboard that turned over drops the item.
+   That is kin to the post-read check but not the same loss: there the
+   candidate mixes two changes and is worthless, here the bytes are clean and
+   what is lost is the ability to re-verify them — `pasteboard.types` now
+   describes a different change, so the late-marker check cannot be performed
+   at all, and recording anyway would file an older image above the thing the
+   user copied after it. Both drops are logged (`os.Logger`, category
+   "history"), since nothing else would show them. Attribution stays the
+   pre-conversion sample, since the source app is determined before the read
+   and a second later the newest activation may be an app the user switched to
+   after copying; only the exclusion check gets the widened set of recent
+   bundle ids — which means switching to an *excluded* app during the
+   conversion window drops a capture the pre-conversion pass had approved,
+   accepted as the fail-closed direction. At most one conversion runs at a
+   time: they queue on a serial slot, one superseded before it starts (by a
+   newer change or by `stop()`, both via the generation number) is skipped, and
+   one already running finishes anyway because ImageIO offers no cancellation
+   point — cancelling the wrapper task would not have bounded the work, which
+   is why the slot exists. A conversion that fails or produces a PNG over the
+   budget records the item's text if it has any and nothing otherwise —
+   `PendingImage.resolve` in `PastefixAppCore`, the one testable piece of this.
+   The overlay's thumbnail blob read and ImageIO decode moved off the main
+   actor the same way, keyed by item id: the decoded image is installed for the
+   id it was loaded for whether or not the row that asked for it survived, or a
+   row filtered out mid-load and brought straight back would sit on the grey
+   placeholder for good.
 
 ## Scope
 

@@ -1,6 +1,12 @@
 import AppKit
 import ImageIO
+import os
 import PastefixAppCore
+
+/// File-scope, alongside `HistoryStore`'s: the capture path can lose an item for reasons no test
+/// covers (the pasteboard moved on, a newer change superseded this one), and a silent loss is
+/// the one kind this file must not have.
+private let historyLog = Logger(subsystem: "net.scromp.Pastefix", category: "history")
 
 /// Polls the general pasteboard's change count (macOS offers no notification) and hands
 /// each new item, once, to `onCapture` after the filter chain approves it.
@@ -25,7 +31,10 @@ import PastefixAppCore
 /// pass before the capture lands. That path therefore re-checks the change count and re-runs the
 /// filters afterwards (see `convertPendingTIFF`), and keeps its attribution from the sample taken
 /// before the conversion, because by the time the PNG exists the newest activation may be an app
-/// the user switched to after copying.
+/// the user switched to after copying. At most one conversion runs at a time
+/// (`TIFFConversionSlot`) and at most one result is ever accepted: a conversion superseded before
+/// it starts is skipped, and one that has already started finishes anyway, because ImageIO offers
+/// nothing to interrupt.
 @MainActor
 final class PasteboardMonitor {
     private let pasteboard: NSPasteboard
@@ -36,11 +45,14 @@ final class PasteboardMonitor {
     private let onCapture: (CaptureCandidate) -> Void
     private var timer: Timer?
     private var lastChangeCount: Int
-    /// At most one TIFF conversion is ever in flight; a new one supersedes it.
+    /// The wrapper around the pending conversion's completion — what `stop()` cancels. It is not
+    /// what keeps two conversions from running at once; `conversionSlot` is.
     private var conversionTask: Task<Void, Never>?
     /// Bumped whenever a conversion is started or abandoned. A result that comes back under a
     /// stale generation belongs to a change the monitor has already moved past, and is dropped.
     private var conversionGeneration = 0
+    /// The single lane every TIFF decode goes down.
+    private let conversionSlot = TIFFConversionSlot()
 
     init(pasteboard: NSPasteboard = .general, filters: [any CaptureFilter], maxImageBytes: Int,
          tracker: FrontmostAppTracker, windowSeconds: TimeInterval = 1.0,
@@ -65,10 +77,13 @@ final class PasteboardMonitor {
     func stop() {
         timer?.invalidate(); timer = nil
         // Capture is off as of now, so a conversion started while it was on must not record its
-        // result when it lands. Bumping the generation is what actually drops it: cancellation
-        // cannot interrupt an encode already running inside ImageIO.
+        // result when it lands. Bumping the generation is what actually drops it: cancelling the
+        // wrapper cannot interrupt an encode already running inside ImageIO. Telling the slot
+        // about the new generation is what keeps a conversion that has not started yet from
+        // running at all.
         conversionTask?.cancel(); conversionTask = nil
         conversionGeneration &+= 1
+        conversionSlot.supersede(with: conversionGeneration)
     }
 
     private func tick() {
@@ -109,6 +124,10 @@ final class PasteboardMonitor {
         let finalTypes = Array(Set(types).union(pasteboard.types ?? []))
         let refreshed = tracker.context(window: windowSeconds)
         var candidate = result.candidate
+        // On the TIFF path this pass is provisional: the candidate has no image yet, and
+        // `finishPendingTIFF` runs the same filters again on the whole thing. Neither shipped
+        // filter inspects the candidate's content, but a future one that does will see this call
+        // as well as the later one, and must be written for both.
         guard filters.allSatisfy({ $0.shouldCapture(candidate, types: finalTypes, context: refreshed) }) else { return }
         // An image that exists only as TIFF is not a capture yet: it still needs a decode and a
         // PNG re-encode, which is the one image cost too expensive to pay here (#32). Hand it to
@@ -134,7 +153,7 @@ final class PasteboardMonitor {
     /// away — and the poll timer runs in `.common` mode, so on the main actor that stall lands
     /// during menu tracking (#32).
     ///
-    /// Only `Data` and `Int` cross into the detached task: no pasteboard, no tracker, no `self`.
+    /// Only `Data` and `Int` cross into the conversion slot: no pasteboard, no tracker, no `self`.
     /// Everything that needs app state to decide — is this still the same change, do the filters
     /// still say yes — is decided back on the main actor, because both answers can change while
     /// the conversion runs.
@@ -144,15 +163,15 @@ final class PasteboardMonitor {
                                     attribution: CaptureContext, changeCount: Int) {
         conversionGeneration &+= 1
         let generation = conversionGeneration
-        // One in flight at a time: a newer change supersedes an older pending conversion, whose
-        // result would fail the change-count re-check below anyway.
+        // Tell the slot before queueing, so a conversion still waiting for the lane learns it has
+        // been superseded and never starts. Cancelling the wrapper is separate and weaker: it
+        // cannot reach a decode already inside ImageIO.
+        conversionSlot.supersede(with: generation)
         conversionTask?.cancel()
+        let slot = conversionSlot
         conversionTask = Task { @MainActor [weak self] in
-            let png = await Task.detached(priority: .utility) { () -> Data? in
-                guard let rep = NSBitmapImageRep(data: tiff) else { return nil }
-                return rep.representation(using: .png, properties: [:])
-            }.value
-            guard !Task.isCancelled, let self else { return }
+            let png = await slot.convert(tiff, generation: generation)
+            guard let self else { return }
             self.finishPendingTIFF(generation: generation, changeCount: changeCount,
                                    candidate: candidate, png: png, pixelWidth: pixelWidth,
                                    pixelHeight: pixelHeight, types: types, attribution: attribution)
@@ -165,14 +184,23 @@ final class PasteboardMonitor {
                                    png: Data?, pixelWidth: Int?, pixelHeight: Int?,
                                    types: [NSPasteboard.PasteboardType], attribution: CaptureContext) {
         // Superseded by a newer change (or by `stop()`): the newer one owns the pasteboard now.
-        guard generation == conversionGeneration else { return }
+        // Don't touch `conversionTask` here — whoever superseded us already owns that slot.
+        guard generation == conversionGeneration else {
+            historyLog.debug("dropped a converted TIFF: superseded by a newer pasteboard change")
+            return
+        }
         conversionTask = nil
-        // The same rule as the post-read re-check in `tick`, for the same reason: if the
-        // pasteboard turned over while we were converting, these bytes may belong to one change
-        // and the types and markers we approved to another. `lastChangeCount` has already
-        // advanced past this change, and the newer one gets its own tick, so dropping is all
-        // there is to do — there is nothing left to roll back to.
-        guard pasteboard.changeCount == changeCount else { return }
+        // Kin to the post-read re-check in `tick`, but not the same loss: there the candidate is
+        // a mix of two changes and is worthless, here the bytes are clean and what we have lost
+        // is the ability to re-verify them. `pasteboard.types` now describes a different change,
+        // so the late-marker check below cannot be performed at all — and recording anyway would
+        // put an older image above the thing the user copied after it in a most-recent-first
+        // list. `lastChangeCount` has already advanced past this change and the newer one gets
+        // its own tick, so dropping is all there is to do.
+        guard pasteboard.changeCount == changeCount else {
+            historyLog.debug("dropped a converted TIFF: the pasteboard turned over during the conversion")
+            return
+        }
         // A failed conversion, or a PNG over the budget, still leaves the text worth keeping —
         // exactly what `HistoryStore.record` would have kept had the image never existed.
         guard let resolved = PendingImage.resolve(candidate, png: png, pixelWidth: pixelWidth,
@@ -187,7 +215,10 @@ final class PasteboardMonitor {
         // read (Critical Invariant 12), and a second later the newest activation may be an app
         // the user switched to after copying. The exclusion check, by contrast, gets the union
         // of both samples' recent ids: a fresh sample can only widen the set an exclusion can
-        // match, never narrow what the pre-conversion pass already judged.
+        // match, never narrow what the pre-conversion pass already judged. The cost of that is
+        // accepted and deliberate: switching to an excluded app while the conversion runs drops
+        // a capture the pre-conversion pass had approved. Fail-closed is the only safe direction
+        // when the window is a second wide.
         var context = attribution
         var recent = tracker.context(window: windowSeconds).recentBundleIDs
         for id in attribution.recentBundleIDs where !recent.contains(id) { recent.append(id) }
@@ -259,5 +290,53 @@ final class PasteboardMonitor {
               let width = properties[kCGImagePropertyPixelWidth] as? Int,
               let height = properties[kCGImagePropertyPixelHeight] as? Int else { return nil }
         return (width, height)
+    }
+}
+
+/// The one lane TIFF→PNG conversions run down: at most one decode at a time, and a conversion
+/// superseded before it reaches the front of the lane never starts.
+///
+/// A bare `Task.detached` does not give that. Cancelling the wrapper task cannot reach a decode
+/// already inside ImageIO, and awaiting a non-throwing `.value` does not resume early — so at a
+/// 0.5 s poll and ~1.3 s per 20 M-pixel conversion, a user pasting several large images in a row
+/// could have three decodes running at once, each holding its source TIFF (up to ~81 MB) plus a
+/// decoded bitmap (25 M px x 4 B). Serialising costs nothing: the work was never parallelisable
+/// in any useful sense, since each conversion serves a change that has already superseded the
+/// last one.
+///
+/// A decode that has started is never abandoned — ImageIO offers no cancellation point — so
+/// "superseded" only ever means "skipped before it started".
+///
+/// `nonisolated` is load-bearing: the target builds with `SWIFT_DEFAULT_ACTOR_ISOLATION =
+/// MainActor`, so without it this class would be main-actor isolated and its queue work would be
+/// touching main-actor state from a background thread — the opposite of the point.
+///
+/// `@unchecked Sendable` with real synchronization, as the house rule requires: `newest` is
+/// guarded by `lock`, and the only other stored property is the queue itself.
+nonisolated private final class TIFFConversionSlot: @unchecked Sendable {
+    private let queue = DispatchQueue(label: "net.scromp.Pastefix.history.tiff", qos: .utility)
+    private let lock = NSLock()
+    private var newest = 0
+
+    /// Called on the main actor as each conversion is queued (and by `stop()`), so anything still
+    /// waiting for the lane can tell that nobody wants its result any more.
+    func supersede(with generation: Int) {
+        lock.lock(); newest = generation; lock.unlock()
+    }
+
+    /// nil when the conversion was superseded before it started, or when it failed.
+    func convert(_ tiff: Data, generation: Int) async -> Data? {
+        await withCheckedContinuation { continuation in
+            queue.async {
+                self.lock.lock()
+                let current = self.newest
+                self.lock.unlock()
+                guard generation == current else { return continuation.resume(returning: nil) }
+                guard let rep = NSBitmapImageRep(data: tiff) else {
+                    return continuation.resume(returning: nil)
+                }
+                continuation.resume(returning: rep.representation(using: .png, properties: [:]))
+            }
+        }
     }
 }

@@ -381,10 +381,17 @@ struct HistoryOverlayView: View {
             guard let data = try? Data(contentsOf: url) else { return nil }
             return HistoryOverlayView.downsample(data, maxPixelSize: maxPixelSize)
         }.value
+        // Cleared on every exit from here on, so a load that fails or lands late can always be
+        // retried by the next row that asks for this id.
         thumbnailsLoading.remove(id)
-        // Cancellation means the row is gone (`.task(id:)` is torn down with it); the next
-        // appearance re-requests the thumbnail.
-        guard !Task.isCancelled, let decoded, thumbnails[id] == nil else { return }
+        // A decoded image is installed whatever happened to the row that asked for it. The
+        // `.task(id:)` is cancelled as soon as the row goes away — filtered out by a keystroke,
+        // say — but the detached work is unstructured and finishes anyway, and if the row came
+        // back while the load was in flight its new `.task` already bounced off
+        // `thumbnailsLoading` and will not fire again. Throwing the result away on cancellation
+        // therefore stranded that row on the grey placeholder for good. The result is keyed to
+        // the id, not to the row, so there is nothing to throw away.
+        guard let decoded, thumbnails[id] == nil else { return }
         while thumbnails.count >= Self.thumbnailCacheLimit, let oldest = thumbnailOrder.first {
             thumbnailOrder.removeFirst()
             thumbnails.removeValue(forKey: oldest)
