@@ -89,7 +89,7 @@ import Foundation
         let colorIDs = ["builtin.color.hex", "builtin.color.rgb", "builtin.color.hsl", "builtin.color.swift"]
         for id in colorIDs { #expect(byID[id] == TransformCategory.colors) }
         #expect(byID["builtin.redactsecrets"] == TransformCategory.privacy)
-        #expect(TransformCategory.builtinOrder == ["Layout", "Rich Text", "Characters", "URLs", "Case", "Data", "Colors", "Privacy"])
+        #expect(TransformCategory.builtinOrder == ["Layout", "Rich Text", "Characters", "URLs", "Case", "Data", "Colors", "Privacy", "Presets"])
     }
 
     @Test func richTextTransformsRegisteredInOrder() {
@@ -104,5 +104,13 @@ import Foundation
         let loaded = TransformerRegistry(config: .init(scriptsDirectory: dir, wrapWidth: 80)).load()
         #expect(loaded.first { $0.name == "Cat" }?.category == "Text")
         #expect(loaded.first { $0.name == "NoCat" }?.category == nil)
+    }
+
+    @Test func presetsSitBetweenBuiltinsAndScripts() {
+        let a = RegexPreset(name: "Zed", pattern: "z", replacement: ""), b = RegexPreset(name: "Alpha", pattern: "a", replacement: "")
+        let cfg = RegistryConfig(scriptsDirectory: URL(fileURLWithPath: "/nonexistent"), wrapWidth: 80, presets: [a, b])
+        let ids = TransformerRegistry(config: cfg).load().map(\.id)
+        #expect(ids.suffix(2) == ["preset:\(b.id.uuidString)", "preset:\(a.id.uuidString)"])   // name-sorted, after every built-in
+        #expect(TransformCategory.builtinOrder.last == TransformCategory.presets)
     }
 }

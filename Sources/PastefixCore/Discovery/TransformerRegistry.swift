@@ -4,11 +4,15 @@ public struct RegistryConfig: Sendable {
     public var scriptsDirectory: URL
     public var wrapWidth: Int
     public var timeout: TimeInterval
+    /// User-defined regex find & replace rules, surfaced as transforms at order band 900.
+    public var presets: [RegexPreset]
 
-    public init(scriptsDirectory: URL, wrapWidth: Int = 400, timeout: TimeInterval = 3) {
+    public init(scriptsDirectory: URL, wrapWidth: Int = 400, timeout: TimeInterval = 3,
+                presets: [RegexPreset] = []) {
         self.scriptsDirectory = scriptsDirectory
         self.wrapWidth = wrapWidth
         self.timeout = timeout
+        self.presets = presets
     }
 }
 
@@ -51,6 +55,11 @@ public struct TransformerRegistry {
             (103, "Color → SwiftUI Color", ColorConvert(style: .swift)),
             (110, "Redact Secrets", RedactSecrets()),
         ]
+
+        // Presets sit after every built-in (band 900) and before discovered scripts (1000+).
+        for p in config.presets.sorted(by: { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }) {
+            entries.append((900, p.name, RegexPresetTransformer(preset: p)))
+        }
 
         for url in discoverScriptFiles() {
             guard let source = try? String(contentsOf: url, encoding: .utf8) else { continue }
