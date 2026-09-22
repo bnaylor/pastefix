@@ -69,7 +69,7 @@ Two caveats:
 Package.swift                         # swift-tools 6.0, .macOS(.v14), product PastefixCore, NO deps
 Sources/PastefixCore/
   Transformer.swift                   # protocol + TransformInput + TransformerSource + TransformError + OutputMode/OutputModeTransformer + TransformCategory.richText; TransformCategory.presets last in builtinOrder
-  RegexPreset.swift                   # RegexPreset model (Codable/Sendable/Identifiable): pattern/replacement/four flags, regexOptions, compile(), expandEscapes($1/\n/\t/\\)
+  RegexPreset.swift                   # RegexPreset model (Codable/Sendable/Identifiable): pattern/replacement/four flags, regexOptions, compile(), expandEscapes($1/\n/\t/\\); explicit tolerant init(from:) — only id/name/pattern required, every flag decodeIfPresent
   Markdown/
     MarkdownHTML.swift                 # Markdown -> HTML fragment (AttributedString(markdown:) walked by presentationIntent)
     MarkdownFromRich.swift             # RTFD -> GitHub-flavoured Markdown (headings, lists, tables flattened, images dropped)
@@ -89,7 +89,7 @@ Sources/PastefixCore/
     ColorLiteral.swift                #   ColorLiteral: CSS/SwiftUI colour literal parse + format, sRGB 0…1
     ColorConvert.swift                #   builtin.color.{hex,rgb,hsl,swift} (100–103)
     RedactSecrets.swift               #   builtin.redactsecrets (order 110, category privacy, kinds [secret])
-    RegexPresetTransformer.swift      #   RegexPresetTransformer: preset:<uuid> id, .preset(id) source, category presets, order 900 (registry-assigned, name-sorted); capped 256 KB, 3 s timeout race, enumerateMatches(options: [.reportProgress]) for the in-attempt deadline check; public preview(_:preset:deadline:) wrapper for the Settings live preview
+    RegexPresetTransformer.swift      #   RegexPresetTransformer: preset:<uuid> id, .preset(id) source, category presets, order 900 (registry-assigned, name-sorted); capped 256 KB, 3 s timeout race, enumerateMatches(options: [.reportProgress]) for the in-attempt deadline check; replace returns (output, matches) so the public preview(_:preset:deadline:) wrapper is one pass under one deadline
   Detection/
     ContentKind.swift                 # url | json | color | jwt | base64 | percentEncoded | htmlEntities | markdown | secret (+ displayName)
     ContentDetector.swift             # detect(_:) -> Set<ContentKind>, 1 MB guard; detect(_:secrets:) takes an already-computed scan so a caller needing the ranges too scans once
@@ -141,7 +141,7 @@ Pastefix/                             # the Xcode app (KeyboardShortcuts + Spark
     HotkeyName.swift                  # KeyboardShortcuts recorder + display helper; summonPastefix (⌘⇧C) + summonHistory (⌘⇧V)
     FrontmostAppTracker.swift         # @MainActor tracker fed by NSWorkspace.didActivateApplicationNotification; context(window:) -> CaptureContext (source app determined before the read, Critical Invariant 12)
     SettingsView.swift                # SwiftUI Settings window (General/Privacy/Snippets/Presets/Shortcut/Transforms tabs); Privacy has the History section (moved from General) + Excluded Apps list + two-option Clear dialog, Snippets has Accessibility status + per-pin title/recorder/Unpin rows (shortcutValidation blocks combos already bound to another snippet or to the summon shortcuts, and the Shortcut tab validates against snippets in turn), Presets tab delegates to PresetsSettingsView, Shortcut a second recorder
-    PresetsSettingsView.swift         # Presets tab: preset list (+/−) + editor (name/pattern/replacement/four flags) bound to a draft copy, Save/Revert, live preview (RegexPresetTransformer.preview, 200 ms debounce, 16 KB sample cap, 1 s deadline), Save disabled while the pattern doesn't compile or the name is blank
+    PresetsSettingsView.swift         # Presets tab: preset Picker + (+/−) above a full-width editor (name/pattern/replacement/four flags) bound to a draft copy, Save/Revert, live preview (RegexPresetTransformer.preview, 200 ms debounce, 16 KB sample cap, 1 s deadline); + makes an UNSAVED draft (only Save writes to the store), Save disabled while the pattern is empty/doesn't compile or the name is blank, dirty drafts marked • and guarded by a discard alert
     ClipboardBridge.swift             # NSPasteboard <-> ClipboardSnapshot; write(text:richRTFD:imagePNG:) for multi-representation copy-back
     PanelController.swift             # floating resizable NSPanel host (+ sidebar-driven resize, sidebar-aware minSize)
     PanelMetrics.swift                # panel/sidebar/palette sizes shared by SwiftUI and AppKit
@@ -302,6 +302,11 @@ Also caught in review on `29c1d02`: a page truncated at the byte cap mid-charact
 - **An unscanned buffer must not look clean** (PR #42 review): every consumer read `scan`'s empty result above the 256 KB cap as "no secrets" — no badge, `RedactSecrets` reporting `.unchanged`, `containsSecret = false` persisted — so a buffer 17 bytes over the cap with a live key at position 0 told the user nothing. A cap on a safety feature needs three things alongside it: a visible state (the grey "Not scanned for secrets" badge), a transform that throws instead of no-opping, and a tri-state flag (`Bool?`, nil = never examined) so "we didn't look" is never persisted as "we looked and it was fine".
 - **`\b` succeeds mid-token whenever the token can contain `-`** (PR #42 review): a bounded `{10,200}` vendor rule ending in `\b` matched the first 202 characters of a 300-character `xoxb-` token, redaction left the tail behind and the rescan came back clean. End token rules in `(?![A-Za-z0-9_\-])` so an over-long token fails outright — a partial redaction of a secret is worse than no match.
 - **A selection binding into an `ObservableObject` steals focus** (`e30f71d`): a `TextEditor` writes its selection back on every caret move and focus change, so an `@Published` selection republished the model, re-rendered the panel and re-applied the selection to the editor — ⌘K opened the palette and the editor immediately took first responder back, so typing went into the buffer. Editor selection belongs in the view's `@State`; the model may only *request* one, one-shot.
+
+*Regex presets (Plan 12):*
+- **`enumerateMatches` only calls its block on a match unless `.reportProgress` is set** — a deadline check without it never runs inside a backtracking attempt (10.9 s unthrown). The option is the only reason a user pattern's deadline is observable at all; never "simplify" it to `[]`.
+- **A pre-sort before a final `(order, name)` sort is dead code** — sort once with the comparator you mean. Every preset shares order 900, so the case-insensitive pre-sort of `config.presets` was erased by the tuple sort's case-sensitive `String.<`, which put every capitalised name ahead of every lowercase one.
+- **A Settings control that writes straight to the store publishes to the whole app** (this branch): `+` on the Presets tab called `addPreset`, so one click put a transform named "New preset" — with an uncompilable empty pattern, failing on every use — into the ⌘K palette, the sidebar and the Transforms tab. An editor over live, published state edits a draft and commits on Save; `+` makes the draft, nothing else.
 
 ## Definition of Done
 

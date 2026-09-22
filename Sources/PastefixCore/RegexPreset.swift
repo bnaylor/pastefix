@@ -24,6 +24,26 @@ public struct RegexPreset: Codable, Sendable, Equatable, Identifiable {
         self.replaceAll = replaceAll
     }
 
+    private enum CodingKeys: String, CodingKey {
+        case id, name, pattern, replacement, caseInsensitive, anchorsMatchLines, dotMatchesNewlines, replaceAll
+    }
+
+    /// Tolerant decoding: every flag falls back to the memberwise default rather than failing.
+    /// The stored array is read with `try?` and falls back to `[]`, so a synthesized (all-keys-
+    /// required) decoder would let one payload written by an older or newer build — or one
+    /// hand-edited preset — wipe every preset the user has. Adding a field stays additive.
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try c.decode(UUID.self, forKey: .id)
+        self.name = try c.decode(String.self, forKey: .name)
+        self.pattern = try c.decode(String.self, forKey: .pattern)
+        self.replacement = try c.decodeIfPresent(String.self, forKey: .replacement) ?? ""
+        self.caseInsensitive = try c.decodeIfPresent(Bool.self, forKey: .caseInsensitive) ?? false
+        self.anchorsMatchLines = try c.decodeIfPresent(Bool.self, forKey: .anchorsMatchLines) ?? true
+        self.dotMatchesNewlines = try c.decodeIfPresent(Bool.self, forKey: .dotMatchesNewlines) ?? false
+        self.replaceAll = try c.decodeIfPresent(Bool.self, forKey: .replaceAll) ?? true
+    }
+
     public var regexOptions: NSRegularExpression.Options {
         var o: NSRegularExpression.Options = []
         if caseInsensitive { o.insert(.caseInsensitive) }

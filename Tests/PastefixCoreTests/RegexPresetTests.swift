@@ -58,6 +58,22 @@ import Foundation
         #expect(try RegexPresetTransformer.preview("foo boo", preset: once, deadline: .now + .seconds(1)).matches == 1)
     }
 
+    @Test func decodingToleratesMissingFlags() throws {
+        // A payload from an older (or hand-edited) build: only the three required keys. A
+        // synthesized decoder throws here, and `SettingsStore` reads the array with `try?`, so
+        // one such element would silently wipe every preset the user has.
+        let id = UUID()
+        let json = Data(#"{"id":"\#(id.uuidString)","name":"n","pattern":"a"}"#.utf8)
+        let p = try JSONDecoder().decode(RegexPreset.self, from: json)
+        #expect(p == RegexPreset(id: id, name: "n", pattern: "a"))
+        #expect(p.replacement.isEmpty && p.replaceAll && p.anchorsMatchLines
+                && !p.caseInsensitive && !p.dotMatchesNewlines)
+        // Round-tripping a full value still works.
+        let full = RegexPreset(name: "f", pattern: "x", replacement: "y", caseInsensitive: true,
+                               anchorsMatchLines: false, dotMatchesNewlines: true, replaceAll: false)
+        #expect(try JSONDecoder().decode(RegexPreset.self, from: JSONEncoder().encode(full)) == full)
+    }
+
     @Test func identity() {
         let p = RegexPreset(name: "n", pattern: "a", replacement: "b")
         let t = RegexPresetTransformer(preset: p)

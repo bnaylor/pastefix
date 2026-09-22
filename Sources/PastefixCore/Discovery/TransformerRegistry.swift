@@ -57,7 +57,8 @@ public struct TransformerRegistry {
         ]
 
         // Presets sit after every built-in (band 900) and before discovered scripts (1000+).
-        for p in config.presets.sorted(by: { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }) {
+        // No pre-sort: the single sort below orders the whole band.
+        for p in config.presets {
             entries.append((900, p.name, RegexPresetTransformer(preset: p)))
         }
 
@@ -73,8 +74,15 @@ public struct TransformerRegistry {
             entries.append((order, transformer.name, transformer))
         }
 
+        // Sort once, with the comparator we actually mean: `String.<` is case-sensitive, so a
+        // tuple sort would put every capitalised name ahead of every lowercase one within a band
+        // (presets at 900, scripts at 1000 — both user-named, both visibly wrong that way).
         return entries
-            .sorted { ($0.order, $0.name) < ($1.order, $1.name) }
+            .sorted {
+                $0.order == $1.order
+                    ? $0.name.localizedStandardCompare($1.name) == .orderedAscending
+                    : $0.order < $1.order
+            }
             .map(\.transformer)
     }
 

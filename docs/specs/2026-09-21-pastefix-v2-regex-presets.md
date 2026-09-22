@@ -30,20 +30,41 @@ The plan below was written before implementation; these are where the shipped co
    `apply`/`replace` pair the spec's Architecture section shows. It exists because the Settings
    preview needs both the replaced output and a match count, and `replace` — deliberately
    `internal`, since running a preset for real is `apply`'s job — isn't visible from the app
-   target. `preview` runs `replace` once, then a second `enumerateMatches` pass to count
-   matches, and both passes share one absolute `ContinuousClock.Instant` deadline supplied by
-   the caller so the pair is bounded by that deadline once, not twice.
-3. **An empty pattern currently compiles and matches everywhere.**
-   `NSRegularExpression(pattern: "", options:)` succeeds and produces a zero-length match at
-   every position, so a preset with an empty pattern is savable today —
-   `PresetsSettingsView.isSavable` only checks that the pattern compiles and the name isn't
-   blank — and runs as a real transform once saved. The spec's "does it compile" lint doesn't
-   catch this; the editor will refuse an empty pattern explicitly in a later wave.
-4. **The preview's count pass stops at 1 when `replaceAll` is off.** `preview` mirrors
-   `replace`'s early stop: when a preset only replaces the first match, counting past it would
-   report matches the transform never actually replaced, so both of `preview`'s
-   `enumerateMatches` passes set `stop.pointee = true` after the first match when
-   `preset.replaceAll` is `false`.
+   target. It is a **single pass**: `replace` returns `(output, matches)`, since it counts the
+   matches it substitutes anyway. The first implementation counted in a second `enumerateMatches`
+   pass sharing one absolute deadline, which halved the budget per pass — a pattern the real
+   transform ran in 0.7 s reported "took too long" in the editor and threw away an output pass 1
+   had already computed correctly.
+3. **An empty pattern does not compile.** `NSRegularExpression(pattern: "", options:)` throws
+   (`Invalid pattern: The value "" is invalid.`), so the "does it compile" lint already refuses
+   it and Save stays disabled — the editor just shows "Pattern is empty" rather than that
+   message, because the field is untouched rather than mistyped. (An earlier version of this
+   amendment claimed the opposite; measured, it throws.) That lint is not what keeps a bare
+   preset out of the palette, though: **+** creates an *unsaved draft* and only Save writes to
+   `SettingsStore`. Persisting on **+**, as the first implementation did, put a transform named
+   "New preset" — one that failed on every use — into the palette, the sidebar and the
+   Transforms tab the moment the button was pressed.
+4. **The preview's match count stops at 1 when `replaceAll` is off.** Counting past the first
+   match would report substitutions the transform never made, so the count the preview shows is
+   the one `replace` accumulated before `stop.pointee = true` — the same early stop, by
+   construction, now that amendment 2 made it one pass.
+5. **The registry sorts the whole entry list once, with `localizedStandardCompare` on the name.**
+   Presets all share `order == 900`, so a `($0.order, $0.name) < ($1.order, $1.name)` tuple sort
+   ordered them by case-sensitive `String.<` — every capitalised name ahead of every lowercase
+   one — and made the case-insensitive pre-sort of `config.presets` dead code. There is now one
+   sort, comparing the order first and the name with `localizedStandardCompare`; the pre-sort is
+   gone. This also fixes script names in the 1000 band.
+6. **The Presets tab is a preset menu above a full-width editor**, not a side list beside it.
+   The Settings window is fixed at 460 pt and the spec's two-column sketch left the pattern and
+   replacement fields — the two things the tab exists to edit — about 100 pt of visible text
+   inside a grouped `Form`. A `Picker` plus `+`/`−` across the top gives the editor the whole
+   window. The editor also marks a dirty draft with a `•` (and a new one as *(unsaved)*) and
+   confirms before a selection change or a removal discards unsaved edits.
+7. **`RegexPreset` decodes tolerantly.** `SettingsStore` reads the array with `try?` and falls
+   back to `[]`, so a synthesized (all-keys-required) `init(from:)` meant one element written by
+   a build with a different field list — or one hand-edited preset — silently wiped *every*
+   preset, permanently, on the next `didSet`. `init(from:)` is explicit: `id`, `name` and
+   `pattern` are required; everything else is `decodeIfPresent` with the memberwise default.
 
 ## Scope
 

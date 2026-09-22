@@ -2,13 +2,14 @@ import SwiftUI
 import PastefixCore
 import PastefixAppCore
 
-/// The Presets tab: a list of user-defined find & replace rules on the left, an editor with a
-/// live preview on the right.
+/// The Presets tab: a preset picker with +/− across the top, a full-width editor with a live
+/// preview underneath.
 ///
 /// Edits are made against a `draft` copy rather than straight into the store, so a half-typed
 /// pattern never reaches the registry: the delegate rebuilds the transformer list on every
-/// `regexPresets` change, and a preset only becomes a transform when Save writes it back. The
-/// same copy is what Revert throws away.
+/// `regexPresets` change, and a preset only becomes a transform when Save writes it back — which
+/// is also why **+** only makes a draft. The same copy is what Revert throws away, and the
+/// discard alert is what stops a stray selection change throwing it away silently.
 struct PresetsSettingsView: View {
     @ObservedObject var settings: SettingsStore
     @State private var selected: UUID?
@@ -18,6 +19,8 @@ struct PresetsSettingsView: View {
     /// "3 matches", or why there is no preview.
     @State private var previewInfo = ""
     @State private var previewTask: Task<Void, Never>?
+    /// What to do if the user confirms the discard alert. Non-nil means the alert is up.
+    @State private var pending: PendingAction?
 
     /// The preview runs on a slice of the sample, not the whole thing: this is a live keystroke-
     /// driven path, and a user pattern's cost is theirs to choose, not ours to trust.
@@ -26,9 +29,16 @@ struct PresetsSettingsView: View {
     /// MainActor` a plain static would be main-actor state, which is an error in Swift 6 mode.
     nonisolated private static let previewTimeout = Duration.seconds(1)
 
+    /// A selection change or a removal held back until the user answers the discard alert.
+    private enum PendingAction: Equatable {
+        case select(UUID?)
+        case remove(UUID)
+        case newDraft
+    }
+
     var body: some View {
-        HStack(spacing: 0) {
-            sidebar
+        VStack(spacing: 0) {
+            chooser
             Divider()
             if let bound = Binding($draft) {
                 editor(bound)
@@ -38,38 +48,61 @@ struct PresetsSettingsView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
-        // The draft follows the selection; a preset removed while selected clears both (see
-        // `remove`), so this also empties the editor.
-        .onChange(of: selected) { _, id in
-            draft = settings.regexPresets.first { $0.id == id }
-            schedulePreview()
-        }
+        // `selected` and `draft` are always assigned together (see `applySelection`) rather than
+        // the draft following the selection through an `onChange`: a **+** draft sets `selected`
+        // to nil, and a nil-driven reload from the store would wipe the draft it just made.
         .onChange(of: draft) { _, _ in schedulePreview() }
         .onChange(of: sample) { _, _ in schedulePreview() }
         .onDisappear { previewTask?.cancel() }
+        .alert("Discard unsaved changes?", isPresented: discardAlertShown) {
+            Button("Discard", role: .destructive) { commitPending() }
+            Button("Keep Editing", role: .cancel) { pending = nil }
+        } message: {
+            Text("This preset has edits that haven't been saved.")
+        }
     }
 
-    private var sidebar: some View {
-        VStack(spacing: 0) {
-            List(settings.regexPresets, selection: $selected) { preset in
-                Text(preset.name.isEmpty ? "Untitled" : preset.name).tag(preset.id)
+    private var chooser: some View {
+        HStack(spacing: 8) {
+            Picker("Preset", selection: requestedSelection) {
+                // The picker needs a row for "nothing saved is selected" — an unsaved draft from
+                // **+**, or an empty store — or it would display the first preset while the
+                // editor showed something else.
+                if draft != nil && selected == nil {
+                    Text("New preset (unsaved)").tag(UUID?.none)
+                } else if selected == nil {
+                    Text("None").tag(UUID?.none)
+                }
+                ForEach(settings.regexPresets) { preset in
+                    Text(rowTitle(preset)).tag(Optional(preset.id))
+                }
             }
-            HStack(spacing: 8) {
-                Button { add() } label: { Image(systemName: "plus") }
-                    .help("Add a preset")
-                Button { remove() } label: { Image(systemName: "minus") }
-                    .disabled(selected == nil)
-                    .help("Remove the selected preset")
-                Spacer()
-            }
-            .padding(6)
+            .pickerStyle(.menu)
+            Button { add() } label: { Image(systemName: "plus") }
+                .help("Add a preset")
+            Button { requestRemove() } label: { Image(systemName: "minus") }
+                .disabled(selected == nil)
+                .help("Remove the selected preset")
         }
-        .frame(width: 160)
+        .padding(10)
+    }
+
+    private func rowTitle(_ preset: RegexPreset) -> String {
+        let name = preset.name.isEmpty ? "Untitled" : preset.name
+        return preset.id == draft?.id && isDirty ? "\u{2022} \(name)" : name
     }
 
     private func editor(_ preset: Binding<RegexPreset>) -> some View {
         Form {
-            TextField("Name", text: preset.name)
+            HStack {
+                TextField("Name", text: preset.name)
+                if isNewDraft {
+                    Text("(unsaved)").font(.caption).foregroundStyle(.secondary)
+                } else if isDirty {
+                    Text("\u{2022}").foregroundStyle(.secondary)
+                        .help("Unsaved changes")
+                }
+            }
             TextField("Pattern", text: preset.pattern)
                 .font(.system(.body, design: .monospaced))
             if let error = compileError(preset.wrappedValue) {
@@ -96,10 +129,12 @@ struct PresetsSettingsView: View {
             HStack {
                 Spacer()
                 Button("Revert") { draft = settings.regexPresets.first { $0.id == preset.wrappedValue.id } }
-                Button("Save") { settings.updatePreset(preset.wrappedValue) }
+                Button("Save") { save(preset.wrappedValue) }
                     .keyboardShortcut(.defaultAction)
                     // A preset that can't compile would load as a transform that throws on every
-                    // use, and a nameless one would be unpickable in the palette.
+                    // use, and a nameless one would be unpickable in the palette. An empty
+                    // pattern doesn't compile either, so this is also what keeps a bare **+**
+                    // draft out of the store.
                     .disabled(!isSavable(preset.wrappedValue))
             }
             Text("Saved presets appear in the palette and in the Transforms tab, where they can be disabled and reordered.")
@@ -108,21 +143,87 @@ struct PresetsSettingsView: View {
         .formStyle(.grouped)
     }
 
+    /// **+** builds a draft and selects nothing. It deliberately does not call `addPreset`: the
+    /// store feeds the registry, so persisting here would put a transform named "New preset" —
+    /// with a pattern that doesn't even compile — into the palette and the sidebar before the
+    /// user had typed a character. Save is the only thing that writes.
     private func add() {
-        let preset = RegexPreset(name: "New preset", pattern: "", replacement: "")
-        settings.addPreset(preset)
-        selected = preset.id
+        guard !isDirty else { pending = .newDraft; return }
+        startNewDraft()
     }
 
-    private func remove() {
-        guard let id = selected else { return }
-        settings.removePreset(id: id)
-        // Clearing the selection by hand rather than letting the List drop it: `onChange(of:
-        // selected)` is what reloads the draft, and leaving a draft for a deleted preset behind
-        // would let Save re-add it (it wouldn't — `updatePreset` no-ops on a missing id — but the
-        // editor would still be showing a preset that is gone).
+    private func startNewDraft() {
         selected = nil
-        draft = nil
+        draft = RegexPreset(name: "New preset", pattern: "", replacement: "")
+    }
+
+    private func save(_ preset: RegexPreset) {
+        if settings.regexPresets.contains(where: { $0.id == preset.id }) {
+            settings.updatePreset(preset)
+        } else {
+            settings.addPreset(preset)
+        }
+        // Select what was just written: the draft now equals its stored copy, which is what
+        // clears the dirty marker (and, for a **+** draft, the "(unsaved)" hint).
+        applySelection(preset.id)
+    }
+
+    private func requestRemove() {
+        guard let id = selected else { return }
+        if isDirty { pending = .remove(id) } else { remove(id) }
+    }
+
+    private func remove(_ id: UUID) {
+        settings.removePreset(id: id)
+        // Leaving the draft for a deleted preset behind would let Save resurrect it: Save now
+        // falls through to `addPreset` for an id the store doesn't have, so clearing both here
+        // is load-bearing, not just tidy.
+        applySelection(nil)
+    }
+
+    /// Selection changes route through here so a dirty draft can put up the alert first. The
+    /// getter still reports the *current* selection, so a picker change the user declines snaps
+    /// straight back on the next render — "Keep Editing" needs no restore of its own.
+    private var requestedSelection: Binding<UUID?> {
+        Binding(get: { selected }, set: { requestSelection($0) })
+    }
+
+    private func requestSelection(_ id: UUID?) {
+        guard id != selected else { return }
+        if isDirty { pending = .select(id) } else { applySelection(id) }
+    }
+
+    /// The one place `selected` moves: the draft is reloaded from the store in the same step.
+    private func applySelection(_ id: UUID?) {
+        selected = id
+        draft = settings.regexPresets.first { $0.id == id }
+    }
+
+    private var discardAlertShown: Binding<Bool> {
+        Binding(get: { pending != nil }, set: { if !$0 { pending = nil } })
+    }
+
+    private func commitPending() {
+        switch pending {
+        case .select(let id): applySelection(id)
+        case .remove(let id): remove(id)
+        case .newDraft: startNewDraft()
+        case nil: break
+        }
+        pending = nil
+    }
+
+    /// True once the editor's copy has diverged from what is stored — including a **+** draft,
+    /// which has nothing stored at all.
+    private var isDirty: Bool {
+        guard let draft else { return false }
+        guard let stored = settings.regexPresets.first(where: { $0.id == draft.id }) else { return true }
+        return stored != draft
+    }
+
+    private var isNewDraft: Bool {
+        guard let draft else { return false }
+        return !settings.regexPresets.contains { $0.id == draft.id }
     }
 
     private func isSavable(_ preset: RegexPreset) -> Bool {
@@ -130,6 +231,9 @@ struct PresetsSettingsView: View {
     }
 
     private func compileError(_ preset: RegexPreset) -> String? {
+        // `NSRegularExpression` rejects "" outright, but its message ("The value “” is invalid")
+        // describes a typo rather than the untouched field it actually is.
+        guard !preset.pattern.isEmpty else { return "Pattern is empty" }
         do {
             _ = try preset.compile()
             return nil
@@ -142,7 +246,7 @@ struct PresetsSettingsView: View {
     /// would otherwise publish a result for the pattern the user has already typed past.
     private func schedulePreview() {
         previewTask?.cancel()
-        guard let preset = draft else { preview = ""; previewInfo = ""; return }
+        guard let preset = draft, !preset.pattern.isEmpty else { preview = ""; previewInfo = ""; return }
         let text = String(sample.prefix(Self.sampleLimit))
         previewTask = Task {
             try? await Task.sleep(for: .milliseconds(200))
