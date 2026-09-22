@@ -1,6 +1,6 @@
 # Pastefix v2 Secret Detector & Redaction (Plan 11) — Implementation Plan
 
-> ## 🟡 STATUS: IN PROGRESS — branch `feat/secret-detector`; Tasks 0–4 done, Task 5 (docs) in progress, Task 6 (GUI pass + PR) remaining.
+> ## ✅ STATUS: COMPLETE — merged to main via PR #42 (`85d7fd7`, 2026-09-21)
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 >

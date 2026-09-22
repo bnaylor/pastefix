@@ -330,7 +330,7 @@ When you **significantly expand the project** — a new target, subsystem, scrip
 | 8 — Markdown ↔ rich text | MarkdownHTML, MarkdownFromRich, OutputMode, Rich Text category | ✅ merged — PR #35 (`1d99648`) — [spec](docs/specs/2026-09-21-pastefix-v2-markdown-rich-text.md), [plan](docs/plans/2026-09-21-pastefix-v2-markdown-rich-text.md) |
 | 9 — Pinned snippets | pin/unpin, Pinned section, ⇧↵ paste, per-snippet hotkeys, Snippets tab | ✅ merged — PR #38 (`08f72d6`) — [spec](docs/specs/2026-09-21-pastefix-v2-pinned-snippets.md), [plan](docs/plans/2026-09-21-pastefix-v2-pinned-snippets.md) |
 | 10 — Markdown preview | MarkdownPreview, MarkdownPreviewView, ⌘⇧M toggle | ✅ merged — PR #40 (`c98cca8`) — [spec](docs/specs/2026-09-21-pastefix-v2-markdown-preview.md), [plan](docs/plans/2026-09-21-pastefix-v2-markdown-preview.md) |
-| 11 — Secret detector | SecretDetector, Redact Secrets, secrets badge, history flag | 🟡 in progress, branch feat/secret-detector — [spec](docs/specs/2026-09-21-pastefix-v2-secret-detector.md), [plan](docs/plans/2026-09-21-pastefix-v2-secret-detector.md) |
+| 11 — Secret detector | SecretDetector, Redact Secrets, secrets badge, history flag | ✅ merged — PR #42 (`85d7fd7`) — [spec](docs/specs/2026-09-21-pastefix-v2-secret-detector.md), [plan](docs/plans/2026-09-21-pastefix-v2-secret-detector.md) |
 
 Historical reference material for the 2007 and 2019 incarnations is vendored under [`docs/inputs/legacy/`](docs/inputs/legacy/).
 
