@@ -1,6 +1,6 @@
 ---
 type: spec
-status: approved
+status: implemented
 id: 2026-09-21-pastefix-v2-regex-presets
 title: Pastefix v2 — Regex Presets (Plan 12)
 description: User-defined regex find & replace rules stored as settings data, each surfaced as a real transform (palette, sidebar, enable/reorder) in a "Presets" category; a Presets settings tab with a live preview; input cap and timeout so a bad pattern can't hang the panel.
