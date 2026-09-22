@@ -98,8 +98,9 @@ Verified against `diced/zipline` at v4.7.0, not from memory.
 | Scan cap | None — every upload is fully scanned, off the main actor | `SecretDetector.maxBytes` (256 KB) exists because scanning runs on *every summon and capture*. An upload is one deliberate action and can afford the full scan. The upload path calls `SecretDetector.scanIgnoringSizeCap(_:)`, added in Task 2 by splitting the size policy out of the existing `scan(_:)`; `scan(_:)` itself keeps the 256 KB guard unchanged for every main-actor caller. A separate, deliberately awkward name rather than a defaulted parameter, so the one call site that skips the cap reads as the exception it is, and so `scan(_:)` stays provably identical to what every other caller already relies on. |
 | Scan placement | Detached task, started as the overlay opens | The overlay's controls stay usable during the wait, and a long scan is visible instead of a frozen hotkey. |
 | Loading state | "Checking for secrets…" appears only after ~150 ms | No flicker on ordinary pastes, and no size-threshold constant to justify. |
-| Language control | Sets the file extension, defaulted from `ContentDetector.detect` | v4 highlights by extension. Detection already exists; a language table would be new surface for nothing. |
+| Language control | Sets the file extension. The user's `ziplineDefaultExtension` setting wins whenever it has been set; `ContentDetector.detect` fills in only while the setting is still its `txt` default | v4 highlights by extension. Detection existed and was tried first as the seed, then reversed during review: `MarkdownDetector` returns true on a single `^#{1,6} \S` line, so letting the detector win meant every YAML file, Dockerfile, conf file and shebang-less script uploaded as `md`, silently overriding an explicit user choice. The detector is trigger-happy, not confident — fine for *promoting* a transform in the palette, wrong for *overriding* a setting the user deliberately typed. |
 | Token storage | Keychain generic password, service `net.scromp.Pastefix.zipline` | A token in `UserDefaults` JSON is world-readable to anything running as the user. |
+| Token entry commit | A `SecureField` plus an explicit **Set** button, not the field alone | Submit and blur/tab-switch commit the draft implicitly, but neither covers ⌘Q mid-edit — SwiftUI does not reliably run an open window's `onDisappear` on process termination, so a token typed and never submitted before quitting was silently dropped, not merely unsaved. The button makes the draft's uncommitted state visible instead of implicit, and is also just the normal shape for committing a credential. Not redundant with the implicit paths; it is the one path that covers the one exit they don't. |
 | Server URL storage | `SettingsStore` JSON with everything else | It is not a secret, and keeping it out of the Keychain keeps the Keychain wrapper to one value. |
 | Private/LAN server URLs | Allowed — `MarkdownLink.isFetchable` is deliberately *not* reused | That guard blocks private IPs because *there* the URL comes from clipboard content an attacker may control. Here the destination is one the user typed into Settings, and a self-hosted Zipline is usually on a LAN or Tailscale address. Applying the guard would break the normal case to prevent an attack that cannot happen. |
 | Self-signed certificates | No trust bypass | It is the only transport protection in this feature. A bad cert fails the upload. |
@@ -196,8 +197,11 @@ JSON-backed shape as every other setting.
    token → the overlay opens in a configure state with a button into Settings,
    rather than letting you make choices and then failing.
 3. The overlay opens with expiration, burn-on-read, and extension live. The
-   extension is defaulted from `ContentDetector.detect` — `.json` for JSON,
-   `.md` for Markdown, `.txt` otherwise.
+   extension defaults to the `ziplineDefaultExtension` setting if the user has
+   set one away from `txt`; only while that setting is still at its `txt`
+   default does `ContentDetector.detect` fill in instead (`.json` for JSON,
+   `.md` for Markdown, `.txt` otherwise) — see the "Language control" decision
+   above for why the precedence runs that direction.
 4. The scan starts in a detached task in the same turn. Upload is disabled
    until it resolves. After ~150 ms an in-progress row appears.
 5. Verdict lands. Clean → a quiet confirmation row. Findings → the kinds named
@@ -229,6 +233,21 @@ so dismissing the overlay mid-scan abandons the work rather than stopping it —
 the same shape as the TIFF decode in #32/#46, and the same rule applies: do not
 describe it as a bound. The scan is linear tokenisation since the PR #42
 rewrite.
+
+**Dismissing mid-upload is also cancellation, and it is lossier.** The
+overlay's `onDisappear` cancels the in-flight upload `Task`, which cancels the
+underlying `URLSession` request if it is still on the wire — but cancelling
+the client side recalls nothing the server has already accepted. A dismissal
+timed to land after Zipline has written the file but before the response
+reaches the overlay leaves a paste on the server whose short URL nobody ever
+saw or copied. This was a deliberate choice over the alternative — letting the
+request run to completion and writing the clipboard from a view that is no
+longer on screen — because a clipboard write landing seconds after the panel
+is gone would silently replace whatever the user copied in the meantime, which
+is worse: it corrupts a live value instead of leaving an inert one. The orphan
+this trades for is a file on the user's own self-hosted instance, visible and
+deletable from Zipline's own file manager — not a leak to a third party. Known
+behaviour, not a bug to fix by making dismissal wait for the response.
 
 Measured on Apple M4 Max, Swift 6.3, debug build via `swift test`
 (Task 2, `SecretDetectorScaleTests`, one uncapped
@@ -277,9 +296,11 @@ Sources/PastefixCore/Upload/ZiplineClient.swift        # protocol + URLSession c
 Sources/PastefixAppCore/Upload/ZiplineTokenStore.swift # protocol, Keychain, in-memory
 Sources/PastefixAppCore/SettingsStore.swift            # server URL + overlay defaults
 Pastefix/Pastefix/HotkeyName.swift                     # uploadToZipline (⌘⇧U)
+Pastefix/Pastefix/ZiplineServerURL.swift               # shared server-URL parse/validate, added in review (#14)
 Pastefix/Pastefix/UploadOverlayView.swift              # the one surface
 Pastefix/Pastefix/UploadSettingsView.swift             # Upload tab
 Pastefix/Pastefix/AppModel.swift                       # uploadOverlayRequested
 Pastefix/Pastefix/PanelView.swift                      # third overlay
 Pastefix/Pastefix/PastefixApp.swift                    # hotkey registration
+Pastefix/Pastefix/SettingsView.swift                   # Upload tab wired into the Settings TabView
 ```
