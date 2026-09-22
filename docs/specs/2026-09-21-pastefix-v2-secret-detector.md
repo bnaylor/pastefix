@@ -1,6 +1,6 @@
 ---
 type: spec
-status: approved
+status: implemented
 id: 2026-09-21-pastefix-v2-secret-detector
 title: Pastefix v2 — Secret Detector & Redaction (Plan 11)
 description: Bounded-regex detection of credentials in the working buffer (AWS, GitHub, OpenAI, Slack, Stripe, Google keys, private-key blocks, JWTs, passwords in URLs, high-entropy key=value assignments); an orange warning badge that selects matches in the editor; a "Redact Secrets" transform; a persisted flag on history items shown as a glyph in the overlay. Save is unchanged; the scan is the hook for #14's upload confirmation.
