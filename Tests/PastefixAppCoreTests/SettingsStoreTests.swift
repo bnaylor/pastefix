@@ -1,6 +1,7 @@
 import Testing
 import Foundation
 @testable import PastefixAppCore
+import PastefixCore
 
 @MainActor
 // `.serialized` because every test now shares one UserDefaults suite. Synchronous
@@ -138,6 +139,19 @@ import Foundation
             #expect(s.historyExcludedBundleIDs.isEmpty)
             s.restoreDefaultExclusions()
             #expect(SettingsStore(defaults: d).historyExcludedBundleIDs == ExclusionSeeds.passwordManagers)
+        }
+    }
+
+    @Test func regexPresetsRoundTrip() {
+        withFreshDefaults { d in
+            let s = SettingsStore(defaults: d)
+            #expect(s.regexPresets.isEmpty)
+            let p = RegexPreset(name: "n", pattern: "a", replacement: "b")
+            s.addPreset(p)
+            var q = p; q.name = "renamed"; s.updatePreset(q)
+            #expect(SettingsStore(defaults: d).regexPresets == [q])
+            s.removePreset(id: p.id)
+            #expect(SettingsStore(defaults: d).regexPresets.isEmpty)
         }
     }
 }

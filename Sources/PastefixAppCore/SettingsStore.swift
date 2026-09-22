@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import PastefixCore
 
 /// UserDefaults-backed application settings. Published for SwiftUI binding;
 /// each property writes through to `defaults` on mutation.
@@ -22,6 +23,7 @@ public final class SettingsStore: ObservableObject {
         }
     }
     @Published public var historyExcludedBundleIDs: [String] { didSet { Self.writeJSON(historyExcludedBundleIDs, to: defaults, key: Key.historyExcluded) } }
+    @Published public var regexPresets: [RegexPreset] { didSet { Self.writeJSON(regexPresets, to: defaults, key: Key.regexPresets) } }
 
     public init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -34,6 +36,7 @@ public final class SettingsStore: ObservableObject {
         self.historyEnabled = (defaults.object(forKey: Key.historyEnabled) as? Bool) ?? true
         self.historyMaxItems = min(max((defaults.object(forKey: Key.historyMaxItems) as? Int) ?? 200, 20), 1000)
         self.historyExcludedBundleIDs = Self.readJSON([String].self, from: defaults, key: Key.historyExcluded) ?? ExclusionSeeds.passwordManagers
+        self.regexPresets = Self.readJSON([RegexPreset].self, from: defaults, key: Key.regexPresets) ?? []
     }
 
     public var scriptsDirectoryURL: URL {
@@ -55,6 +58,17 @@ public final class SettingsStore: ObservableObject {
     }
     public func restoreDefaultExclusions() { historyExcludedBundleIDs = ExclusionSeeds.passwordManagers }
 
+    public func addPreset(_ preset: RegexPreset) {
+        regexPresets.append(preset)
+    }
+    public func updatePreset(_ preset: RegexPreset) {
+        guard let index = regexPresets.firstIndex(where: { $0.id == preset.id }) else { return }
+        regexPresets[index] = preset
+    }
+    public func removePreset(id: UUID) {
+        regexPresets.removeAll { $0.id == id }
+    }
+
     static let defaultScriptsPath: String = {
         FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".config/pastefix/scripts", isDirectory: true).path
@@ -70,6 +84,7 @@ public final class SettingsStore: ObservableObject {
         static let historyEnabled = "pastefix.historyEnabled"
         static let historyMaxItems = "pastefix.historyMaxItems"
         static let historyExcluded = "pastefix.historyExcludedBundleIDs"
+        static let regexPresets = "pastefix.regexPresets"
     }
 
     private static func writeJSON<T: Encodable>(_ value: T, to defaults: UserDefaults, key: String) {
