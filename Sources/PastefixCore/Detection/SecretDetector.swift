@@ -43,7 +43,9 @@ public struct SecretMatch: Sendable, Equatable {
 /// Bounded-regex credential scanner. Every quantifier is bounded (Plan 8 lesson); the generic
 /// key=value rule additionally requires a high-entropy value so `password=changeme` stays quiet.
 public enum SecretDetector {
-    public static let maxBytes = 1_048_576
+    /// Measured on a 1 MB prose-like buffer: ~170ms, over the 150ms budget, so the cap is
+    /// tightened to 256 KiB (Plan 11 Task 2, carried item C2).
+    public static let maxBytes = 262_144
     static let minEntropy = 3.5
 
     private struct Rule { let kind: SecretKind; let regex: NSRegularExpression; let group: Int; let needsEntropy: Bool }
@@ -66,20 +68,26 @@ public enum SecretDetector {
         guard text.utf8.count <= maxBytes, !text.isEmpty else { return [] }
         let ns = text as NSString
         let full = NSRange(location: 0, length: ns.length)
-        var found: [(NSRange, SecretKind)] = []
-        for rule in rules {
+        var found: [(range: NSRange, kind: SecretKind, ruleIndex: Int)] = []
+        for (ruleIndex, rule) in rules.enumerated() {
             for m in rule.regex.matches(in: text, range: full) {
                 let r = m.range(at: rule.group)
                 guard r.location != NSNotFound else { continue }
                 let token = ns.substring(with: r)
                 if rule.kind == .jwt, JWTDecoder.split(token) == nil { continue }
                 if rule.needsEntropy, entropy(token) < minEntropy { continue }
-                found.append((r, rule.kind))
+                found.append((r, rule.kind, ruleIndex))
             }
         }
-        found.sort { a, b in a.0.location != b.0.location ? a.0.location < b.0.location : a.0.length > b.0.length }
+        // Deterministic order: location asc, length desc, then rule declaration order asc
+        // (Array.sort is not guaranteed stable, so the rule index is an explicit tie-break).
+        found.sort { a, b in
+            if a.range.location != b.range.location { return a.range.location < b.range.location }
+            if a.range.length != b.range.length { return a.range.length > b.range.length }
+            return a.ruleIndex < b.ruleIndex
+        }
         var out: [SecretMatch] = []; var cursor = 0
-        for (r, kind) in found where r.location >= cursor {
+        for (r, kind, _) in found where r.location >= cursor {
             guard let range = Range(r, in: text) else { continue }
             out.append(SecretMatch(kind: kind, range: range)); cursor = NSMaxRange(r)
         }

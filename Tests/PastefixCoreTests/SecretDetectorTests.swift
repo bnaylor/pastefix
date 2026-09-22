@@ -64,6 +64,19 @@ import Testing
         #expect(t < .milliseconds(150))
         #expect(SecretDetector.scan(String(repeating: "a", count: SecretDetector.maxBytes + 1)).isEmpty)
     }
+    @Test func tieBreakIsDeterministicByRuleOrder() {
+        // "token=<jwt>" makes the jwt rule and the genericAssignment rule (whose value class
+        // includes '.') match the identical (location, length) range. Rule declaration order
+        // (jwt before genericAssignment) must decide the winner every time, regardless of
+        // whatever order the underlying sort happens to visit equal elements in.
+        let jwt = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"
+        let s = "token=\(jwt)"
+        for _ in 0..<50 {
+            let m = SecretDetector.scan(s)
+            #expect(m.map(\.kind) == [.jwt])
+            #expect(m.map { String(s[$0.range]) } == [jwt])
+        }
+    }
     @Test func entropy() {
         #expect(SecretDetector.entropy("aaaaaaaa") == 0)
         #expect(SecretDetector.entropy("9f8e7d6c5b4a39281706f5e4d3c2b1a0") > 3.5)
