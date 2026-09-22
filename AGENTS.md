@@ -93,7 +93,7 @@ Sources/PastefixCore/
   Detection/
     ContentKind.swift                 # url | json | color | jwt | base64 | percentEncoded | htmlEntities | markdown | secret (+ displayName)
     ContentDetector.swift             # detect(_:) -> Set<ContentKind>, 1 MB guard; detect(_:secrets:) takes an already-computed scan so a caller needing the ranges too scans once
-    SecretDetector.swift              # SecretKind, SecretMatch, scan(_:) (256 KB guard) + entropy(_:); SecretRedactor.redact(_:matches:)
+    SecretDetector.swift              # SecretKind, SecretMatch, scan(_:) (256 KB guard, calls scanIgnoringSizeCap) + entropy(_:); scanIgnoringSizeCap(_:) — the uncapped entry point for the one deliberate off-main caller (the Zipline upload path, Plan 13); SecretRedactor.redact(_:matches:)
     MarkdownDetector.swift            # looksLikeMarkdown(_:) heuristic; CRLF/CR normalised to LF first, capped at 64 KB / 400 lines
     URLFinder.swift                   # internal http(s) link ranges (NSDataDetector)
     HTMLEntities.swift                # shared entity decode table (HTML Decode + Markdown-link title parser)
@@ -118,7 +118,7 @@ Sources/PastefixAppCore/              # app pure model (depends on PastefixCore,
   TextRangeClamp.swift                # remap(_:from:to:) -> Range<String.Index>?: re-expresses an editor selection at the same UTF-16 offsets in a replaced buffer (nil when they don't exist there), so an apply/undo/redo carries the caret instead of dropping it — a stale String.Index traps
   RichOutputRenderer.swift            # @MainActor render(markdown:) -> RichOutput{html,rtf}: MarkdownHTML.render then NSAttributedString(html:) -> RTF; <img> stripped from the RTF conversion input only
   MarkdownPreview.swift               # @MainActor attributedString(markdown:) -> NSAttributedString for the panel's Preview toggle: MarkdownHTML.render -> RichOutputRenderer.htmlForRTF (<img> stripped) -> stylesheet -> NSAttributedString(html:) -> foreground colours stripped except .link runs; 16 KB / 200 `<li>` caps return a notice string (the importer is main-thread-only, so work, not just bytes, has to be capped)
-  SettingsStore.swift                 # UserDefaults persistence (wrap width, auto-hide, sidebar, scripts folder, per-transform enable/order, historyEnabled, historyMaxItems)
+  SettingsStore.swift                 # UserDefaults persistence (wrap width, auto-hide, sidebar, scripts folder, per-transform enable/order, historyEnabled, historyMaxItems, ziplineServerURL + ziplineDefaultExpiry/BurnOnRead/Extension); expiry(fromRaw:) maps the raw expiry string to a ZiplineExpiry, falling back to the default rather than .never on an unrecognised value
   TransformOverrides.swift            # per-transform enable/disable + drag-reordering
   PaletteOrdering.swift               # applicable-first stable partition on top of TransformOverrides
   FuzzyMatch.swift                    # shared fold + tiered match (prefix/word-start/subsequence) + highlight ranges; fold-once `tier` for ranking-only callers

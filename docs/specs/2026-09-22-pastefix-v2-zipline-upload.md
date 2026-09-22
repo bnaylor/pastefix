@@ -284,8 +284,8 @@ here because they describe a measurement that no longer exists.
   untested rather than writing to a real login keychain from CI.
 
 No UI tests for the overlay; the app target has none today and this is not the
-change that starts that. Baseline is 438 tests / 51 suites after PR #46;
-expect roughly 25–30 more.
+change that starts that. Baseline was 438 tests / 51 suites after PR #46;
+shipped at 481 / 58 — +43 tests, +7 suites.
 
 ## Project layout delta
 
