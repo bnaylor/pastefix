@@ -22,26 +22,70 @@ The plan below was written before implementation; these are where the shipped co
 - **Scan cap is 256 KB, not 1 MB.** `SecretDetector.maxBytes` shipped at `262_144`. A 1 MB
   scan measured ~170 ms on the main actor, over budget; the cap was tightened to 256 KB
   (Task 2, carried item C2) rather than moving the scan off the main actor.
-- **The per-line 4 096-char cap was not implemented.** Measured unnecessary: a 63 KB line of
-  `sk-` near-misses (`SecretDetectorTests.boundedCost`) scans in ~16 ms, well inside the
+- **The per-line 4 096-char cap was not implemented.** Measured unnecessary once the two
+  quadratic rules became hand-written scans: `SecretDetectorTests.boundedCost` runs six
+  cap-sized adversarial shapes (one unbroken base64url run, dotted base64url, minimal JWT
+  candidates, unterminated PEM markers, maximal Slack tokens, `sk-` near-misses) inside the
   150 ms budget, so the extra bookkeeping a per-line cap would add wasn't worth carrying.
-  The 1 MB (now 256 KB) whole-buffer guard and the private-key block's 8 KB body cap are the
-  only limits `SecretDetector` enforces.
+  The 256 KB whole-buffer guard, the private-key block's body window and the JWT candidate cap
+  (both below) are the only limits `SecretDetector` enforces.
 - **Matches tie-break on rule declaration order**, not just location and length. When two
   rules match the identical `(location, length)` range (e.g. a JWT-shaped value also matching
   the `genericAssignment` pattern), `Array.sort` isn't guaranteed stable, so `scan(_:)` carries
   an explicit rule-index tie-break to keep the winner deterministic across runs.
-- **`PasteDocument.pushState` now re-detects even when the pushed text equals `working`.**
-  A push is a discrete event even when it lands on text a prior `setWorking` already coalesced
-  in, so detection (and `secretMatches`) resyncs to what's actually on the buffer after a
-  manual edit rather than trusting stale state.
+- **`PasteDocument.pushState` now re-detects even when the pushed text equals `working`, and
+  `TransformCoordinator.apply` pushes unconditionally.** A push is a discrete event even when it
+  lands on text a prior `setWorking` already coalesced in, so detection (and `secretMatches`)
+  resyncs to what's actually on the buffer after a manual edit rather than trusting stale state.
+  The coordinator originally returned `.unchanged` *before* pushing when the result equalled
+  `working`, which made that re-detect unreachable from the only production caller — a secret
+  typed into the editor kept an empty badge until the next real push, undo, redo or refresh. It
+  now decides the outcome first (still `.unchanged`, still `.applied` for an
+  `OutputModeTransformer`) and then always calls `pushState`, which on equal text adds no history
+  entry, leaves the cursor alone and does not truncate the redo stack.
 - **The app target's deployment target moved from 14.6 to 15.0** to get
   `TextEditor(text:selection:)` / `TextSelection` for the click-to-select badge. `PastefixCore`
   and `PastefixAppCore` are unaffected and stay at macOS 14.
-- **The secrets badge stays visible while the Markdown preview is showing.** Intended
-  behaviour is for the badge to hide while previewing (the preview is read-only, so a click
-  couldn't select anything in it) — that's deferred to the final wave (Task 6) rather than
-  shipped here.
+- **The secrets badge hides during the Markdown preview**, alongside the two overlays. The
+  preview replaces the editor with a read-only text view, so a badge click would have nothing to
+  select in and would silently do nothing.
+- **JWTs are found by a linear tokeniser, not a regex.** The three-class pattern the Decisions
+  table implies (`[A-Za-z0-9_-]{8,2048}\.…`) backtracks catastrophically despite every quantifier
+  being bounded: `-` is inside the class *and* creates a `\b` position, so the engine retries a
+  ~2 000-character scan from every hyphen in an unbroken base64url run — measured 1.2 s on a
+  250 KB single-line blob and 38 s on a hyphen-dense line, on the main actor. `scan(_:)` instead
+  walks the UTF-16 buffer once, treating **every non-JWT character as a delimiter** (a superset of
+  the spec's "whitespace-delimited tokens": it also finds `token=<jwt>` and `?id_token=<jwt>&…`),
+  applies an allocation-free exact pre-filter (leading character, segment lengths, `len % 4 != 1`)
+  and hands survivors to `JWTDecoder.split`, which remains the validator. Validation is capped at
+  **4 096 candidates per buffer** — a knowing false negative past that, and an asymmetric one: real
+  JWTs run to hundreds of characters, so 256 KB cannot hold anywhere near 4 096 of them, while a
+  crafted buffer of minimal dotted junk could otherwise spend ~130 ms proving nothing.
+- **PEM BEGIN/END labels must match exactly, and the body limit is 16 KB.** The lazy body class
+  (`[\s\S]{0,8192}?`) was O(n x 8 192) on unterminated BEGIN markers (3.0 s per MB), so both
+  markers are found by one bounded anchored regex each and every BEGIN binary-searches for the
+  first END at or after it **whose label string is identical** (`RSA ` matches `RSA `, not `EC `)
+  and that ends within `maxPEMBodyLength` = 16 384 characters. A longer body is not matched at
+  all; `SecretDetectorTests.privateKeyBodyLimit` pins that.
+- **The generic-assignment value is accepted by length-normalised entropy or by UUID shape**,
+  not by a fixed 3.5 bits/char bar. Shannon entropy caps at log2(n) for an n-character value, so a
+  fixed bar is a far harder test at 16 characters than at 40 — a random 16-hex value cleared 3.5
+  only 11% of the time. The test is now `entropy(v) >= 0.75 * log2(min(v.count, 64))`. A v4 UUID
+  scores 3.39 bits/char — below `changeme-changeme` — because 36 characters are a poor sample of a
+  122-bit secret, so no entropy threshold can separate the two; UUID-shaped values are accepted on
+  shape instead, and only ever reach the test behind a credential key name, so a bare `id: <uuid>`
+  stays quiet. The key name may also be quoted and the separator may be `=>`, so JSON/YAML/PHP
+  blobs (`{"password": "..."}`) match.
+- **An over-long generic value is not matched at all.** The rule ends in
+  `(?![A-Za-z0-9_\-+/=.])`, so a value longer than 256 characters fails the rule outright rather
+  than matching its first 256 characters — which previously redacted a prefix, left the tail in the
+  buffer and cleared the badge, i.e. told the user a buffer holding 64 characters of live secret
+  was clean. No match with no badge is the honest answer.
+- **Detection scans once per event.** `ContentDetector.detect(_:secrets:)` takes an
+  already-computed `[SecretMatch]` and inserts `.secret` from it; `detect(_:)` is a wrapper that
+  scans and delegates. `PasteDocument.init`/`redetect()` call `SecretDetector.scan` once and pass
+  the result, instead of paying the (main-actor, up to 256 KB) scan twice — once inside `detect`
+  and once for `secretMatches`.
 
 ## Scope
 
@@ -71,7 +115,7 @@ Settings toggles; per-kind enable/disable; entropy tuning UI; the upload prompt 
 |---|---|---|
 | Patterns (all anchored/bounded) | AWS access key `\b(AKIA|ASIA)[0-9A-Z]{16}\b`; AWS secret: `(?i)aws[_-]?secret[_-]?(access[_-]?)?key\W{0,5}([A-Za-z0-9/+=]{40})`; GitHub `\b(ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{36}\b` and `\bgithub_pat_[A-Za-z0-9_]{22,255}\b`; OpenAI `\bsk-(proj-)?[A-Za-z0-9_-]{20,200}\b`; Slack `\bxox[abprs]-[A-Za-z0-9-]{10,200}\b`; Stripe `\b(sk|rk)_live_[A-Za-z0-9]{16,200}\b`; Google `\bAIza[0-9A-Za-z_-]{35}\b`; private key block `-----BEGIN [A-Z ]{0,20}PRIVATE KEY-----[\s\S]{0,8192}?-----END [A-Z ]{0,20}PRIVATE KEY-----`; JWT via existing `JWTDecoder.split` on whitespace-delimited tokens; password in URL `\b[a-z][a-z0-9+.-]{1,15}://[^\s/:@]{1,64}:([^\s/@]{1,128})@`; generic assignment `(?i)\b(password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|auth[_-]?token|client[_-]?secret)\b\s*[:=]\s*["']?([A-Za-z0-9_\-+/=.]{16,256})["']?` with Shannon entropy of the value ≥ 3.5 bits/char | The well-known prefixes are near-zero false positive; the generic rule needs a key name AND entropy so `password=changeme` and `token = null` don't fire. All quantifiers bounded. |
 | Scan limits | 1 MB guard (existing), per-line cap 4 096 chars for the multi-char patterns, private-key block capped at 8 KB | Plan 8's quadratic-backtracking lesson. |
-| Redaction tokens | `[REDACTED aws-access-key]`, `[REDACTED private-key]`, …; URL password → `user:[REDACTED]@host`; JWT → `[REDACTED jwt]` | Typed tokens tell the reader what was there; stable, greppable, and the detector doesn't match its own output (idempotent). |
+| Redaction tokens | `[REDACTED aws-access-key]`, `[REDACTED private-key]`, …; URL password → `user:[REDACTED password]@host`; JWT → `[REDACTED jwt]` | Typed tokens tell the reader what was there; stable, greppable, and the detector doesn't match its own output (idempotent). A bare `[REDACTED]` sits inside the password class `[^\s/@]`, so the URL rule matched its own output and the badge never cleared — the space in the typed token is what makes redaction quiescent, not just idempotent. |
 | Where matches live | `PasteDocument.secretMatches` computed alongside `detectedKinds` at discrete events; badge click re-scans `working` live | Same pinning rule as detection; ranges can't be stale when acted on. |
 | Badge | Orange capsule `exclamationmark.shield` "N secrets" beside Detected; tooltip lists kinds; click → select next match (cycles) | Reuses the action-bar badge idiom; selection makes "where?" one click. |
 | Category | New `TransformCategory.privacy` "Privacy", last in `builtinOrder` | Redaction is a privacy action, not Data. |

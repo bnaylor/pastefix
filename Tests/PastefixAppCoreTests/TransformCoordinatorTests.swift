@@ -52,6 +52,22 @@ private struct FailingArming: OutputModeTransformer {
         #expect(updated.canUndo == false)
     }
 
+    /// An identity transform still pushes, so detection resyncs to a secret the user typed in
+    /// after the last discrete event — `setWorking` deliberately doesn't re-detect, and before
+    /// this the coordinator returned `.unchanged` without ever calling `pushState`.
+    @Test func applyUnchangedStillRedetects() async {
+        var d = doc("nothing here")
+        d.setWorking("aws key AKIAIOSFODNN7EXAMPLE")
+        #expect(d.secretMatches.isEmpty)
+        let t = FakeTransformer(id: "id", name: "Id", requiresRichInput: false) { $0.text }
+        let (updated, outcome) = await TransformCoordinator.apply(t, to: d)
+        #expect(outcome == .unchanged)
+        #expect(updated.secretMatches.count == 1)
+        #expect(updated.detectedKinds.contains(.secret))
+        #expect(updated.canUndo == false)
+        #expect(updated.canRedo == false)
+    }
+
     @Test func applyFailureReturnsMessageAndLeavesDocument() async {
         let t = FakeTransformer(id: "f", name: "F", requiresRichInput: false) { _ in
             throw TransformError.timeout

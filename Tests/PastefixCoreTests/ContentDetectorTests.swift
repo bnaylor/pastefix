@@ -82,4 +82,13 @@ import Foundation
         let k = ContentDetector.detect("see https://example.com and AKIAIOSFODNN7EXAMPLE")
         #expect(k.contains(.secret) && k.contains(.url) && ContentKind.secret.displayName == "Secrets")
     }
+    /// The overload takes the caller's scan as the whole truth for `.secret` — it never runs one
+    /// of its own — so the callers that need the ranges too can scan once.
+    @Test func suppliedSecretsDecideTheSecretKind() {
+        let text = "see https://example.com and AKIAIOSFODNN7EXAMPLE"
+        #expect(!ContentDetector.detect(text, secrets: []).contains(.secret))
+        #expect(ContentDetector.detect(text, secrets: []).contains(.url))
+        #expect(ContentDetector.detect(text).contains(.secret))
+        #expect(ContentDetector.detect(text, secrets: SecretDetector.scan(text)) == ContentDetector.detect(text))
+    }
 }

@@ -90,7 +90,7 @@ Sources/PastefixCore/
     RedactSecrets.swift               #   builtin.redactsecrets (order 110, category privacy, kinds [secret])
   Detection/
     ContentKind.swift                 # url | json | color | jwt | base64 | percentEncoded | htmlEntities | markdown | secret (+ displayName)
-    ContentDetector.swift             # detect(_:) -> Set<ContentKind>, 1 MB guard
+    ContentDetector.swift             # detect(_:) -> Set<ContentKind>, 1 MB guard; detect(_:secrets:) takes an already-computed scan so a caller needing the ranges too scans once
     SecretDetector.swift              # SecretKind, SecretMatch, scan(_:) (256 KB guard) + entropy(_:); SecretRedactor.redact(_:matches:)
     MarkdownDetector.swift            # looksLikeMarkdown(_:) heuristic; CRLF/CR normalised to LF first, capped at 64 KB / 400 lines
     URLFinder.swift                   # internal http(s) link ranges (NSDataDetector)
@@ -108,7 +108,7 @@ Tests/PastefixCoreTests/
 Sources/PastefixAppCore/              # app pure model (depends on PastefixCore, NO third-party deps)
   ClipboardSnapshot.swift             # plainText + richRTFD (RTFD data, Sendable)
   PasteDocument.swift                 # origin + history/cursor undo/redo/refresh + outputMode (default .plain, reset on refresh)
-  TransformCoordinator.swift          # apply(transformer, to: document) + isEnabled; sets document.outputMode from an OutputModeTransformer, reports .applied even when text is unchanged
+  TransformCoordinator.swift          # apply(transformer, to: document) + isEnabled; sets document.outputMode from an OutputModeTransformer, reports .applied even when text is unchanged; always calls pushState (even on equal text) so detection resyncs after a manual setWorking edit
   RichOutputRenderer.swift            # @MainActor render(markdown:) -> RichOutput{html,rtf}: MarkdownHTML.render then NSAttributedString(html:) -> RTF; <img> stripped from the RTF conversion input only
   MarkdownPreview.swift               # @MainActor attributedString(markdown:) -> NSAttributedString for the panel's Preview toggle: MarkdownHTML.render -> RichOutputRenderer.htmlForRTF (<img> stripped) -> stylesheet -> NSAttributedString(html:) -> foreground colours stripped except .link runs; 16 KB / 200 `<li>` caps return a notice string (the importer is main-thread-only, so work, not just bytes, has to be capped)
   SettingsStore.swift                 # UserDefaults persistence (wrap width, auto-hide, sidebar, scripts folder, per-transform enable/order, historyEnabled, historyMaxItems)

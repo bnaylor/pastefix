@@ -20,8 +20,10 @@ public struct PasteDocument: Sendable {
         self.origin = origin
         self.history = [origin.plainText ?? ""]
         self.cursor = 0
-        self.detectedKinds = ContentDetector.detect(history[0])
-        self.secretMatches = SecretDetector.scan(history[0])
+        // One scan, two consumers: `ContentDetector.detect(_:)` would otherwise run its own.
+        let secrets = SecretDetector.scan(history[0])
+        self.detectedKinds = ContentDetector.detect(history[0], secrets: secrets)
+        self.secretMatches = secrets
         self.outputMode = .plain
     }
 
@@ -67,7 +69,8 @@ public struct PasteDocument: Sendable {
     }
 
     private mutating func redetect() {
-        detectedKinds = ContentDetector.detect(working)
-        secretMatches = SecretDetector.scan(working)
+        let secrets = SecretDetector.scan(working)
+        detectedKinds = ContentDetector.detect(working, secrets: secrets)
+        secretMatches = secrets
     }
 }

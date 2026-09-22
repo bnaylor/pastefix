@@ -19,7 +19,7 @@
 - **Patterns verbatim from the spec's Decisions table**; every quantifier bounded; the private-key block body capped at 8 192 chars; the 1 MB guard applies before any scan.
 - **Generic assignment** fires only when the key name matches AND the value's Shannon entropy ≥ 3.5 bits/char (value length 16…256).
 - **Matches are sorted by location and non-overlapping** (earliest start wins; on equal start the longer wins).
-- **Redaction tokens:** `[REDACTED <slug>]`; `passwordInURL` replaces only the password with `[REDACTED]`; redaction is idempotent.
+- **Redaction tokens:** `[REDACTED <slug>]` for every kind; `passwordInURL` replaces only the password, with `[REDACTED password]` (a bare `[REDACTED]` re-matches the URL rule); redaction is idempotent *and* quiescent — rescanning redacted text finds nothing.
 - **Ids/orders:** `builtin.redactsecrets`, "Redact Secrets", order 110, `TransformCategory.privacy` ("Privacy", appended last to `builtinOrder`), `applicableKinds: [.secret]`.
 - **UI:** the Detected badge never lists "Secrets"; the orange badge shows `"N secret"`/`"N secrets"`; clicking re-scans the live buffer and selects the next match (cycling); badge hidden while an overlay is open.
 - **History:** `containsSecret` computed from the item's text at `record`/`pinText`; legacy indexes decode `false`; images never set it.

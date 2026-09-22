@@ -20,7 +20,7 @@ final class AppModel: ObservableObject {
     /// so writing it here moves the insertion point on screen.
     @Published var editorSelection: TextSelection?
 
-    /// Cycle position for `selectNextSecret`, reset with every new session.
+    /// Cycle position for `selectNextSecret`, reset wherever `document` is replaced.
     private var nextSecretIndex = 0
 
     let settings: SettingsStore
@@ -70,7 +70,7 @@ final class AppModel: ObservableObject {
 
     func summon() {
         errorMessage = nil
-        nextSecretIndex = 0
+        resetSecretSelection()
         sessionGeneration &+= 1
         document = PasteDocument(origin: ClipboardBridge.snapshot())
     }
@@ -143,6 +143,7 @@ final class AppModel: ObservableObject {
                 return
             }
             self.document = updated
+            self.resetSecretSelection()
             switch outcome {
             case .applied, .unchanged: self.errorMessage = nil
             case .failed(let message): self.errorMessage = message
@@ -157,14 +158,29 @@ final class AppModel: ObservableObject {
         document = doc
     }
 
-    func undo() { guard var doc = document else { return }; doc.undo(); document = doc }
-    func redo() { guard var doc = document else { return }; doc.redo(); document = doc }
+    func undo() { guard var doc = document else { return }; doc.undo(); document = doc; resetSecretSelection() }
+    func redo() { guard var doc = document else { return }; doc.redo(); document = doc; resetSecretSelection() }
 
     func refresh() {
         guard var doc = document else { return }
         doc.refresh(origin: ClipboardBridge.snapshot())
         document = doc
         errorMessage = nil
+        resetSecretSelection()
+    }
+
+    /// Drops a selection captured from an older buffer, and restarts the badge's cycle.
+    ///
+    /// `TextSelection` holds `Range<String.Index>` values, and a `String.Index` is only valid
+    /// against the exact string it was made from: handing one to a shorter buffer is undefined and
+    /// traps. `selectNextSecret` is the only writer, and the indices it stores are into `working`
+    /// as it stood at click time — so every point that replaces `document` wholesale (summon,
+    /// load, refresh, undo, redo, a landed transform result, end of session) has to clear it. The
+    /// canonical case is the feature's own headline flow: click the badge, then Redact Secrets,
+    /// which shortens the buffer under a live selection.
+    private func resetSecretSelection() {
+        editorSelection = nil
+        nextSecretIndex = 0
     }
 
     func save() {
@@ -204,7 +220,7 @@ final class AppModel: ObservableObject {
         // image. Put it straight back on the clipboard instead of opening an empty editor.
         guard item.hasText else { copyBack(item); return }
         errorMessage = nil
-        nextSecretIndex = 0
+        resetSecretSelection()
         sessionGeneration &+= 1
         document = PasteDocument(origin: ClipboardSnapshot(plainText: item.plainText ?? "", richRTFD: history.richRTFD(for: item)))
     }
@@ -273,6 +289,7 @@ final class AppModel: ObservableObject {
         document = nil
         errorMessage = nil
         isApplying = false
+        resetSecretSelection()
         sessionGeneration &+= 1
         onEndSession?()
     }

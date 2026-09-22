@@ -232,10 +232,11 @@ struct PanelView: View {
                     .accessibilityLabel("Detected color \(color.cssHex)")
             }
             // Hidden while an overlay is up: the backdrop dims the action bar, and the click
-            // target underneath it would select text the user cannot see. Its count comes from
-            // the document's pinned matches, but the click re-scans the live buffer — see
-            // `AppModel.selectNextSecret`.
-            if !model.secretMatches.isEmpty && !isPaletteOpen && !isHistoryOpen {
+            // target underneath it would select text the user cannot see. Hidden during the
+            // Markdown preview for the same reason — there is no editor on screen to select in,
+            // so the click would silently do nothing. Its count comes from the document's pinned
+            // matches, but the click re-scans the live buffer — see `AppModel.selectNextSecret`.
+            if !model.secretMatches.isEmpty && !isPaletteOpen && !isHistoryOpen && !isPreviewing {
                 let n = model.secretMatches.count
                 Button { model.selectNextSecret(); editorFocused = true } label: {
                     Label("\(n) secret\(n == 1 ? "" : "s")", systemImage: "exclamationmark.shield")
