@@ -142,8 +142,9 @@ final class AppModel: ObservableObject {
                 self.isApplying = false
                 return
             }
+            let previous = current.working
             self.document = updated
-            self.resetSecretSelection()
+            self.carrySelection(from: previous, to: updated.working)
             switch outcome {
             case .applied, .unchanged: self.errorMessage = nil
             case .failed(let message): self.errorMessage = message
@@ -158,8 +159,21 @@ final class AppModel: ObservableObject {
         document = doc
     }
 
-    func undo() { guard var doc = document else { return }; doc.undo(); document = doc; resetSecretSelection() }
-    func redo() { guard var doc = document else { return }; doc.redo(); document = doc; resetSecretSelection() }
+    func undo() {
+        guard var doc = document else { return }
+        let previous = doc.working
+        doc.undo()
+        document = doc
+        carrySelection(from: previous, to: doc.working)
+    }
+
+    func redo() {
+        guard var doc = document else { return }
+        let previous = doc.working
+        doc.redo()
+        document = doc
+        carrySelection(from: previous, to: doc.working)
+    }
 
     func refresh() {
         guard var doc = document else { return }
@@ -169,18 +183,42 @@ final class AppModel: ObservableObject {
         resetSecretSelection()
     }
 
-    /// Drops a selection captured from an older buffer, and restarts the badge's cycle.
-    ///
-    /// `TextSelection` holds `Range<String.Index>` values, and a `String.Index` is only valid
-    /// against the exact string it was made from: handing one to a shorter buffer is undefined and
-    /// traps. `selectNextSecret` is the only writer, and the indices it stores are into `working`
-    /// as it stood at click time — so every point that replaces `document` wholesale (summon,
-    /// load, refresh, undo, redo, a landed transform result, end of session) has to clear it. The
-    /// canonical case is the feature's own headline flow: click the badge, then Redact Secrets,
-    /// which shortens the buffer under a live selection.
+    /// Drops the selection and restarts the badge's cycle, for the points that start a *new*
+    /// session (summon, load, refresh, end of session): there is nothing to carry across, and a
+    /// `String.Index` from the old buffer applied to the new one is undefined and traps.
     private func resetSecretSelection() {
         editorSelection = nil
         nextSecretIndex = 0
+    }
+
+    /// Carries the caret/selection across a document replacement *within* a session — a landed
+    /// transform result, undo, redo.
+    ///
+    /// `TextSelection` holds `Range<String.Index>` values, valid only against the exact string
+    /// they were made from, so a stale one traps on a shorter buffer. Clearing it is safe but
+    /// throws the caret back to the start of the buffer on every apply, including the many that
+    /// barely touch the text, so the selection is re-expressed at the same UTF-16 offsets in the
+    /// new buffer and dropped only when they don't exist there (`TextRangeClamp.remap`). The
+    /// badge's cycle still restarts: the match list belongs to the buffer that just went away.
+    private func carrySelection(from previous: String, to current: String) {
+        nextSecretIndex = 0
+        guard let range = selectedRange(editorSelection),
+              let remapped = TextRangeClamp.remap(range, from: previous, to: current) else {
+            editorSelection = nil
+            return
+        }
+        editorSelection = TextSelection(range: remapped)
+    }
+
+    /// The selection's range in the buffer it was made against. A multi-selection (⌥-drag) is
+    /// represented by its first range: carrying one range beats dropping the caret entirely, and
+    /// the only writer here (`selectNextSecret`) never makes one.
+    private func selectedRange(_ selection: TextSelection?) -> Range<String.Index>? {
+        switch selection?.indices {
+        case .selection(let range): return range
+        case .multiSelection(let ranges): return ranges.ranges.first
+        default: return nil
+        }
     }
 
     func save() {
