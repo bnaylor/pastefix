@@ -18,62 +18,34 @@ private func realisticCorpus(bytes: Int) -> String {
     return out
 }
 
-/// `SecretDetector.scan` starts with `guard isScannable(text) else { return [] }`
-/// (`isScannable` is `text.utf8.count <= maxBytes`) — a buffer over the cap is
-/// not scanned at all, by design, documented right on the type. Calling `scan`
-/// directly on a 1 MB or 4 MB buffer therefore measures the guard, not the
-/// scanner: it returns empty in ~0s every time, which is not a measurement,
-/// it's a false all-clear. To measure the real per-byte cost of the actual
-/// regex/JWT/PEM work above the design point, without touching production
-/// code or shrinking the corpus, route the same unmodified `scan()` through a
-/// sequence of calls each sized at or under `maxBytes` (so the guard never
-/// fires) and sum their elapsed time. Chunks are packed on line boundaries so
-/// no secret is ever split across a chunk edge.
-private func chunkedForScanning(_ text: String, cap: Int) -> [Substring] {
-    var chunks: [Substring] = []
-    var chunkStart = text.startIndex
-    var chunkBytes = 0
-    var lineStart = text.startIndex
-    while lineStart < text.endIndex {
-        let lineEnd = text[lineStart...].firstIndex(of: "\n").map { text.index(after: $0) } ?? text.endIndex
-        let line = text[lineStart..<lineEnd]
-        let lineBytes = line.utf8.count
-        if chunkBytes + lineBytes > cap, chunkBytes > 0 {
-            chunks.append(text[chunkStart..<lineStart])
-            chunkStart = lineStart
-            chunkBytes = 0
-        }
-        chunkBytes += lineBytes
-        lineStart = lineEnd
-    }
-    if chunkStart < text.endIndex { chunks.append(text[chunkStart...]) }
-    return chunks
-}
-
 @Suite("SecretDetector scale (Plan 13 measurement)")
 struct SecretDetectorScaleTests {
     /// Not a benchmark assertion so much as a tripwire: the upload path scans
-    /// without a cap, so a regression into superlinear cost must fail here
-    /// rather than freeze an overlay.
-    @Test("scan cost stays linear well past maxBytes", .timeLimit(.minutes(1)))
+    /// without a cap via `scanIgnoringSizeCap`, so a regression into
+    /// superlinear cost must fail here rather than freeze an overlay.
+    ///
+    /// Calls `scanIgnoringSizeCap` once per size, on the whole corpus, unlike
+    /// the chunked measurement this replaced: chunking every call at
+    /// `maxBytes` made the total mechanically `chunks x constant` and could
+    /// not have detected superlinear cost, which is the one thing this test
+    /// exists to catch (`NSRegularExpression` over a multi-MB `NSString` is
+    /// the specific risk — it need not behave like N calls over 1/N-sized
+    /// ones).
+    @Test("uncapped scan cost stays linear well past maxBytes", .timeLimit(.minutes(1)))
     func scaleCurve() {
         var measurements: [(bytes: Int, seconds: Double)] = []
         for multiple in [1, 4, 16] {
             let text = realisticCorpus(bytes: SecretDetector.maxBytes * multiple)
-            let pieces = chunkedForScanning(text, cap: SecretDetector.maxBytes)
-            var totalMatches = 0
             let start = ContinuousClock.now
-            for piece in pieces {
-                totalMatches += SecretDetector.scan(String(piece)).count
-            }
+            let matches = SecretDetector.scanIgnoringSizeCap(text)
             let elapsed = ContinuousClock.now - start
             let seconds = Double(elapsed.components.seconds)
                 + Double(elapsed.components.attoseconds) / 1e18
             measurements.append((text.utf8.count, seconds))
-            #expect(totalMatches > 0, "the corpus is supposed to contain secrets")
+            #expect(!matches.isEmpty, "the corpus is supposed to contain secrets")
         }
         for m in measurements {
-            print("SecretDetector.scan: \(m.bytes) bytes in \(String(format: "%.3f", m.seconds)) s")
+            print("SecretDetector.scanIgnoringSizeCap: \(m.bytes) bytes in \(String(format: "%.3f", m.seconds)) s")
         }
         // 4 MB is the largest paste this flow should ever meet without the user
         // noticing they did something unusual. Two seconds is the point past
