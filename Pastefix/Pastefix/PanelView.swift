@@ -8,6 +8,12 @@ struct PanelView: View {
     @State private var isPaletteOpen = false
     @State private var isHistoryOpen = false
     @State private var isUploadOpen = false
+    /// Bumped on every ⌘⇧U. It is the upload overlay's `.id`, so pressing the hotkey again while
+    /// the overlay is already open rebuilds it from scratch instead of doing nothing: the flag
+    /// alone is already consumed by then, and the view would keep the server URL, token and
+    /// buffer snapshot it read when it first opened. "Configure it, come back, press ⌘⇧U" is the
+    /// documented way out of the configure state, so it has to actually re-read them.
+    @State private var uploadGeneration = 0
     @State private var showPinPopover = false
     @State private var pinTitle = ""
     @State private var pinError: String?
@@ -114,7 +120,13 @@ struct PanelView: View {
                             TextEditor(text: workingBinding, selection: selectionBinding)
                                 .font(.system(.body, design: .monospaced))
                                 .padding(8)
-                                .disabled(model.isApplying)
+                                // Disabled under the upload overlay, and only that one. The
+                                // overlay uploads a snapshot of the buffer taken when it opened,
+                                // so an edit landing behind the dim would make the uploaded text
+                                // differ from the text on screen. The overlay also takes focus,
+                                // which is the first line of defence; this is the one that does
+                                // not depend on focus behaving.
+                                .disabled(model.isApplying || isUploadOpen)
                                 .focused($editorFocused)
                         }
                         if let error = model.errorMessage {
@@ -142,6 +154,7 @@ struct PanelView: View {
                     .disabled(model.isApplying)
             } else if isUploadOpen {
                 UploadOverlayView(model: model, onClose: closeUpload)
+                    .id(uploadGeneration)
                     .transition(.opacity)
                     .disabled(model.isApplying)
             }
@@ -213,8 +226,7 @@ struct PanelView: View {
         // so reset it here or the next summon would reopen the overlay by itself.
         .onChange(of: model.historyOverlayRequested) { _, requested in
             guard requested else { return }
-            isPaletteOpen = false
-            isUploadOpen = false
+            closeOthers()
             isHistoryOpen = true
             model.historyOverlayRequested = false
         }
@@ -223,8 +235,10 @@ struct PanelView: View {
         // a ⌘⇧U that starts a new session resets first, then opens.
         .onChange(of: model.uploadOverlayRequested) { _, requested in
             guard requested else { return }
-            isPaletteOpen = false
-            isHistoryOpen = false
+            closeOthers()
+            // Bumped before the flag is set, so an already-open overlay is replaced rather than
+            // left standing with the configuration it read a minute ago.
+            uploadGeneration &+= 1
             isUploadOpen = true
             model.uploadOverlayRequested = false
         }

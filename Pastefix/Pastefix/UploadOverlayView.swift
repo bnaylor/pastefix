@@ -39,11 +39,51 @@ struct UploadOverlayView: View {
     @State private var expiryTag: String
     @State private var burnOnRead: Bool
     @State private var fileExtension: String
+    /// `onAppear` can fire more than once for one view instance, and a second `startScan` would
+    /// orphan the first task — which then lands its own result on top of the newer one.
+    @State private var scanStarted = false
+    /// Which part of the overlay holds first responder. It has to hold it *somewhere*: the
+    /// `TextEditor` behind the backdrop is not disabled, so an overlay that never takes focus
+    /// leaves keystrokes editing the document underneath it — and this overlay uploads a snapshot
+    /// taken when it opened, so those keystrokes would make the uploaded text differ from the
+    /// text on screen. The siblings take focus into their search field (`CommandPaletteView:36`,
+    /// `HistoryOverlayView:94`); this one has no search field, so the card itself is the target.
+    @FocusState private var focus: Field?
     @State private var scanTask: Task<Void, Never>?
     @State private var scanProgressTask: Task<Void, Never>?
     @State private var uploadTask: Task<Void, Never>?
 
+    /// Focus targets. The card is focused on appear in every phase; the extension field takes
+    /// over when the user clicks or tabs into it.
+    private enum Field: Hashable {
+        case card
+        case fileExtension
+    }
+
     private static let cardTopPadding: CGFloat = 40
+    /// Kept clear below the card so it never sits flush against the panel's bottom edge — and,
+    /// more to the point, so the height budget below stops short of it.
+    private static let cardBottomMargin: CGFloat = 24
+    /// Header row (46), three dividers (3), footer (30).
+    private static let cardChromeHeight: CGFloat = 79
+    /// The action row and its padding. Pinned below the scroll region, never inside it: an Upload
+    /// or Cancel button that can be scrolled out of reach is the one thing a height budget must
+    /// not produce. The failure banner shares this block and is allowed to push the card a little
+    /// taller — a failure is not the moment to start hiding text.
+    private static let actionBlockHeight: CGFloat = 60
+    /// The three option rows, the divider under them, their spacings, and the scroll region's own
+    /// 12pt padding top and bottom.
+    private static let optionsHeight: CGFloat = 133
+    /// One "Checking for secrets…" / "No secrets found" line.
+    private static let scanRowHeight: CGFloat = 20
+    /// Everything in the findings block that is not a finding line: the "N possible secrets"
+    /// label, the disposition radio group and its caption.
+    private static let findingsChromeHeight: CGFloat = 112
+    private static let findingLineHeight: CGFloat = 16
+    /// The floor on the scroll region, for a panel too short to hold even the option rows. The
+    /// panel's own 380pt minimum leaves 177, so this is unreachable today; it is here so the
+    /// arithmetic cannot produce a negative height if those numbers ever move.
+    private static let minScrollHeight: CGFloat = 120
 
     /// The overlay's whole state, in the order it can be entered.
     ///
@@ -91,10 +131,16 @@ struct UploadOverlayView: View {
         // `SettingsStore` publish — rare, and a same-process `SecItemCopyMatching` is cheap. If
         // that ever stops being true, the check moves into a `task` that gates the scan.
         _phase = State(initialValue: Self.initialPhase(settings: settings, tokenStore: tokenStore))
-        // The detector is the better guess when it actually detected something; "txt" is its
-        // "I have nothing", and that is exactly when the user's configured default should win.
-        let detected = ZiplineUpload.defaultExtension(for: text)
-        _fileExtension = State(initialValue: detected == "txt" ? settings.ziplineDefaultExtension : detected)
+        // The user's setting wins whenever they have set one. The detector is consulted only
+        // when the setting is still its "txt" default — i.e. when the user has expressed no
+        // preference at all — because the detector is trigger-happy rather than confident:
+        // `MarkdownDetector` returns true on a single `^#{1,6} \S` line, so every YAML file,
+        // Dockerfile, conf file and shebang-less script looks like Markdown to it. Letting that
+        // override an extension the user deliberately chose was the wrong way round.
+        let configured = settings.ziplineDefaultExtension.trimmingCharacters(in: .whitespacesAndNewlines)
+        _fileExtension = State(initialValue: configured.isEmpty || configured == "txt"
+                               ? Self.detectedExtension(model.document?.detectedKinds)
+                               : configured)
         // Round-tripped through `expiry(fromRaw:)` so a corrupted setting lands on the same
         // fallback the request builder would have used, instead of showing a picker with nothing
         // selected.
@@ -103,23 +149,36 @@ struct UploadOverlayView: View {
     }
 
     var body: some View {
-        ZStack(alignment: .top) {
-            Color.black.opacity(0.25)
-                .ignoresSafeArea()
-                .onTapGesture { onClose() }
-                .accessibilityLabel("Close upload")
-                .accessibilityAddTraits(.isButton)
-            card
-                .frame(maxWidth: PanelMetrics.paletteCardWidth)
-                // maxWidth + horizontal padding rather than a fixed width: on a panel narrower
-                // than the card, the card shrinks instead of overflowing off both edges.
-                .padding(.horizontal, 24)
-                .padding(.top, Self.cardTopPadding)
+        // The panel is resizable and starts at 460pt of content (380 at its minimum), so the
+        // option rows and the secret block are budgeted against the height actually available
+        // rather than left to grow — three distinct secret kinds are enough to push the footer,
+        // and the Upload button with it, off the bottom of the panel (the Plan 6 lesson, again).
+        GeometryReader { geometry in
+            ZStack(alignment: .top) {
+                Color.black.opacity(0.25)
+                    .ignoresSafeArea()
+                    .onTapGesture { onClose() }
+                    .accessibilityLabel("Close upload")
+                    .accessibilityAddTraits(.isButton)
+                card(scrollHeight: scrollHeight(forPanelHeight: geometry.size.height))
+                    .frame(maxWidth: PanelMetrics.paletteCardWidth)
+                    // maxWidth + horizontal padding rather than a fixed width: on a panel narrower
+                    // than the card, the card shrinks instead of overflowing off both edges.
+                    .padding(.horizontal, 24)
+                    .padding(.top, Self.cardTopPadding)
+            }
         }
         .onAppear {
+            // Takes first responder away from the `TextEditor` behind the backdrop. Without this
+            // the editor keeps it, typing edits the document while the overlay is up, and the
+            // upload sends the snapshot from before those keystrokes — text that is not what is
+            // on screen. The card rather than the extension field, so a stray keypress does not
+            // silently rewrite the filename either.
+            focus = .card
             // Nothing is scanned in the configure state: there is nowhere to send the result, and
             // a scan started there would be work done for a question nobody asked.
-            guard phase == .composing else { return }
+            guard !scanStarted, phase == .composing else { return }
+            scanStarted = true
             startScan()
         }
         .onDisappear {
@@ -141,17 +200,21 @@ struct UploadOverlayView: View {
         }
     }
 
-    private var card: some View {
+    private func card(scrollHeight: CGFloat) -> some View {
         VStack(spacing: 0) {
             header
             Divider()
-            content
-                .padding(12)
+            content(scrollHeight: scrollHeight)
             Divider()
             footer
         }
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
         .shadow(radius: 20)
+        // The card is the focus target, so it has to be able to hold focus; the ring is
+        // suppressed because a focus ring around the whole card would read as a control.
+        .focusable()
+        .focusEffectDisabled()
+        .focused($focus, equals: .card)
     }
 
     private var header: some View {
@@ -170,17 +233,17 @@ struct UploadOverlayView: View {
         .padding(12)
     }
 
-    @ViewBuilder private var content: some View {
+    @ViewBuilder private func content(scrollHeight: CGFloat) -> some View {
         switch phase {
         case .configure(let message):
-            configureState(message)
+            configureState(message).padding(12)
         case .done(let url):
-            doneState(url)
+            doneState(url).padding(12)
         // Composing, uploading and failed are one layout: a failure has to leave the controls
         // where they were, because the fix for the commonest failure (an expiry past the
         // server's `maxExpiration`) is to change one of them and press Upload again.
         case .composing, .uploading, .failed:
-            composingState
+            composingState(scrollHeight: scrollHeight)
         }
     }
 
@@ -209,23 +272,47 @@ struct UploadOverlayView: View {
 
     // MARK: Composing
 
-    private var composingState: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            expirationRow
-            burnRow
-            extensionRow
-            Divider()
-            secretRow
-            if let message = bannerMessage {
-                errorBanner(message)
+    private func composingState(scrollHeight: CGFloat) -> some View {
+        VStack(spacing: 0) {
+            // A *definite* height, not a `maxHeight`: a `ScrollView` is greedy in its scroll axis
+            // and would otherwise take the whole budget in every phase, ballooning the card
+            // around three short rows. `scrollHeight` is the smaller of what this content needs
+            // and what the panel has left, so the region scrolls only when it actually has to.
+            ScrollView {
+                VStack(alignment: .leading, spacing: 10) {
+                    expirationRow
+                    burnRow
+                    extensionRow
+                    Divider()
+                    secretRow
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(12)
             }
-            actionRow
+            .frame(height: scrollHeight)
+            // The *option* controls are inert while the request is on the wire: changing the
+            // expiry of an upload that has already been sent would only mislead about what was
+            // sent. They stay on screen, greyed, rather than being swapped out — seeing what you
+            // sent is the point of showing them at all. Deliberately scoped to the scroll region
+            // and not the action row below: Cancel has to stay pressable for the whole upload,
+            // which with a 60 s client timeout can be a long time to be stuck.
+            .disabled(phase == .uploading)
+            Divider()
+            VStack(alignment: .leading, spacing: 8) {
+                if let message = bannerMessage {
+                    errorBanner(message)
+                }
+                actionRow
+            }
+            .padding(12)
         }
-        // Every control here is inert while the request is on the wire — changing the expiry of
-        // an upload that has already been sent would only mislead about what was sent — but they
-        // stay on screen, greyed, rather than being swapped out: the point of showing them during
-        // the upload is that the user can see what they sent.
-        .disabled(phase == .uploading)
+        // A message attached to a control is about the value that control had. The moment it
+        // changes, the message describes something that is no longer there — so it is cleared by
+        // the same gesture that fixes it, rather than sitting there contradicting the screen.
+        // Matched by header, so an unrelated failure (a rejected token, say) survives a toggle.
+        .onChange(of: expiryTag) { _, _ in clearInlineFailure(forHeaderContaining: "deletes-at") }
+        .onChange(of: burnOnRead) { _, _ in clearInlineFailure(forHeaderContaining: "max-views") }
+        .onChange(of: fileExtension) { _, _ in clearInlineFailure(forHeaderContaining: "file-extension") }
     }
 
     private var expirationRow: some View {
@@ -276,6 +363,7 @@ struct UploadOverlayView: View {
                 TextField("txt", text: $fileExtension)
                     .textFieldStyle(.roundedBorder)
                     .frame(width: 100)
+                    .focused($focus, equals: .fileExtension)
                     .accessibilityLabel("File extension")
             }
             if let message = inlineMessage(forHeaderContaining: "file-extension") {
@@ -297,11 +385,19 @@ struct UploadOverlayView: View {
             // Under the delay: nothing at all. A row that appears and is replaced within a frame
             // or two is a flicker, and an empty row is not a claim about the text either way.
         case .clean:
-            Label("No secrets found", systemImage: "checkmark.shield")
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                // The whole buffer was examined, not the first 256 KB of it — see `startScan`.
-                .help("The whole buffer was scanned, whatever its size.")
+            if source.isEmpty {
+                // True but useless: an empty buffer has no secrets in the same way it has nothing
+                // else, and a clean bill of health on nothing implies something was examined.
+                Label("Nothing to scan — the buffer is empty.", systemImage: "questionmark.circle")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            } else {
+                Label("No secrets found", systemImage: "checkmark.shield")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    // The whole buffer was examined, not the first 256 KB of it — see `startScan`.
+                    .help("The whole buffer was scanned, whatever its size.")
+            }
         case .found(let matches):
             findings(matches)
         }
@@ -317,6 +413,7 @@ struct UploadOverlayView: View {
                 Text(line)
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                    .frame(height: Self.findingLineHeight, alignment: .leading)
             }
             // Redact is preselected and Return uploads, so the safe outcome is the one that
             // happens if the user reads none of this. Sending as-is has to be chosen.
@@ -458,6 +555,13 @@ struct UploadOverlayView: View {
     /// fixable here; anything else belongs in the banner.
     private static let inlineHeaders = ["deletes-at", "max-views", "file-extension"]
 
+    /// Drops a failure that was attached to one control, leaving any other failure alone.
+    private func clearInlineFailure(forHeaderContaining needle: String) {
+        guard case .failed(.badOption(let header, _)) = phase,
+              header.localizedCaseInsensitiveContains(needle) else { return }
+        phase = .composing
+    }
+
     private func inlineMessage(forHeaderContaining needle: String) -> String? {
         guard case .failed(.badOption(let header, let message)) = phase,
               header.localizedCaseInsensitiveContains(needle) else { return nil }
@@ -489,6 +593,17 @@ struct UploadOverlayView: View {
         case .transport(let detail):
             return "Couldn't reach the server: \(detail)"
         }
+    }
+
+    /// `ZiplineUpload.defaultExtension(for:)`'s priority, applied to the kinds `PasteDocument`
+    /// already holds. Calling that function instead would re-run the whole `ContentDetector`
+    /// (a capped secret scan included) on every `init` for an answer the document has cached
+    /// since the buffer last changed.
+    private static func detectedExtension(_ kinds: Set<ContentKind>?) -> String {
+        guard let kinds else { return "txt" }
+        if kinds.contains(.json) { return "json" }
+        if kinds.contains(.markdown) { return "md" }
+        return "txt"
     }
 
     private static func tag(for expiry: ZiplineExpiry) -> String {
@@ -534,6 +649,31 @@ struct UploadOverlayView: View {
             return .configure(noTokenMessage)
         }
         return .composing
+    }
+
+    /// The height the scrolling region gets: the smaller of what its content needs and what the
+    /// panel has left after the card's chrome and the pinned action row.
+    private func scrollHeight(forPanelHeight panelHeight: CGFloat) -> CGFloat {
+        let available = max(Self.minScrollHeight,
+                            panelHeight - Self.cardTopPadding - Self.cardBottomMargin
+                                - Self.cardChromeHeight - Self.actionBlockHeight)
+        return min(Self.optionsHeight + secretBlockHeight, available)
+    }
+
+    /// What the secret block adds to the scroll region's content. An estimate, and only has to be
+    /// roughly right in the safe direction: too large leaves a few points of slack at the bottom
+    /// of the region, too small makes it scroll slightly sooner than it needed to. Neither hides
+    /// a control, because the controls that matter are pinned outside it.
+    private var secretBlockHeight: CGFloat {
+        switch scanState {
+        // Nothing is drawn under the delay, so nothing is budgeted for it — the card grows by a
+        // row when the progress line appears, which is the same movement the row itself is.
+        case .scanning: return showScanProgress ? Self.scanRowHeight : 0
+        case .clean: return Self.scanRowHeight
+        case .found(let matches):
+            return Self.findingsChromeHeight
+                + CGFloat(Self.summaries(of: matches).count) * Self.findingLineHeight
+        }
     }
 
     // MARK: Actions (every one reads live state)
