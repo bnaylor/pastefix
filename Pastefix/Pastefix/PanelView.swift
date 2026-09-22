@@ -10,6 +10,9 @@ struct PanelView: View {
     @State private var showPinPopover = false
     @State private var pinTitle = ""
     @State private var pinError: String?
+    @State private var isPreviewing = false
+    @State private var previewText = NSAttributedString()
+    @State private var previewTask: Task<Void, Never>?
     @FocusState private var editorFocused: Bool
     @FocusState private var pinTitleFocused: Bool
 
@@ -30,11 +33,17 @@ struct PanelView: View {
                 Divider()
                 HStack(spacing: 0) {
                     VStack(spacing: 0) {
-                        TextEditor(text: workingBinding)
-                            .font(.system(.body, design: .monospaced))
-                            .padding(8)
-                            .disabled(model.isApplying)
-                            .focused($editorFocused)
+                        if isPreviewing {
+                            // No padding here: the text view carries its own 8 pt
+                            // `textContainerInset`, which matches the editor's gutter.
+                            MarkdownPreviewView(text: previewText)
+                        } else {
+                            TextEditor(text: workingBinding)
+                                .font(.system(.body, design: .monospaced))
+                                .padding(8)
+                                .disabled(model.isApplying)
+                                .focused($editorFocused)
+                        }
                         if let error = model.errorMessage {
                             errorBanner(error)
                         }
@@ -79,11 +88,25 @@ struct PanelView: View {
         .onChange(of: model.sessionGeneration) { _, _ in
             isPaletteOpen = false
             isHistoryOpen = false
+            // A new summon always starts in the editor: the preview is a view of *this*
+            // buffer, and leaving it on would show the previous session's render until the
+            // debounce lands. The render is dropped too — the next ⌘⇧M turns the preview on
+            // before its immediate render lands, and the stale string it would otherwise show
+            // for that frame is the previous clipboard's content.
+            isPreviewing = false
+            previewTask?.cancel()
+            previewText = NSAttributedString()
         }
         // Hand focus back to the editor once a transform finishes, unless the user has an
-        // overlay open and is picking the next thing.
+        // overlay open and is picking the next thing — or is reading the preview, where there
+        // is no editor to focus.
         .onChange(of: model.isApplying) { _, applying in
-            if !applying && !isPaletteOpen && !isHistoryOpen { editorFocused = true }
+            if !applying && !isPaletteOpen && !isHistoryOpen && !isPreviewing { editorFocused = true }
+        }
+        // Transforms, undo/redo and typing all land here; the debounce keeps a fast-changing
+        // buffer from re-rendering HTML on every keystroke.
+        .onChange(of: model.document?.working) { _, _ in
+            if isPreviewing { scheduleRender() }
         }
         // ⌘⇧V summons straight into the history overlay; the flag is a one-shot request,
         // so reset it here or the next summon would reopen the overlay by itself.
@@ -133,6 +156,16 @@ struct PanelView: View {
                 // stale error.
                 .onDisappear { pinTitle = ""; pinError = nil }
             }
+            Button { togglePreview() } label: {
+                Image(systemName: isPreviewing ? "eye.fill" : "eye")
+            }
+            .help(isPreviewing ? "Back to the editor (⌘⇧M)" : "Preview as Markdown (⌘⇧M)")
+            .accessibilityLabel(isPreviewing ? "Back to the editor" : "Preview as Markdown")
+            // Tinted, not gated: anything can be previewed, detection only makes it a suggestion.
+            .tint(model.document?.detectedKinds.contains(.markdown) == true ? Color.accentColor : nil)
+            // Same one-binding rule as ⌘K/⌘Y: nothing owns ⌘⇧M while an overlay is up.
+            .keyboardShortcut(isPaletteOpen || isHistoryOpen ? nil : KeyboardShortcut("m", modifiers: [.command, .shift]))
+            .disabled(model.document == nil || model.isApplying)
             Spacer()
             Button { toggleHistory() } label: {
                 Image(systemName: "clock.arrow.circlepath")
@@ -235,9 +268,54 @@ struct PanelView: View {
         if isHistoryOpen { closeHistory() } else { isPaletteOpen = false; isHistoryOpen = true }
     }
 
-    /// Esc: close whichever overlay is open, otherwise end the session.
+    private func togglePreview() {
+        if isPreviewing {
+            closePreview()
+        } else {
+            isPreviewing = true
+            // No debounce on the way in: the toggle has to paint something immediately.
+            scheduleRender(immediate: true)
+        }
+    }
+
+    /// Renders the buffer off the keystroke path. `immediate` skips the 150 ms debounce.
+    private func scheduleRender(immediate: Bool = false) {
+        previewTask?.cancel()
+        let text = model.document?.working ?? ""
+        // The session the render belongs to. The `sessionGeneration` handler also cancels this
+        // task, but that only wins if it runs first — `onChange` order is a property of the
+        // modifier stack, not something this function can rely on. Checking the generation at
+        // the end makes the drop independent of who ran when: a render scheduled into a session
+        // that has since ended never reaches `previewText`.
+        let generation = model.sessionGeneration
+        previewTask = Task { @MainActor in
+            if !immediate { try? await Task.sleep(for: .milliseconds(150)) }
+            // Both paths check: a cancelled immediate render would still import the old buffer
+            // on the main actor and write it back over a newer one (or into a dead session).
+            guard !Task.isCancelled, model.sessionGeneration == generation else { return }
+            previewText = MarkdownPreview.attributedString(markdown: text)
+        }
+    }
+
+    private func closePreview() {
+        isPreviewing = false
+        previewTask?.cancel()
+        // Unlike the overlays, the editor does not exist yet at this point — it comes back on
+        // the next render — so the focus request has to wait a turn or it lands on nothing.
+        Task { @MainActor in editorFocused = true }
+    }
+
+    /// Esc: close whichever overlay is open, then the preview, otherwise end the session.
     private func escape() {
-        if isPaletteOpen { closePalette() } else if isHistoryOpen { closeHistory() } else { model.cancel() }
+        if isPaletteOpen {
+            closePalette()
+        } else if isHistoryOpen {
+            closeHistory()
+        } else if isPreviewing {
+            closePreview()
+        } else {
+            model.cancel()
+        }
     }
 
     private func closePalette() {

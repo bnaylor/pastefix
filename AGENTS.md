@@ -107,6 +107,7 @@ Sources/PastefixAppCore/              # app pure model (depends on PastefixCore,
   PasteDocument.swift                 # origin + history/cursor undo/redo/refresh + outputMode (default .plain, reset on refresh)
   TransformCoordinator.swift          # apply(transformer, to: document) + isEnabled; sets document.outputMode from an OutputModeTransformer, reports .applied even when text is unchanged
   RichOutputRenderer.swift            # @MainActor render(markdown:) -> RichOutput{html,rtf}: MarkdownHTML.render then NSAttributedString(html:) -> RTF; <img> stripped from the RTF conversion input only
+  MarkdownPreview.swift               # @MainActor attributedString(markdown:) -> NSAttributedString for the panel's Preview toggle: MarkdownHTML.render -> RichOutputRenderer.htmlForRTF (<img> stripped) -> stylesheet -> NSAttributedString(html:) -> foreground colours stripped except .link runs; 16 KB / 200 `<li>` caps return a notice string (the importer is main-thread-only, so work, not just bytes, has to be capped)
   SettingsStore.swift                 # UserDefaults persistence (wrap width, auto-hide, sidebar, scripts folder, per-transform enable/order, historyEnabled, historyMaxItems)
   TransformOverrides.swift            # per-transform enable/disable + drag-reordering
   PaletteOrdering.swift               # applicable-first stable partition on top of TransformOverrides
@@ -137,7 +138,8 @@ Pastefix/                             # the Xcode app (KeyboardShortcuts + Spark
     ClipboardBridge.swift             # NSPasteboard <-> ClipboardSnapshot; write(text:richRTFD:imagePNG:) for multi-representation copy-back
     PanelController.swift             # floating resizable NSPanel host (+ sidebar-driven resize, sidebar-aware minSize)
     PanelMetrics.swift                # panel/sidebar/palette sizes shared by SwiftUI and AppKit
-    PanelView.swift                   # editor + action bar + full-panel ⌘K/history overlay host + sidebar column + Esc owner; toolbar pin button/⌘⇧P opens a title popover (pinCurrentBuffer)
+    PanelView.swift                   # editor + action bar + full-panel ⌘K/history overlay host + sidebar column + Esc owner; toolbar pin button/⌘⇧P opens a title popover (pinCurrentBuffer); Preview toggle (⌘⇧M) swaps the editor for MarkdownPreviewView, 150ms-debounced re-render on buffer/undo/redo change, Esc closes the preview before Cancel
+    MarkdownPreviewView.swift         # NSViewRepresentable read-only, selectable NSTextView (isEditable false) hosting MarkdownPreview's rendering for the Preview toggle
     CommandPaletteView.swift          # ⌘K overlay: TransformSearch-ranked list, type/↑↓/↵/Esc
     PasteboardMonitor.swift           # polls changeCount 2x/sec; builds CaptureContext from FrontmostAppTracker before each read, refreshes it after; two-stage CaptureFilter chain (ConcealedTypeFilter + AppExclusionFilter) (Critical Invariant 12)
     HistoryOverlayView.swift          # ⌘⇧V/⌘Y overlay: HistorySearch-ranked list, thumbnails, ↵/⌘↵/⌘⌫/⌘P/⇧↵/Esc; Pinned/History sections
@@ -182,6 +184,7 @@ These are load-bearing; most were established the hard way (see "Things that hav
 - **Capture filters get a `CaptureContext` built before the read and refreshed after it.** Attribution comes from the tracker's newest activation; exclusion checks every app the tracker saw within the poll window *plus* the live `NSWorkspace.frontmostApplication` id (unioned into `recentBundleIDs` as a fail-closed cross-check, never used for attribution). Don't remove either half.
 - Accessibility is requested only to post ⌘V (`SnippetPaster`); Pastefix never installs an event tap or observes keystrokes — keep it that way. A ⌘V is posted only after shift/control/option/command are released and no Pastefix window is key, and the target is verified frontmost; on any doubt, copy-only.
 - `OutputModeTransformer` is the only channel by which a transform influences Save. Render at save time from the live buffer; never cache rendered output on the document. Rendered HTML goes through the URL-scheme allowlist, and the RTF conversion input has `<img>` stripped so Save never touches the network.
+- The preview shares the RTF pipeline's `<img>` stripping (`RichOutputRenderer.htmlForRTF`) — the importer is WebKit-backed and must never be handed an `<img>`
 - **Browsing UIs stay dumb:** the ⌘K palette reads `enabledTransformers()` (applicable-first) and the sidebar reads `browsableTransformers()` (plain user order, no detection promotion, so a browse surface doesn't reshuffle with the clipboard); both render whatever a pure AppCore function hands back — ranking (`TransformSearch`), grouping (`SidebarGrouping`), and applicable-first ordering (`PaletteOrdering`) are pure functions in `PastefixAppCore`, not view logic. A view should never re-sort or re-filter the list itself.
 
 ## Things that have bitten us
@@ -270,6 +273,13 @@ Also caught in review on `29c1d02`: a page truncated at the byte cap mid-charact
 - **Ad-hoc Debug signatures lose TCC grants on every rebuild** (controller pass): Accessibility trust keys on the designated requirement, which for ad-hoc is the cdhash. Re-sign the Debug app with the Developer ID identity before permission-dependent tests.
 - **KeyboardShortcuts names must not contain dots** (`1b11b99`) and `removeHandler(for:)` exists — don't work around a limitation the library doesn't have.
 
+*Markdown preview (Plan 10):*
+- **The HTML importer writes list markers twice** (`385579f`): literal "\t•\t" text *and* an `NSTextList`, which a TextKit 2 `NSTextView` draws again → double bullets. Clear `textLists` after import.
+- **Setting `textColor` on an `NSTextView` rewrites the storage** (`385579f`): an `isEqual(to:)` guard against the storage never fires afterwards; compare against a last-applied copy held in the coordinator or every re-render drops selection and scroll.
+- **The importer ignores `blockquote` margins** (`385579f`): no style boundary survives, so a post-pass cannot find the quote either. Accepted limitation.
+- **A byte cap is not a cost cap** (PR #40 review): the importer's cost tracks list structure, not size, so `MarkdownPreview` caps `<li>` count as well as bytes. Anything main-actor and synchronous needs the cap on the work.
+- **`#expect` on an optional-chained receiver can never fail** (PR #40 review): `#expect((f?.familyName ?? "").contains("Menlo"))` expands to a call check whose result is discarded (the compiler says "result of call to 'contains' is unused") and passes on any input. Bind to a local first — and treat that warning as a broken test, not noise.
+
 ## Definition of Done
 
 Before opening or updating a PR:
@@ -300,6 +310,7 @@ When you **significantly expand the project** — a new target, subsystem, scrip
 | 7 — Sensitive-app exclusion | AppExclusionFilter, FrontmostAppTracker, Privacy tab, menu-bar pause | ✅ merged — PR #34 (`b2b5166`) — [spec](docs/specs/2026-09-21-pastefix-v2-sensitive-app-exclusion.md), [plan](docs/plans/2026-09-21-pastefix-v2-sensitive-app-exclusion.md) |
 | 8 — Markdown ↔ rich text | MarkdownHTML, MarkdownFromRich, OutputMode, Rich Text category | ✅ merged — PR #35 (`1d99648`) — [spec](docs/specs/2026-09-21-pastefix-v2-markdown-rich-text.md), [plan](docs/plans/2026-09-21-pastefix-v2-markdown-rich-text.md) |
 | 9 — Pinned snippets | pin/unpin, Pinned section, ⇧↵ paste, per-snippet hotkeys, Snippets tab | ✅ merged — PR #38 (`08f72d6`) — [spec](docs/specs/2026-09-21-pastefix-v2-pinned-snippets.md), [plan](docs/plans/2026-09-21-pastefix-v2-pinned-snippets.md) |
+| 10 — Markdown preview | MarkdownPreview, MarkdownPreviewView, ⌘⇧M toggle | 🟡 in progress, branch feat/markdown-preview — [spec](docs/specs/2026-09-21-pastefix-v2-markdown-preview.md), [plan](docs/plans/2026-09-21-pastefix-v2-markdown-preview.md) |
 
 Historical reference material for the 2007 and 2019 incarnations is vendored under [`docs/inputs/legacy/`](docs/inputs/legacy/).
 
