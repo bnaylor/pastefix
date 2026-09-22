@@ -7,6 +7,7 @@ struct PanelView: View {
     @ObservedObject var settings: SettingsStore
     @State private var isPaletteOpen = false
     @State private var isHistoryOpen = false
+    @State private var isUploadOpen = false
     @State private var showPinPopover = false
     @State private var pinTitle = ""
     @State private var pinError: String?
@@ -44,7 +45,8 @@ struct PanelView: View {
     private var selectionBinding: Binding<TextSelection?> {
         Binding(
             get: {
-                guard !isPaletteOpen, !isHistoryOpen, let selection = editorSelection else { return nil }
+                guard !isPaletteOpen, !isHistoryOpen, !isUploadOpen,
+                      let selection = editorSelection else { return nil }
                 return isExpressible(selection, in: model.document?.working ?? "") ? selection : nil
             },
             set: { editorSelection = $0 }
@@ -127,8 +129,8 @@ struct PanelView: View {
                 Divider()
                 actionBar
             }
-            // The two overlays are mutually exclusive: one backdrop, one focused field, one
-            // owner for Esc. Opening either closes the other.
+            // The three overlays are mutually exclusive: one backdrop, one focused field, one
+            // owner for Esc. Opening any of them closes the others.
             if isPaletteOpen {
                 CommandPaletteView(model: model, onClose: closePalette)
                     .transition(.opacity)
@@ -136,6 +138,10 @@ struct PanelView: View {
                     .disabled(model.isApplying)
             } else if isHistoryOpen {
                 HistoryOverlayView(model: model, onClose: closeHistory)
+                    .transition(.opacity)
+                    .disabled(model.isApplying)
+            } else if isUploadOpen {
+                UploadOverlayView(model: model, onClose: closeUpload)
                     .transition(.opacity)
                     .disabled(model.isApplying)
             }
@@ -149,6 +155,7 @@ struct PanelView: View {
         .animation(.easeInOut(duration: 0.15), value: settings.showSidebar)
         .animation(.easeInOut(duration: 0.1), value: isPaletteOpen)
         .animation(.easeInOut(duration: 0.1), value: isHistoryOpen)
+        .animation(.easeInOut(duration: 0.1), value: isUploadOpen)
         // Every session boundary closes both overlays. Keyed on the generation counter, not on
         // `document == nil`: ⌘S and auto-hide-on-blur end the session from inside the overlay
         // and hide the panel synchronously, and SwiftUI does not promise to update a hosting
@@ -159,6 +166,9 @@ struct PanelView: View {
         .onChange(of: model.sessionGeneration) { _, _ in
             isPaletteOpen = false
             isHistoryOpen = false
+            // The upload overlay holds a snapshot of the buffer it opened on and an in-flight
+            // scan of it; both belong to the session that just ended.
+            isUploadOpen = false
             // A `String.Index` into the buffer that just went away has no meaning in the new one.
             editorSelection = nil
             // A new summon always starts in the editor: the preview is a view of *this*
@@ -174,7 +184,9 @@ struct PanelView: View {
         // overlay open and is picking the next thing — or is reading the preview, where there
         // is no editor to focus.
         .onChange(of: model.isApplying) { _, applying in
-            if !applying && !isPaletteOpen && !isHistoryOpen && !isPreviewing { editorFocused = true }
+            if !applying && !isPaletteOpen && !isHistoryOpen && !isUploadOpen && !isPreviewing {
+                editorFocused = true
+            }
         }
         // Transforms, undo/redo and typing all land here; the debounce keeps a fast-changing
         // buffer from re-rendering HTML on every keystroke.
@@ -191,7 +203,7 @@ struct PanelView: View {
         // responder away from the overlay's search field.
         .onChange(of: model.requestedSelection) { _, requested in
             guard let requested else { return }
-            if !isPaletteOpen && !isHistoryOpen && !isPreviewing {
+            if !isPaletteOpen && !isHistoryOpen && !isUploadOpen && !isPreviewing {
                 editorSelection = requested
                 editorFocused = true
             }
@@ -202,8 +214,19 @@ struct PanelView: View {
         .onChange(of: model.historyOverlayRequested) { _, requested in
             guard requested else { return }
             isPaletteOpen = false
+            isUploadOpen = false
             isHistoryOpen = true
             model.historyOverlayRequested = false
+        }
+        // ⌘⇧U summons straight into the upload overlay; same one-shot handling as the history
+        // flag above, and must stay below the `sessionGeneration` reset for the same reason —
+        // a ⌘⇧U that starts a new session resets first, then opens.
+        .onChange(of: model.uploadOverlayRequested) { _, requested in
+            guard requested else { return }
+            isPaletteOpen = false
+            isHistoryOpen = false
+            isUploadOpen = true
+            model.uploadOverlayRequested = false
         }
     }
 
@@ -220,8 +243,8 @@ struct PanelView: View {
             }
             .help("Pin this text as a snippet (⌘⇧P)")
             .accessibilityLabel("Pin this text as a snippet")
-            .keyboardShortcut(isPaletteOpen || isHistoryOpen ? nil : KeyboardShortcut("p", modifiers: [.command, .shift]))
-            .disabled(model.document == nil || isPaletteOpen || isHistoryOpen)
+            .keyboardShortcut(isPaletteOpen || isHistoryOpen || isUploadOpen ? nil : KeyboardShortcut("p", modifiers: [.command, .shift]))
+            .disabled(model.document == nil || isPaletteOpen || isHistoryOpen || isUploadOpen)
             .popover(isPresented: $showPinPopover, arrowEdge: .bottom) {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Pin as snippet").font(.headline)
@@ -253,7 +276,7 @@ struct PanelView: View {
             // Tinted, not gated: anything can be previewed, detection only makes it a suggestion.
             .tint(model.document?.detectedKinds.contains(.markdown) == true ? Color.accentColor : nil)
             // Same one-binding rule as ⌘K/⌘Y: nothing owns ⌘⇧M while an overlay is up.
-            .keyboardShortcut(isPaletteOpen || isHistoryOpen ? nil : KeyboardShortcut("m", modifiers: [.command, .shift]))
+            .keyboardShortcut(isPaletteOpen || isHistoryOpen || isUploadOpen ? nil : KeyboardShortcut("m", modifiers: [.command, .shift]))
             .disabled(model.document == nil || model.isApplying)
             Spacer()
             Button { toggleHistory() } label: {
@@ -263,7 +286,7 @@ struct PanelView: View {
             .accessibilityLabel("Clipboard History")
             // Same one-binding rule as ⌘K below: while the history overlay is open its own
             // hidden button owns ⌘Y (to close), and while the palette is open nothing does.
-            .keyboardShortcut(isPaletteOpen || isHistoryOpen ? nil : KeyboardShortcut("y", modifiers: .command))
+            .keyboardShortcut(isPaletteOpen || isHistoryOpen || isUploadOpen ? nil : KeyboardShortcut("y", modifiers: .command))
             .disabled(model.isApplying)
             Button { settings.showSidebar.toggle() } label: {
                 Image(systemName: "sidebar.right")
@@ -310,7 +333,7 @@ struct PanelView: View {
             // Only one ⌘K can exist at a time: while the palette is open this button is still
             // in the hierarchy (just under the backdrop), and the palette's own hidden button
             // takes over the shortcut to close it. Two live bindings would be ambiguous.
-            .keyboardShortcut(isPaletteOpen || isHistoryOpen ? nil : KeyboardShortcut("k", modifiers: .command))
+            .keyboardShortcut(isPaletteOpen || isHistoryOpen || isUploadOpen ? nil : KeyboardShortcut("k", modifiers: .command))
             .disabled(model.isApplying)
             .accessibilityLabel("Find a transform")
             if let color = model.detectedColor {
@@ -325,7 +348,8 @@ struct PanelView: View {
             // Markdown preview for the same reason — there is no editor on screen to select in,
             // so the click would silently do nothing. Its count comes from the document's pinned
             // matches, but the click re-scans the live buffer — see `AppModel.selectNextSecret`.
-            if !model.secretMatches.isEmpty && !isPaletteOpen && !isHistoryOpen && !isPreviewing {
+            if !model.secretMatches.isEmpty && !isPaletteOpen && !isHistoryOpen && !isUploadOpen
+                && !isPreviewing {
                 let n = model.secretMatches.count
                 Button { model.selectNextSecret() } label: {
                     Label("\(n) secret\(n == 1 ? "" : "s")", systemImage: "exclamationmark.shield")
@@ -380,11 +404,20 @@ struct PanelView: View {
     }
 
     private func togglePalette() {
-        if isPaletteOpen { closePalette() } else { isHistoryOpen = false; isPaletteOpen = true }
+        if isPaletteOpen { closePalette() } else { closeOthers(); isPaletteOpen = true }
     }
 
     private func toggleHistory() {
-        if isHistoryOpen { closeHistory() } else { isPaletteOpen = false; isHistoryOpen = true }
+        if isHistoryOpen { closeHistory() } else { closeOthers(); isHistoryOpen = true }
+    }
+
+    /// Clears all three flags, so an opener only has to set its own. With three overlays,
+    /// spelling out "the other two" at each call site is how one of them gets forgotten and two
+    /// backdrops end up stacked.
+    private func closeOthers() {
+        isPaletteOpen = false
+        isHistoryOpen = false
+        isUploadOpen = false
     }
 
     private func togglePreview() {
@@ -430,6 +463,8 @@ struct PanelView: View {
             closePalette()
         } else if isHistoryOpen {
             closeHistory()
+        } else if isUploadOpen {
+            closeUpload()
         } else if isPreviewing {
             closePreview()
         } else {
@@ -444,6 +479,11 @@ struct PanelView: View {
 
     private func closeHistory() {
         isHistoryOpen = false
+        editorFocused = true
+    }
+
+    private func closeUpload() {
+        isUploadOpen = false
         editorFocused = true
     }
 

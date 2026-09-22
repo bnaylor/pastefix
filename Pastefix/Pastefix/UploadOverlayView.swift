@@ -1,0 +1,625 @@
+import SwiftUI
+import AppKit
+import PastefixCore
+import PastefixAppCore
+
+/// ⌘⇧U overlay: upload the working buffer to Zipline and put the short URL on the clipboard.
+///
+/// Deliberately shaped like `CommandPaletteView` and `HistoryOverlayView` — same backdrop, card,
+/// metrics and footer — so the three overlays read as one surface. Its key-handling rule is
+/// theirs too: every handler reads `@State` at call time, never a value captured while `body`
+/// ran (the ⌘K Return bug, `7f67d41`).
+///
+/// The one thing this overlay owns that the other two do not is a decision about bytes leaving
+/// the machine, which is why the order of its states matters: *configured?* is answered before
+/// anything else is drawn, and *what is in the text?* is answered before Upload is enabled.
+struct UploadOverlayView: View {
+    @ObservedObject var model: AppModel
+    let onClose: () -> Void
+    /// Injected rather than constructed inline so this view has no hard dependency on URLSession
+    /// or the real login keychain — the same shape `URLSessionTitleFetcher` is used with.
+    let uploader: any ZiplineUploading
+    let tokenStore: any ZiplineTokenStore
+
+    /// The buffer as it was when the overlay opened, snapshotted once and never re-read.
+    ///
+    /// Not an optimisation. `SecretMatch.range` is a `Range<String.Index>` into the exact string
+    /// it was scanned against, and handing those indices to `SecretRedactor.redact` together with
+    /// any other string is undefined — so the scan and the upload have to be looking at the same
+    /// bytes. It is also the honest contract to offer: what was scanned is what gets sent.
+    @State private var source: String
+    @State private var phase: Phase
+    @State private var scanState: ScanState = .scanning
+    /// Only true once the scan has been running long enough to be worth mentioning; see
+    /// `startScan`.
+    @State private var showScanProgress = false
+    @State private var disposition: SecretDisposition = .redact
+    /// "never", "1h", "1d", "7d" — the raw setting spelling, so `SettingsStore.expiry(fromRaw:)`
+    /// stays the single place that maps a string to a `ZiplineExpiry`.
+    @State private var expiryTag: String
+    @State private var burnOnRead: Bool
+    @State private var fileExtension: String
+    @State private var scanTask: Task<Void, Never>?
+    @State private var scanProgressTask: Task<Void, Never>?
+    @State private var uploadTask: Task<Void, Never>?
+
+    private static let cardTopPadding: CGFloat = 40
+
+    /// The overlay's whole state, in the order it can be entered.
+    ///
+    /// `configure` is first for a reason: asking someone to pick an expiry and a filename and
+    /// *then* telling them there is no server to send it to is the failure mode this ordering
+    /// exists to prevent.
+    private enum Phase: Equatable {
+        /// Carries the sentence to show; the two ways to be unconfigured need different words.
+        case configure(String)
+        case composing
+        case uploading
+        case done(URL)
+        /// The controls stay live underneath this, so a refused option can be changed and retried
+        /// without closing and re-scanning.
+        case failed(ZiplineUploadError)
+    }
+
+    private enum ScanState: Equatable {
+        case scanning
+        case clean
+        case found([SecretMatch])
+    }
+
+    init(model: AppModel,
+         onClose: @escaping () -> Void,
+         uploader: any ZiplineUploading = URLSessionZiplineClient(),
+         tokenStore: any ZiplineTokenStore = KeychainTokenStore()) {
+        _model = ObservedObject(wrappedValue: model)
+        self.onClose = onClose
+        self.uploader = uploader
+        self.tokenStore = tokenStore
+
+        let text = model.document?.working ?? ""
+        let settings = model.settings
+        _source = State(initialValue: text)
+        // Seeded here rather than in `onAppear` so the very first frame is already the right
+        // state — in particular, a user with no server configured never sees a flash of controls
+        // they cannot use. `init` runs again whenever `PanelView` re-renders, but `@State`
+        // initial values are used only the first time, so the keychain read below happens once
+        // per open in practice and the user's later edits to these controls are never clobbered.
+        _phase = State(initialValue: Self.initialPhase(settings: settings, tokenStore: tokenStore))
+        // The detector is the better guess when it actually detected something; "txt" is its
+        // "I have nothing", and that is exactly when the user's configured default should win.
+        let detected = ZiplineUpload.defaultExtension(for: text)
+        _fileExtension = State(initialValue: detected == "txt" ? settings.ziplineDefaultExtension : detected)
+        // Round-tripped through `expiry(fromRaw:)` so a corrupted setting lands on the same
+        // fallback the request builder would have used, instead of showing a picker with nothing
+        // selected.
+        _expiryTag = State(initialValue: Self.tag(for: SettingsStore.expiry(fromRaw: settings.ziplineDefaultExpiry)))
+        _burnOnRead = State(initialValue: settings.ziplineDefaultBurnOnRead)
+    }
+
+    var body: some View {
+        ZStack(alignment: .top) {
+            Color.black.opacity(0.25)
+                .ignoresSafeArea()
+                .onTapGesture { onClose() }
+                .accessibilityLabel("Close upload")
+                .accessibilityAddTraits(.isButton)
+            card
+                .frame(maxWidth: PanelMetrics.paletteCardWidth)
+                // maxWidth + horizontal padding rather than a fixed width: on a panel narrower
+                // than the card, the card shrinks instead of overflowing off both edges.
+                .padding(.horizontal, 24)
+                .padding(.top, Self.cardTopPadding)
+        }
+        .onAppear {
+            // Nothing is scanned in the configure state: there is nowhere to send the result, and
+            // a scan started there would be work done for a question nobody asked.
+            guard phase == .composing else { return }
+            startScan()
+        }
+        .onDisappear {
+            // Cancelling the wrapper stops the *result* from landing. It does not stop the scan:
+            // `SecretDetector` is a straight-line run over its rules with no suspension point, so
+            // the detached task runs to completion on its own thread whatever happens here. This
+            // is a dropped result, not a bound on the work — the same distinction #46 drew about
+            // the uninterruptible image decode, where serialising the decodes bounded how many
+            // ran at once and bounded nothing about how long one took.
+            scanTask?.cancel()
+            scanProgressTask?.cancel()
+            // The upload is cancelled, which cancels the URLSession request if it is still in
+            // flight — but it recalls nothing the server has already accepted, so a dismissal at
+            // exactly the wrong moment can leave a paste on the server whose URL nobody ever saw.
+            // Cancelling is still the better of the two: the alternative is a clipboard write
+            // landing seconds after the panel is gone, silently replacing whatever the user
+            // copied in the meantime.
+            uploadTask?.cancel()
+        }
+    }
+
+    private var card: some View {
+        VStack(spacing: 0) {
+            header
+            Divider()
+            content
+                .padding(12)
+            Divider()
+            footer
+        }
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+        .shadow(radius: 20)
+    }
+
+    private var header: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "arrow.up.doc").foregroundStyle(.secondary)
+            Text("Upload to Zipline").font(.title3)
+            Spacer(minLength: 8)
+            if let host = destinationHost {
+                Text(host)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+        }
+        .padding(12)
+    }
+
+    @ViewBuilder private var content: some View {
+        switch phase {
+        case .configure(let message):
+            configureState(message)
+        case .done(let url):
+            doneState(url)
+        // Composing, uploading and failed are one layout: a failure has to leave the controls
+        // where they were, because the fix for the commonest failure (an expiry past the
+        // server's `maxExpiration`) is to change one of them and press Upload again.
+        case .composing, .uploading, .failed:
+            composingState
+        }
+    }
+
+    // MARK: Configure
+
+    private func configureState(_ message: String) -> some View {
+        VStack(spacing: 10) {
+            Image(systemName: "gearshape")
+                .font(.largeTitle)
+                .foregroundStyle(.secondary)
+                .accessibilityHidden(true)
+            Text(message)
+                .multilineTextAlignment(.center)
+                .foregroundStyle(.secondary)
+            // Closes the overlay on the way out, like the history overlay's "Enable in Settings…":
+            // it takes the panel's dim off from behind the Settings window. It also sidesteps a
+            // staleness problem — the token lives in the keychain, which publishes nothing, so
+            // this view cannot observe it becoming set. Re-pressing ⌘⇧U after configuring opens a
+            // fresh overlay that reads both values again, which is the only honest refresh
+            // available here.
+            SettingsLink { Text("Open Settings…") }
+                .simultaneousGesture(TapGesture().onEnded { onClose() })
+        }
+        .frame(maxWidth: .infinity, minHeight: 140)
+    }
+
+    // MARK: Composing
+
+    private var composingState: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            expirationRow
+            burnRow
+            extensionRow
+            Divider()
+            secretRow
+            if let message = bannerMessage {
+                errorBanner(message)
+            }
+            actionRow
+        }
+        // Every control here is inert while the request is on the wire — changing the expiry of
+        // an upload that has already been sent would only mislead about what was sent — but they
+        // stay on screen, greyed, rather than being swapped out: the point of showing them during
+        // the upload is that the user can see what they sent.
+        .disabled(phase == .uploading)
+    }
+
+    private var expirationRow: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text("Expires")
+                Spacer()
+                Picker("Expires", selection: $expiryTag) {
+                    Text("Never").tag("never")
+                    Text("1 hour").tag("1h")
+                    Text("1 day").tag("1d")
+                    Text("7 days").tag("7d")
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .frame(maxWidth: 280)
+            }
+            // A server that refuses the expiry says so about `x-zipline-deletes-at` by name, and
+            // the control that fixes it is right here — so the message goes here rather than in
+            // the banner, where it would be a paragraph away from the thing to change.
+            if let message = inlineMessage(forHeaderContaining: "deletes-at") {
+                inlineError(message)
+            }
+        }
+    }
+
+    private var burnRow: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            // Separate from the expiry, and not one of its options: burn-on-read is
+            // `x-zipline-max-views: 1`, a different header with different semantics. A paste can
+            // be both "one view" and "deleted in an hour", and collapsing them into one picker
+            // would make those mutually exclusive for no reason but the UI's convenience.
+            Toggle("Burn after reading", isOn: $burnOnRead)
+                .help("The paste is deleted after it has been viewed once.")
+            if let message = inlineMessage(forHeaderContaining: "max-views") {
+                inlineError(message)
+            }
+        }
+    }
+
+    private var extensionRow: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text("File type")
+                Spacer()
+                // Zipline v4 picks syntax highlighting from the extension, so this is the
+                // "language" control even though it is spelled as a filename suffix.
+                TextField("txt", text: $fileExtension)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 100)
+                    .accessibilityLabel("File extension")
+            }
+            if let message = inlineMessage(forHeaderContaining: "file-extension") {
+                inlineError(message)
+            }
+        }
+    }
+
+    @ViewBuilder private var secretRow: some View {
+        switch scanState {
+        case .scanning:
+            if showScanProgress {
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.small)
+                    Text("Checking for secrets…").foregroundStyle(.secondary)
+                }
+                .font(.callout)
+            }
+            // Under the delay: nothing at all. A row that appears and is replaced within a frame
+            // or two is a flicker, and an empty row is not a claim about the text either way.
+        case .clean:
+            Label("No secrets found", systemImage: "checkmark.shield")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                // The whole buffer was examined, not the first 256 KB of it — see `startScan`.
+                .help("The whole buffer was scanned, whatever its size.")
+        case .found(let matches):
+            findings(matches)
+        }
+    }
+
+    private func findings(_ matches: [SecretMatch]) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Label("\(matches.count) possible secret\(matches.count == 1 ? "" : "s") in this text",
+                  systemImage: "exclamationmark.shield")
+                .font(.callout)
+                .foregroundStyle(.orange)
+            ForEach(Self.summaries(of: matches), id: \.self) { line in
+                Text(line)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            // Redact is preselected and Return uploads, so the safe outcome is the one that
+            // happens if the user reads none of this. Sending as-is has to be chosen.
+            Picker("Before uploading", selection: $disposition) {
+                Text("Redact them").tag(SecretDisposition.redact)
+                Text("Send as is").tag(SecretDisposition.sendAsIs)
+            }
+            .pickerStyle(.radioGroup)
+            Text(disposition == .redact
+                 ? "Only the uploaded copy is changed; the text in the panel is untouched."
+                 : "The secrets above will be uploaded exactly as they appear.")
+                .font(.caption)
+                .foregroundStyle(disposition == .redact ? Color.secondary : Color.orange)
+        }
+    }
+
+    private var actionRow: some View {
+        HStack(spacing: 10) {
+            if phase == .uploading {
+                ProgressView().controlSize(.small)
+                Text("Uploading…").font(.callout).foregroundStyle(.secondary)
+            } else if source.isEmpty {
+                Text("Nothing to upload.").font(.callout).foregroundStyle(.secondary)
+            }
+            Spacer()
+            Button("Cancel") { onClose() }
+            // Reads `@State` at call time through `upload()`; nothing about the press is decided
+            // while `body` runs (the ⌘K Return lesson, `7f67d41`).
+            Button(isRetry ? "Retry" : "Upload", action: upload)
+                .keyboardShortcut(.defaultAction)
+                .disabled(!isReadyToUpload)
+        }
+    }
+
+    // MARK: Done
+
+    private func doneState(_ url: URL) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label("Uploaded", systemImage: "checkmark.circle.fill")
+                .foregroundStyle(.green)
+            Text(url.absoluteString)
+                .font(.system(.body, design: .monospaced))
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .textSelection(.enabled)
+            Text(burnOnRead
+                 ? "Copied to the clipboard. This paste is deleted after one view — opening it here is that view."
+                 : "Copied to the clipboard.")
+                .font(.caption)
+                .foregroundStyle(burnOnRead ? Color.orange : Color.secondary)
+            HStack(spacing: 10) {
+                Button("Copy Again") { ClipboardBridge.writePlain(url.absoluteString) }
+                Button("Open") { NSWorkspace.shared.open(url) }
+                Spacer()
+                Button("Done") { onClose() }
+                    .keyboardShortcut(.defaultAction)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    // MARK: Chrome
+
+    private func errorBanner(_ text: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Image(systemName: "exclamationmark.triangle.fill")
+            Text(text).lineLimit(3)
+            Spacer(minLength: 0)
+        }
+        .font(.callout)
+        .foregroundStyle(.orange)
+    }
+
+    private func inlineError(_ text: String) -> some View {
+        Text(text)
+            .font(.caption)
+            .foregroundStyle(.orange)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var footer: some View {
+        HStack(spacing: 12) {
+            Text(keyHint)
+                .lineLimit(1)
+            Spacer(minLength: 8)
+            Text(HistoryFormatting.byteLabel(source.utf8.count))
+        }
+        .font(.caption).foregroundStyle(.secondary)
+        .padding(.horizontal, 12).padding(.vertical, 8)
+    }
+
+    // MARK: Derived state
+
+    /// What Return does right now. Return is always bound to the default button, but which
+    /// button that is changes with the phase, and a footer that kept promising "↵ Upload" on the
+    /// done screen would be describing a button that is no longer there.
+    private var keyHint: String {
+        switch phase {
+        case .configure: return "esc Close"
+        case .done: return "↵ Done   esc Close"
+        case .uploading: return "esc Close"
+        case .failed: return "↵ Retry   esc Close"
+        case .composing: return "↵ Upload   esc Close"
+        }
+    }
+
+    private var destinationHost: String? {
+        Self.serverURL(from: model.settings.ziplineServerURL)?.host
+    }
+
+    private var isRetry: Bool {
+        if case .failed = phase { return true }
+        return false
+    }
+
+    /// Upload is disabled until the scan resolves — offering it during the scan would let the
+    /// user send a buffer whose findings arrive a moment later, which is the same false all-clear
+    /// as not scanning at all, just harder to notice.
+    private var isReadyToUpload: Bool {
+        guard scanState != .scanning, !source.isEmpty else { return false }
+        switch phase {
+        case .composing, .failed: return true
+        case .configure, .uploading, .done: return false
+        }
+    }
+
+    /// The failure message, unless it is one already shown against a specific control: two copies
+    /// of one sentence read as two separate problems.
+    private var bannerMessage: String? {
+        guard case .failed(let error) = phase else { return nil }
+        if case .badOption(let header, _) = error,
+           Self.inlineHeaders.contains(where: { header.localizedCaseInsensitiveContains($0) }) {
+            return nil
+        }
+        return Self.message(for: error)
+    }
+
+    /// The v4 headers that map onto a control in this overlay. A refusal about one of these is
+    /// fixable here; anything else belongs in the banner.
+    private static let inlineHeaders = ["deletes-at", "max-views", "file-extension"]
+
+    private func inlineMessage(forHeaderContaining needle: String) -> String? {
+        guard case .failed(.badOption(let header, let message)) = phase,
+              header.localizedCaseInsensitiveContains(needle) else { return nil }
+        return message.isEmpty ? "The server refused this value." : message
+    }
+
+    /// Kinds with counts, sorted by name so the list is stable between renders. Counts, not one
+    /// line per match: three AWS keys is a useful thing to know, three identical lines is not.
+    private static func summaries(of matches: [SecretMatch]) -> [String] {
+        Dictionary(grouping: matches, by: \.kind)
+            .map { kind, group in group.count == 1 ? kind.displayName : "\(kind.displayName) × \(group.count)" }
+            .sorted()
+    }
+
+    private static func message(for error: ZiplineUploadError) -> String {
+        switch error {
+        case .unauthorized:
+            // Named precisely. "Upload failed" would send the user to look at their server, when
+            // the thing to change is the token in Settings.
+            return "Token rejected. Check the Zipline API token in Settings."
+        case .badOption(let header, let message):
+            return "The server refused \(header): \(message)"
+        case .server(let status, let message):
+            return message.map { "Server error \(status): \($0)" } ?? "Server error \(status)."
+        case .malformedResponse:
+            // Explicit about the clipboard: a 2xx with an unreadable body is the one failure that
+            // might plausibly have stored something, and the user needs to know they have no link.
+            return "The server replied with something that was not an upload result. Nothing was copied."
+        case .transport(let detail):
+            return "Couldn't reach the server: \(detail)"
+        }
+    }
+
+    private static func tag(for expiry: ZiplineExpiry) -> String {
+        switch expiry {
+        case .never: return "never"
+        case .relative(let value): return value
+        // Unreachable from a setting — `expiry(fromRaw:)` never produces one — and this overlay
+        // offers no date picker, so there is no tag to show it under.
+        case .absolute: return "1d"
+        }
+    }
+
+    /// The configured server, or nil if there is nothing usable there.
+    ///
+    /// Deliberately only a scheme and host check. It must NOT reject private, LAN or Tailscale
+    /// hosts: a self-hosted Zipline on `http://box.tailnet.ts.net` is the expected deployment,
+    /// not an attack. (`isFetchable`, which does reject those, guards link *unfurling* — where
+    /// the URL comes from someone else's text. Here the user typed it into their own settings.)
+    private static func serverURL(from raw: String) -> URL? {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty,
+              let url = URL(string: trimmed),
+              let scheme = url.scheme?.lowercased(),
+              scheme == "http" || scheme == "https",
+              let host = url.host, !host.isEmpty else { return nil }
+        return url
+    }
+
+    private static let noServerMessage =
+        "Pastefix doesn't know where to upload yet. Set your Zipline server URL in Settings."
+    private static let noTokenMessage =
+        "No Zipline API token is stored. Add one in Settings to upload."
+
+    private static func initialPhase(settings: SettingsStore, tokenStore: any ZiplineTokenStore) -> Phase {
+        guard serverURL(from: settings.ziplineServerURL) != nil else {
+            return .configure(noServerMessage)
+        }
+        // A keychain read can fail for reasons that are not "no token" — a locked keychain, a
+        // denied ACL. There is no token to upload with either way and the door out is the same
+        // one, so the two collapse into a single message rather than an error state the user
+        // could not act on differently. Nothing about the token is logged, here or anywhere.
+        guard let token = (try? tokenStore.token()) ?? nil, !token.isEmpty else {
+            return .configure(noTokenMessage)
+        }
+        return .composing
+    }
+
+    // MARK: Actions (every one reads live state)
+
+    private func startScan() {
+        let text = source
+        scanProgressTask = Task { @MainActor in
+            // A delay rather than a size threshold: the threshold would have to be guessed, and
+            // the thing actually worth reacting to is "this is taking long enough that the user
+            // is waiting". A small paste resolves first and never draws the row at all.
+            try? await Task.sleep(for: .milliseconds(150))
+            guard !Task.isCancelled else { return }
+            showScanProgress = true
+        }
+        scanTask = Task { @MainActor in
+            // Detached because the scan is synchronous and, on this path, uncapped: 0.854 s for
+            // 4 MB in the Task 1 measurement, which is a visible main-actor freeze if run inline.
+            // Only a `String` crosses.
+            //
+            // `scanIgnoringSizeCap`, never `scan`. `scan` refuses anything over 256 KB and
+            // returns an empty array; this overlay would draw that as "No secrets found" on a
+            // buffer nobody looked at, immediately before sending it off the machine. That false
+            // all-clear is the worst outcome this feature has, and the uncapped entry point
+            // exists for this one call site.
+            //
+            // There is no cancellation point inside it, so the indeterminate spinner above is the
+            // whole progress story: nothing here can report a fraction or stop early.
+            let matches = await Task.detached(priority: .userInitiated) {
+                SecretDetector.scanIgnoringSizeCap(text)
+            }.value
+            guard !Task.isCancelled else { return }
+            scanProgressTask?.cancel()
+            showScanProgress = false
+            scanState = matches.isEmpty ? .clean : .found(matches)
+        }
+    }
+
+    private func upload() {
+        // Return can reach this twice in one turn — the default button owns it, and a focused
+        // text field can forward a submit to the default button as well — so the first thing this
+        // does is make the second call a no-op. `isReadyToUpload` is false for `.uploading`.
+        guard isReadyToUpload else { return }
+        // Re-read, rather than trusting what `init` saw: Settings is reachable while the panel is
+        // up, and a token cleared in the meantime should return the overlay to the configure
+        // state instead of producing a 401 the user has to interpret.
+        guard let server = Self.serverURL(from: model.settings.ziplineServerURL) else {
+            phase = .configure(Self.noServerMessage)
+            return
+        }
+        guard let token = (try? tokenStore.token()) ?? nil, !token.isEmpty else {
+            phase = .configure(Self.noTokenMessage)
+            return
+        }
+        // `.found` is the only state that carries matches; `.clean` uploads the source untouched,
+        // and `.scanning` cannot get here at all (`isReadyToUpload`).
+        let matches: [SecretMatch]
+        if case .found(let found) = scanState { matches = found } else { matches = [] }
+        // The single place that decides which bytes leave: it returns a new string and cannot
+        // reach the user's document or clipboard.
+        let payload = UploadPayload.text(source, matches: matches, disposition: disposition)
+        let request = ZiplineUpload(text: payload,
+                                    fileExtension: normalizedExtension,
+                                    expiry: SettingsStore.expiry(fromRaw: expiryTag),
+                                    burnOnRead: burnOnRead)
+        phase = .uploading
+        uploadTask = Task { @MainActor in
+            do {
+                let url = try await uploader.upload(request, to: server, token: token)
+                guard !Task.isCancelled else { return }
+                // The link on the clipboard is the point of the feature; the URL shown below is
+                // the confirmation of it, not the only copy.
+                ClipboardBridge.writePlain(url.absoluteString)
+                phase = .done(url)
+            } catch let error as ZiplineUploadError {
+                guard !Task.isCancelled else { return }
+                phase = .failed(error)
+            } catch {
+                // `URLSessionZiplineClient` maps everything it can reach into a
+                // `ZiplineUploadError`, so anything arriving here is a bug in that mapping rather
+                // than a condition worth modelling — reported verbatim instead of swallowed.
+                guard !Task.isCancelled else { return }
+                phase = .failed(.transport(error.localizedDescription))
+            }
+        }
+    }
+
+    /// The extension as the request should carry it: no leading dot, no surrounding space, and
+    /// never empty — `paste.` is not a filename the server can highlight, and "txt" is what an
+    /// unrecognised buffer would have been given anyway.
+    private var normalizedExtension: String {
+        var ext = fileExtension.trimmingCharacters(in: .whitespacesAndNewlines)
+        while ext.hasPrefix(".") { ext.removeFirst() }
+        return ext.isEmpty ? "txt" : ext
+    }
+}

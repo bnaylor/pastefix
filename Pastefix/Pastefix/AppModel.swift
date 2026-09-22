@@ -16,6 +16,11 @@ final class AppModel: ObservableObject {
     /// Set by the ⌘⇧V hotkey; PanelView opens the history overlay and resets it.
     @Published var historyOverlayRequested = false
 
+    /// Set by the ⌘⇧U hotkey. One-shot, cleared as it is consumed, exactly like
+    /// `historyOverlayRequested` — left set, it would reopen the overlay by itself on the next
+    /// summon.
+    @Published var uploadOverlayRequested = false
+
     /// A one-shot request to move the editor's selection, written by the secrets badge and
     /// cleared by `PanelView` as soon as it consumes it.
     ///

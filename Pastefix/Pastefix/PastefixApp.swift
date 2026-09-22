@@ -123,6 +123,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         KeyboardShortcuts.onKeyUp(for: .summonHistory) { [weak self] in
             self?.summonHistory()
         }
+
+        // Zipline upload: third hotkey opens the panel straight into the upload overlay.
+        KeyboardShortcuts.onKeyUp(for: .uploadToZipline) { [weak self] in
+            self?.summonUpload()
+        }
         // `history` is already constructed with this cap; no need to reassert it here.
         settings.$historyMaxItems
             .dropFirst()
@@ -262,6 +267,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func summonHistory() {
         if model.document == nil { summon() } else { lastSummonAt = Date(); panel?.show() }
         model.historyOverlayRequested = true
+    }
+
+    /// ⌘⇧U: show the panel (starting a session from the current clipboard if none) with the
+    /// upload overlay open. Same shape as `summonHistory`: an existing session is kept, because
+    /// the thing the user means to upload is the buffer they have been editing, not whatever is
+    /// on the clipboard now.
+    func summonUpload() {
+        if model.document == nil { summon() } else { lastSummonAt = Date(); panel?.show() }
+        model.uploadOverlayRequested = true
     }
 
     func applicationWillTerminate(_ notification: Notification) {
