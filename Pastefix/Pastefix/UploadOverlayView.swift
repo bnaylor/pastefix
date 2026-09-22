@@ -521,7 +521,7 @@ struct UploadOverlayView: View {
     }
 
     private var destinationHost: String? {
-        Self.serverURL(from: model.settings.ziplineServerURL)?.host
+        ZiplineServerURL.parse(model.settings.ziplineServerURL)?.host
     }
 
     private var isRetry: Bool {
@@ -616,29 +616,13 @@ struct UploadOverlayView: View {
         }
     }
 
-    /// The configured server, or nil if there is nothing usable there.
-    ///
-    /// Deliberately only a scheme and host check. It must NOT reject private, LAN or Tailscale
-    /// hosts: a self-hosted Zipline on `http://box.tailnet.ts.net` is the expected deployment,
-    /// not an attack. (`isFetchable`, which does reject those, guards link *unfurling* — where
-    /// the URL comes from someone else's text. Here the user typed it into their own settings.)
-    private static func serverURL(from raw: String) -> URL? {
-        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty,
-              let url = URL(string: trimmed),
-              let scheme = url.scheme?.lowercased(),
-              scheme == "http" || scheme == "https",
-              let host = url.host, !host.isEmpty else { return nil }
-        return url
-    }
-
     private static let noServerMessage =
         "Pastefix doesn't know where to upload yet. Set your Zipline server URL in Settings."
     private static let noTokenMessage =
         "No Zipline API token is stored. Add one in Settings to upload."
 
     private static func initialPhase(settings: SettingsStore, tokenStore: any ZiplineTokenStore) -> Phase {
-        guard serverURL(from: settings.ziplineServerURL) != nil else {
+        guard ZiplineServerURL.parse(settings.ziplineServerURL) != nil else {
             return .configure(noServerMessage)
         }
         // A keychain read can fail for reasons that are not "no token" — a locked keychain, a
@@ -719,7 +703,7 @@ struct UploadOverlayView: View {
         // Re-read, rather than trusting what `init` saw: Settings is reachable while the panel is
         // up, and a token cleared in the meantime should return the overlay to the configure
         // state instead of producing a 401 the user has to interpret.
-        guard let server = Self.serverURL(from: model.settings.ziplineServerURL) else {
+        guard let server = ZiplineServerURL.parse(model.settings.ziplineServerURL) else {
             phase = .configure(Self.noServerMessage)
             return
         }

@@ -24,8 +24,12 @@ struct UploadSettingsView: View {
     /// Keychain (`commitToken`) — successfully or not, see that method — so there is never a
     /// moment after a commit attempt where a rendered field still holds the plaintext token.
     @State private var tokenDraft = ""
-    /// Whether *a* token is stored — never the token itself. Refreshed after every write attempt.
-    @State private var tokenIsStored: Bool
+    /// Whether *a* token is stored — never the token itself. Starts `false` and is corrected in
+    /// `onAppear` rather than in `init`: `init` runs on every re-render of this struct (every
+    /// keystroke in *this tab's own* extension field included, since `settings` is `@ObservedObject`
+    /// and any of its publishes re-renders the whole tab), so a Keychain read there would fire far
+    /// more often than the tab is actually opened. `onAppear` fires once per appearance instead.
+    @State private var tokenIsStored = false
     /// A Keychain failure's message. `TokenStoreError` carries only an `OSStatus`, never the
     /// token, so this is always safe to render — see `message(for:)`.
     @State private var tokenError: String?
@@ -37,9 +41,6 @@ struct UploadSettingsView: View {
         _settings = ObservedObject(wrappedValue: settings)
         self.tokenStore = tokenStore
         _serverURLDraft = State(initialValue: settings.ziplineServerURL)
-        // The read result is reduced to a Bool before it ever touches @State — the string itself
-        // is discarded on this line, not carried anywhere a view could render it.
-        _tokenIsStored = State(initialValue: ((try? tokenStore.token()) ?? nil) != nil)
     }
 
     var body: some View {
@@ -51,9 +52,20 @@ struct UploadSettingsView: View {
                 if let message = serverURLValidationMessage {
                     Text(message).font(.caption).foregroundStyle(.orange)
                 }
-                SecureField(tokenIsStored ? "Stored" : "None", text: $tokenDraft)
-                    .focused($focus, equals: .token)
-                    .onSubmit { commitToken() }
+                // Submit and blur/teardown commit implicitly (see `onChange(of: focus)` and
+                // `onDisappear` below), but neither covers ⌘Q: SwiftUI does not reliably run an
+                // open window's `onDisappear` on process termination, so a token typed and never
+                // submitted before quitting would be silently lost — not leaked, just gone, and
+                // gone silently is the wrong failure mode for something the user just typed. The
+                // button makes the draft's uncommitted state visible instead of implicit, which is
+                // also just the normal shape for committing a credential.
+                HStack {
+                    SecureField(tokenIsStored ? "Stored" : "None", text: $tokenDraft)
+                        .focused($focus, equals: .token)
+                        .onSubmit { commitToken() }
+                    Button("Set") { commitToken() }
+                        .disabled(tokenDraft.isEmpty)
+                }
                 if let tokenError {
                     Text(tokenError).font(.caption).foregroundStyle(.red)
                 }
@@ -97,6 +109,7 @@ struct UploadSettingsView: View {
         }
         .formStyle(.grouped)
         .padding()
+        .onAppear { refreshTokenStatus() }
         .onChange(of: focus) { old, new in
             guard old != new else { return }
             if old == .serverURL { commitServerURL() }
@@ -114,7 +127,7 @@ struct UploadSettingsView: View {
 
     private var serverURLValidationMessage: String? {
         let trimmed = serverURLDraft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, !Self.isHTTPURL(trimmed) else { return nil }
+        guard !trimmed.isEmpty, ZiplineServerURL.parse(trimmed) == nil else { return nil }
         return "Doesn't look like an http or https URL."
     }
 
@@ -169,19 +182,5 @@ struct UploadSettingsView: View {
             let detail = SecCopyErrorMessageString(status, nil) as String? ?? "status \(status)"
             return "Couldn't reach the Keychain (\(detail))."
         }
-    }
-
-    /// Parses as `http`/`https` with a non-empty host — nothing more. Deliberately **not**
-    /// `MarkdownLink.isFetchable`: that guard exists to stop a transform from probing a network
-    /// address that arrived in someone else's clipboard text, where a private-range host is
-    /// suspicious. Here the address is the user's own server, typed by the user into their own
-    /// settings — a private, LAN or Tailscale host is the ordinary case for a self-hosted
-    /// Zipline, not an attack, and must not be rejected.
-    private static func isHTTPURL(_ raw: String) -> Bool {
-        guard let url = URL(string: raw), let scheme = url.scheme?.lowercased(),
-              scheme == "http" || scheme == "https", let host = url.host, !host.isEmpty else {
-            return false
-        }
-        return true
     }
 }
