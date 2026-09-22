@@ -87,9 +87,11 @@ Sources/PastefixCore/
     JWTDecode.swift                   #   builtin.jwt.decode (96), never verifies the signature
     ColorLiteral.swift                #   ColorLiteral: CSS/SwiftUI colour literal parse + format, sRGB 0…1
     ColorConvert.swift                #   builtin.color.{hex,rgb,hsl,swift} (100–103)
+    RedactSecrets.swift               #   builtin.redactsecrets (order 110, category privacy, kinds [secret])
   Detection/
-    ContentKind.swift                 # url | json | color | jwt | base64 | percentEncoded | htmlEntities | markdown (+ displayName)
+    ContentKind.swift                 # url | json | color | jwt | base64 | percentEncoded | htmlEntities | markdown | secret (+ displayName)
     ContentDetector.swift             # detect(_:) -> Set<ContentKind>, 1 MB guard
+    SecretDetector.swift              # SecretKind, SecretMatch, scan(_:) (256 KB guard) + entropy(_:); SecretRedactor.redact(_:matches:)
     MarkdownDetector.swift            # looksLikeMarkdown(_:) heuristic; CRLF/CR normalised to LF first, capped at 64 KB / 400 lines
     URLFinder.swift                   # internal http(s) link ranges (NSDataDetector)
     HTMLEntities.swift                # shared entity decode table (HTML Decode + Markdown-link title parser)
@@ -181,6 +183,7 @@ These are load-bearing; most were established the hard way (see "Things that hav
 - **Concurrency:** favor `async`/`async let` and small `@unchecked Sendable` lock boxes (see `Debouncer`, `ResumeGuard`) over ad-hoc threads; if you write `@unchecked Sendable`, the synchronization must actually exist.
 - **Network in a transform** happens only through an injected protocol (`TitleFetcher`) with a hard timeout and a byte cap, and the transform races it against its own bound so a hung fetcher cannot hang the app. `TransformCoordinator` has no timeout of its own for native transforms, so any transform that can block must bound itself (as `MarkdownLink` does). Tests inject a stub; no test opens a socket.
 - **Content kinds:** a transform that is *meant for* a kind sets `applicableKinds`; the palette promotes it, never hides others. Detection heuristics live only in `ContentDetector`.
+- Every detector regex is bounded and has a timing test; `SecretDetector` stops at 256 KB and `ContentDetector` at 1 MB — measure before raising either.
 - **Poll the pasteboard on change, not on the tick.** `PasteboardMonitor` reads `NSPasteboard.general` at most once per `changeCount` change — never on a bare timer tick with no change — and reads rich content (RTFD) only when a rich type (`.rtf`/`.rtfd`/`.html`) is actually declared, the same Plan 2a lesson `ClipboardBridge` already relies on. Any new capture source must read the same way: sample types first, read once, and never assume a tick means new content.
 - **Capture filters get a `CaptureContext` built before the read and refreshed after it.** Attribution comes from the tracker's newest activation; exclusion checks every app the tracker saw within the poll window *plus* the live `NSWorkspace.frontmostApplication` id (unioned into `recentBundleIDs` as a fail-closed cross-check, never used for attribution). Don't remove either half.
 - Accessibility is requested only to post ⌘V (`SnippetPaster`); Pastefix never installs an event tap or observes keystrokes — keep it that way. A ⌘V is posted only after shift/control/option/command are released and no Pastefix window is key, and the target is verified frontmost; on any doubt, copy-only.
@@ -312,6 +315,7 @@ When you **significantly expand the project** — a new target, subsystem, scrip
 | 8 — Markdown ↔ rich text | MarkdownHTML, MarkdownFromRich, OutputMode, Rich Text category | ✅ merged — PR #35 (`1d99648`) — [spec](docs/specs/2026-09-21-pastefix-v2-markdown-rich-text.md), [plan](docs/plans/2026-09-21-pastefix-v2-markdown-rich-text.md) |
 | 9 — Pinned snippets | pin/unpin, Pinned section, ⇧↵ paste, per-snippet hotkeys, Snippets tab | ✅ merged — PR #38 (`08f72d6`) — [spec](docs/specs/2026-09-21-pastefix-v2-pinned-snippets.md), [plan](docs/plans/2026-09-21-pastefix-v2-pinned-snippets.md) |
 | 10 — Markdown preview | MarkdownPreview, MarkdownPreviewView, ⌘⇧M toggle | ✅ merged — PR #40 (`c98cca8`) — [spec](docs/specs/2026-09-21-pastefix-v2-markdown-preview.md), [plan](docs/plans/2026-09-21-pastefix-v2-markdown-preview.md) |
+| 11 — Secret detector | SecretDetector, Redact Secrets, secrets badge, history flag | 🟡 in progress, branch feat/secret-detector — [spec](docs/specs/2026-09-21-pastefix-v2-secret-detector.md), [plan](docs/plans/2026-09-21-pastefix-v2-secret-detector.md) |
 
 Historical reference material for the 2007 and 2019 incarnations is vendored under [`docs/inputs/legacy/`](docs/inputs/legacy/).
 

@@ -8,6 +8,8 @@ PastefixCore is a macOS clipboard transform engine that unifies native Swift tra
 
 Pastefix runs as a macOS menu-bar app. A clipboard icon sits in the menu bar; pressing **⌘⇧C** summons a floating panel over whatever app is in the foreground (no Space-switch, no Dock icon).
 
+**Requirements:** macOS 15 or later to run the app. (`PastefixCore` and `PastefixAppCore`, the underlying packages, build and test on macOS 14+ if you're working on the engine without the app.)
+
 **Install:** download the latest notarized DMG from [GitHub Releases](https://github.com/bnaylor/pastefix/releases), drag Pastefix to Applications. The app keeps itself up to date via Sparkle.
 
 **Core flow:**
@@ -51,6 +53,12 @@ Pin anything you want to keep past the normal history cap. Pin from the history 
 **Per-snippet hotkeys.** Settings → Snippets lists every pin with an editable title, its own global-shortcut recorder, and Unpin. Recording a shortcut there and pressing it anywhere writes the snippet to the clipboard and sends ⌘V to the frontmost app; two pins can't be bound to the same combo. The first time a snippet hotkey (or ⇧↵) actually needs to press ⌘V for you, Pastefix asks for Accessibility permission — the only thing that permission is used for. Until it's granted, hotkeys still copy the snippet and beep once so you know to paste it yourself; ⇧↵ from the overlay copies and hides silently, and beeps only if the paste it lined up never lands. Unpinning is reversible: the title and the recorded shortcut stay with the item, so re-pinning it brings both back — they're forgotten only when the item itself leaves your history. Images can't be pinned yet.
 
 Clear History (Settings → Privacy) keeps your pinned snippets; only "Clear Everything" removes them too.
+
+## Secrets (Plan 11)
+
+Pastefix watches the working buffer for credentials: AWS access keys, AWS secret keys, GitHub tokens, OpenAI keys, Slack tokens, Stripe keys, Google API keys, private key blocks, JWTs, passwords embedded in URLs, and generic high-entropy `key = value` credential assignments. When it finds one, an orange "N secret(s)" badge appears in the action bar (the `Detected: …` label never lists secrets — that's what this badge is for); its tooltip lists the kinds found, and clicking it selects the next match in the editor, cycling through all of them. **Redact Secrets**, in the **Privacy** category of the ⌘K palette, replaces every match with a `[REDACTED <kind>]` token — a password embedded in a URL keeps its `user:`/host and redacts only the password — and is idempotent (running it again on already-redacted text is a no-op). Clipboard history flags captured and pinned items the same way: a small shield glyph appears on a history row in the ⌘⇧V/⌘Y overlay when the item contains a secret.
+
+Nothing is blocked: Pastefix never refuses to capture or save something because it looks like a credential, and **⌘S is unchanged**. The scan only covers buffers up to 256 KB; larger buffers aren't scanned at all.
 
 ## Settings (Plan 2b)
 

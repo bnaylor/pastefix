@@ -1,6 +1,6 @@
 # Pastefix v2 Secret Detector & Redaction (Plan 11) — Implementation Plan
 
-> ## ⬜ STATUS: NOT STARTED — written 2026-09-21 from the approved spec (issue #13).
+> ## 🟡 STATUS: IN PROGRESS — branch `feat/secret-detector`; Tasks 0–4 done, Task 5 (docs) in progress, Task 6 (GUI pass + PR) remaining.
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 >
@@ -365,7 +365,7 @@ Registry: `(110, "Redact Secrets", RedactSecrets())` after the 103 entry. Update
 
 ### Task 5: Docs
 
-- [ ] README "Secrets" subsection; AGENTS: layout, Patterns ("every detector regex bounded + a timing test"), Invariant 8 orders gain `110`, status row Plan 11 (🟡); banner. **Commit** `docs: secret detector — README, AGENTS`.
+- [x] README "Secrets" subsection; AGENTS: layout, Patterns ("every detector regex bounded + a timing test"), Invariant 8 orders gain `110`, status row Plan 11 (🟡); banner. **Commit** `docs: secret detector — README (incl. macOS 15 requirement), AGENTS, spec amendments, release notes wording`.
 
 ---
 

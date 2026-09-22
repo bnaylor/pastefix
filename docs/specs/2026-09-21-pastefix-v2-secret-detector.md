@@ -15,6 +15,34 @@ user: secrets only (no PII), badge only (⌘S unchanged), history records and fl
 refusal). Builds on Plan 3 (kinds/detection), Plan 6 (history items), Plan 8's bounded-regex
 lesson.
 
+## Amendments (post-implementation)
+
+The plan below was written before implementation; these are where the shipped code differs.
+
+- **Scan cap is 256 KB, not 1 MB.** `SecretDetector.maxBytes` shipped at `262_144`. A 1 MB
+  scan measured ~170 ms on the main actor, over budget; the cap was tightened to 256 KB
+  (Task 2, carried item C2) rather than moving the scan off the main actor.
+- **The per-line 4 096-char cap was not implemented.** Measured unnecessary: a 63 KB line of
+  `sk-` near-misses (`SecretDetectorTests.boundedCost`) scans in ~16 ms, well inside the
+  150 ms budget, so the extra bookkeeping a per-line cap would add wasn't worth carrying.
+  The 1 MB (now 256 KB) whole-buffer guard and the private-key block's 8 KB body cap are the
+  only limits `SecretDetector` enforces.
+- **Matches tie-break on rule declaration order**, not just location and length. When two
+  rules match the identical `(location, length)` range (e.g. a JWT-shaped value also matching
+  the `genericAssignment` pattern), `Array.sort` isn't guaranteed stable, so `scan(_:)` carries
+  an explicit rule-index tie-break to keep the winner deterministic across runs.
+- **`PasteDocument.pushState` now re-detects even when the pushed text equals `working`.**
+  A push is a discrete event even when it lands on text a prior `setWorking` already coalesced
+  in, so detection (and `secretMatches`) resyncs to what's actually on the buffer after a
+  manual edit rather than trusting stale state.
+- **The app target's deployment target moved from 14.6 to 15.0** to get
+  `TextEditor(text:selection:)` / `TextSelection` for the click-to-select badge. `PastefixCore`
+  and `PastefixAppCore` are unaffected and stay at macOS 14.
+- **The secrets badge stays visible while the Markdown preview is showing.** Intended
+  behaviour is for the badge to hide while previewing (the preview is read-only, so a click
+  couldn't select anything in it) — that's deferred to the final wave (Task 6) rather than
+  shipped here.
+
 ## Scope
 
 **In scope:**

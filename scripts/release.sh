@@ -108,8 +108,9 @@ KEYCHAIN_PUBLIC_KEY=$("$SPARKLE_BIN/generate_keys" -p 2>/dev/null || true)
 
 # --- archive + export ----------------------------------------------------------------------
 step "Archiving $VERSION ($BUILD)"
-# Universal binary: the appcast's minimumSystemVersion 14.6 includes Intel Macs and Sparkle has
-# no per-arch filter.
+# Universal binary: the appcast's minimum system version — read below from the exported app's
+# LSMinimumSystemVersion, currently 15.0 — still includes Intel Macs, and Sparkle has no
+# per-arch filter.
 xcodebuild archive -project "$PROJECT" -scheme "$SCHEME" -configuration Release \
   -destination 'generic/platform=macOS' -derivedDataPath "$DERIVED" -archivePath "$ARCHIVE" \
   MARKETING_VERSION="$VERSION" CURRENT_PROJECT_VERSION="$BUILD" \
