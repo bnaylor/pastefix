@@ -81,9 +81,15 @@ struct UploadOverlayView: View {
         _source = State(initialValue: text)
         // Seeded here rather than in `onAppear` so the very first frame is already the right
         // state — in particular, a user with no server configured never sees a flash of controls
-        // they cannot use. `init` runs again whenever `PanelView` re-renders, but `@State`
-        // initial values are used only the first time, so the keychain read below happens once
-        // per open in practice and the user's later edits to these controls are never clobbered.
+        // they cannot use, which is the whole point of checking "configured?" before anything
+        // else. `@State` initial values are only consumed on first construction, so the user's
+        // later edits to these controls are never clobbered by a re-render.
+        //
+        // Be clear about the cost, though: this is an argument expression, so the keychain read
+        // *runs* on every `init` and only its result is discarded. `init` runs whenever
+        // `PanelView` re-renders, which while this overlay is open means an `AppModel` or
+        // `SettingsStore` publish — rare, and a same-process `SecItemCopyMatching` is cheap. If
+        // that ever stops being true, the check moves into a `task` that gates the scan.
         _phase = State(initialValue: Self.initialPhase(settings: settings, tokenStore: tokenStore))
         // The detector is the better guess when it actually detected something; "txt" is its
         // "I have nothing", and that is exactly when the user's configured default should win.
