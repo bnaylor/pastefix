@@ -61,12 +61,13 @@ public enum SecretDetector {
     /// characters plus two dots cannot be shorter than 26, but 20 leaves room to spare.
     static let minJWTLength = 20
     /// A byte cap is not a cost cap (Plan 10 lesson): validating a JWT candidate costs ~15us, so
-    /// a crafted 256 KB buffer of ~8 500 minimal three-segment tokens would spend 130ms on the
-    /// main actor even though none of them is a JWT. Validation stops after this many candidates
-    /// that survive the exact shape pre-filter. Ordinary text produces none, and 256 KB cannot
-    /// hold anywhere near this many *real* JWTs (they run to hundreds of characters each), so the
-    /// cap can only bite on junk.
-    static let maxJWTCandidates = 4_096
+    /// a crafted buffer of thousands of minimal three-segment tokens would spend >100ms on the
+    /// main actor even though none of them is a JWT. This budget bounds how many *weak*
+    /// candidates (see `jwtStrength`) are validated. It never bounds the walk and never applies
+    /// to a strong candidate, so a real JWT anywhere in the buffer is still found — an earlier
+    /// version stopped the walk outright, so a buffer whose first 4 096 dotted tokens were junk
+    /// hid every JWT that followed them.
+    static let maxWeakJWTCandidates = 4_096
 
     private struct Rule { let kind: SecretKind; let regex: NSRegularExpression; let group: Int; let needsEntropy: Bool }
     private static func rx(_ p: String, _ o: NSRegularExpression.Options = []) -> NSRegularExpression { try! NSRegularExpression(pattern: p, options: o) }
@@ -147,8 +148,8 @@ public enum SecretDetector {
         let u = Array(text.utf16)
         var out: [NSRange] = []
         var i = 0
-        var budget = maxJWTCandidates
-        while i < u.count, budget > 0 {
+        var weakBudget = maxWeakJWTCandidates
+        while i < u.count {
             guard isJWTUnit(u[i]) else { i += 1; continue }
             var end = i
             while end < u.count, isJWTUnit(u[end]) { end += 1 }
@@ -163,38 +164,89 @@ public enum SecretDetector {
                 dots += 1
                 if dots > 2 { break }
             }
-            guard dots == 2, isPlausibleJWTShape(u, lo, hi) else { continue }
-            budget -= 1
+            guard dots == 2 else { continue }
+            switch jwtStrength(u, lo, hi) {
+            case .no: continue
+            case .weak:
+                guard weakBudget > 0 else { continue }
+                weakBudget -= 1
+            case .strong: break
+            }
             guard JWTDecoder.split(String(decoding: u[lo..<hi], as: UTF16.self)) != nil else { continue }
             out.append(NSRange(location: lo, length: hi - lo))
         }
         return out
     }
 
-    /// Exact, allocation-free pre-filter run before the expensive validation. Every condition
-    /// here is implied by `JWTDecoder.split` succeeding, so it rules out no real JWT; it only
-    /// spares a buffer of thousands of dotted junk tokens the base64 decode, the string churn and
-    /// the throwing `JSONSerialization` parse that each candidate would otherwise pay in full.
+    /// How likely a three-segment token is to be a JWT, judged without allocating.
     ///
-    /// - The header decodes to a JSON *object*, so its first byte is `{` or JSON whitespace, and
-    ///   base64url maps each of those to exactly one leading character: `{` -> "e", space -> "I",
-    ///   tab/newline -> "C", carriage return -> "D".
+    /// Every condition below is *implied* by `JWTDecoder.split` succeeding, so `.no` rules out no
+    /// real JWT, and the weak/strong split only decides who is allowed to exhaust the validation
+    /// budget. Deductions, all from "the header base64url-decodes to a JSON object with an `alg`
+    /// key":
+    ///
+    /// - The first header byte is `{` or JSON whitespace, and base64url maps each of those to
+    ///   exactly one leading character: `{` -> "e", space -> "I", tab/newline -> "C", CR -> "D".
+    /// - When that character is "e" the first byte is `{` (0x7B), whose low two bits are the top
+    ///   two of the second base64url character's index, so that index is 48...63 — "w"..."z",
+    ///   "0"..."9", "-", "_". This is the `.strong` test: a real JWT always passes it.
     /// - The smallest JSON object carrying an `alg` key is `{"alg":0}` — 9 bytes, 12 base64url
-    ///   characters — so a shorter header segment cannot validate.
-    /// - A base64 group of one leftover character never decodes, whatever the padding.
-    private static func isPlausibleJWTShape(_ u: [UInt16], _ lo: Int, _ hi: Int) -> Bool {
-        switch u[lo] {
-        case 0x65, 0x49, 0x43, 0x44: break                      // e I C D
-        default: return false
-        }
-        var firstDot = lo, secondDot = lo
+    ///   characters — so a shorter header cannot validate.
+    /// - `JWTDecoder.decodeSegment` pads to a multiple of four, so a segment of one leftover
+    ///   character never decodes; the payload need only be non-empty and decodable, and `e30`
+    ///   (`{}`) is a real three-character payload, so the floor is two, not four.
+    private static func jwtStrength(_ u: [UInt16], _ lo: Int, _ hi: Int) -> JWTStrength {
         var k = lo
         while k < hi, u[k] != dotUnit { k += 1 }
-        firstDot = k; k += 1
+        let firstDot = k
+        k += 1
         while k < hi, u[k] != dotUnit { k += 1 }
-        secondDot = k
+        let secondDot = k
         let header = firstDot - lo, payload = secondDot - firstDot - 1
-        return header >= 12 && header % 4 != 1 && payload >= 4 && payload % 4 != 1
+        guard header >= 12, header % 4 != 1, payload >= 2, payload % 4 != 1,
+              headerClosesAnObject(u, lo, firstDot) else { return .no }
+        switch u[lo] {
+        case 0x65:                                                          // "e" -> header byte 0 is '{'
+            switch u[lo + 1] {
+            case 0x77...0x7A, 0x30...0x39, 0x2D, 0x5F: return .strong       // w-z 0-9 - _
+            default: return .no
+            }
+        case 0x49, 0x43, 0x44: return .weak                                 // I C D: leading JSON whitespace
+        default: return .no
+        }
+    }
+
+    private enum JWTStrength { case no, weak, strong }
+
+    /// Whether the header segment's *last* decoded byte could close a JSON object. Also implied
+    /// by `JWTDecoder.split` succeeding — `JSONSerialization` accepts no trailing garbage, so the
+    /// header's last non-whitespace byte is `}` — and it is the condition that makes a crafted
+    /// flood cheap, because a plausible prefix alone no longer buys a candidate a full
+    /// validation: `eyJhbGciOiJI` decodes to `{"alg":"` and is rejected here, while
+    /// `eyJhbGciOiJIUzI1NiJ9` (`{"alg":"HS256"}`) is not. Dotted source-code identifiers
+    /// (`IConfiguration.Bind.Extensions`) fail it too. Only the final base64url group is decoded.
+    private static func headerClosesAnObject(_ u: [UInt16], _ lo: Int, _ firstDot: Int) -> Bool {
+        guard let a = b64Value(u[firstDot - 2]), let b = b64Value(u[firstDot - 1]) else { return false }
+        let last: UInt8
+        switch (firstDot - lo) % 4 {
+        case 0: last = ((a & 0x03) << 6) | b          // third byte of a full 4-character group
+        case 2: last = (a << 2) | (b >> 4)            // only byte of a 2-character tail
+        case 3: last = ((a & 0x0F) << 4) | (b >> 2)   // second byte of a 3-character tail
+        default: return false
+        }
+        return last == 0x7D || last == 0x20 || last == 0x09 || last == 0x0A || last == 0x0D
+    }
+
+    /// base64url alphabet index, or nil for a character outside it.
+    private static func b64Value(_ c: UInt16) -> UInt8? {
+        switch c {
+        case 0x41...0x5A: UInt8(c - 0x41)             // A-Z -> 0...25
+        case 0x61...0x7A: UInt8(c - 0x61 + 26)        // a-z -> 26...51
+        case 0x30...0x39: UInt8(c - 0x30 + 52)        // 0-9 -> 52...61
+        case 0x2D: 62                                 // -
+        case 0x5F: 63                                 // _
+        default: nil
+        }
     }
 
     // MARK: - PEM private-key blocks
@@ -245,6 +297,12 @@ public enum SecretDetector {
     /// two. UUID-shaped values are accepted on shape instead; they only ever reach here behind a
     /// credential key name (`api_key = <uuid>`), so a bare `id: <uuid>` still stays quiet.
     static func isHighEntropy(_ s: String) -> Bool {
+        // Placeholders read as random to Shannon: `your-token-here-xx` (0.87), `please-change-me-now`
+        // (0.81) and `/var/run/secrets/tok` (0.83) all cleared the normalised bar. Requiring a
+        // digit costs one pass and silences them. It also gives up values that are letters only
+        // — roughly 3% of real keys, and the least likely shape for a machine-issued credential —
+        // which is the accepted price for not crying wolf on every config template.
+        guard s.utf8.contains(where: { $0 >= 0x30 && $0 <= 0x39 }) else { return false }
         if uuidShape.firstMatch(in: s, range: NSRange(location: 0, length: (s as NSString).length)) != nil { return true }
         return normalisedEntropy(s) >= minNormalisedEntropy
     }

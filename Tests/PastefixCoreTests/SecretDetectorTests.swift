@@ -134,6 +134,35 @@ import Testing
         #expect(m.count == 500)
         #expect(m.allSatisfy { $0.kind == .jwt })
     }
+    @Test func weakCandidatesNeverHideARealJWT() {
+        // Two halves of the same fix. (a) The pre-filter now rejects dotted source-code
+        // identifiers outright: "IConfiguration" cannot close a JSON object. (b) Even for tokens
+        // that do survive it, the validation budget bounds validations only — the walk always
+        // completes — so a JWT after 4 096 junk candidates is still found. An earlier version
+        // stopped the walk and missed it.
+        let jwt = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"
+        // "IAAAAAAAAAJ9" decodes to a space, NULs and a closing brace, so it clears every cheap
+        // check and is only rejected by the full JSON parse — the most expensive junk there is.
+        let weakUnit = "IAAAAAAAAAJ9.e30.abc "
+        for (label, noise) in [("source-code identifiers", String(repeating: "IConfiguration.Bind.Extensions\n", count: 6_606)),
+                               ("budget-exhausting junk", String(repeating: weakUnit, count: 5_000))] {
+            let buffer = noise + jwt
+            #expect(buffer.utf8.count <= SecretDetector.maxBytes)
+            let m = SecretDetector.scan(buffer)
+            #expect(m.map(\.kind) == [.jwt], "\(label): \(m.count) matches")
+            #expect(m.map { String(buffer[$0.range]) } == [jwt])
+            let t = ContinuousClock().measure { _ = SecretDetector.scan(buffer) }
+            #expect(t < .milliseconds(150), "\(label) took \(t)")
+        }
+        #expect(5_000 > SecretDetector.maxWeakJWTCandidates)     // the budget really is exhausted
+    }
+    @Test func minimalPayloadSegmentIsAccepted() {
+        // `e30` is base64url for `{}`, a perfectly real (if empty) payload, so the pre-filter's
+        // payload floor is what JWTDecoder.split accepts — two characters — not an invented four.
+        let jwt = "eyJhbGciOiJIUzI1NiJ9.e30.abcd"
+        #expect(kinds(jwt) == [.jwt])
+        #expect(texts("header \(jwt) trailer") == [jwt])
+    }
     @Test func tieBreakIsDeterministicByRuleOrder() {
         // "token=<jwt>" makes the jwt rule and the genericAssignment rule (whose value class
         // includes '.') match the identical (location, length) range. SecretKind declaration
@@ -166,5 +195,20 @@ import Testing
         #expect(kinds("id: 550e8400-e29b-41d4-a716-446655440000") == [])
         #expect(SecretDetector.normalisedEntropy("a3f9c1e7b2d84f06") >= SecretDetector.minNormalisedEntropy)
         #expect(SecretDetector.normalisedEntropy("changeme-changeme") < SecretDetector.minNormalisedEntropy)
+    }
+    @Test func genericAssignmentValueNeedsADigit() {
+        // Placeholders and paths score as "random" on normalised Shannon entropy — every one of
+        // these cleared the bar — so a credential value must also carry a digit.
+        for placeholder in ["your-token-here-xx", "please-change-me-now", "example-value-goes-here", "/var/run/secrets/tok"] {
+            #expect(SecretDetector.normalisedEntropy(placeholder) >= SecretDetector.minNormalisedEntropy,
+                    "\(placeholder) is meant to be a near-miss the entropy bar alone lets through")
+            #expect(kinds("token=\(placeholder)") == [], "\(placeholder) fired")
+        }
+        // Accepted miss: a letters-only key (~3% of real ones) is the price of that rule.
+        #expect(kinds("token=abcdefghijklmnopqrstuvwx") == [])
+        // The values that matter are unaffected.
+        #expect(kinds("api_key=a3f9c1e7b2d84f06") == [.genericAssignment])
+        #expect(kinds("api_key: \"9f8e7d6c5b4a39281706f5e4d3c2b1a0\"") == [.genericAssignment])
+        #expect(kinds("api_key=550e8400-e29b-41d4-a716-446655440000") == [.genericAssignment])
     }
 }
