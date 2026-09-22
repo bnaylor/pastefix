@@ -17,6 +17,8 @@ public enum TransformerSource: Sendable, Equatable {
     case builtin
     case shell(URL)
     case javascript(URL)
+    /// A user-defined regex find & replace rule, identified by its `RegexPreset.id`.
+    case preset(UUID)
 }
 
 public enum TransformError: Error, Equatable {
@@ -73,6 +75,7 @@ public enum TransformCategory {
     public static let colors = "Colors"
     public static let scripts = "Scripts"
     public static let privacy = "Privacy"
+    public static let presets = "Presets"
     /// Display order for the built-in categories; custom ones follow alphabetically, then Scripts.
-    public static let builtinOrder = [layout, richText, characters, urls, `case`, data, colors, privacy]
+    public static let builtinOrder = [layout, richText, characters, urls, `case`, data, colors, privacy, presets]
 }

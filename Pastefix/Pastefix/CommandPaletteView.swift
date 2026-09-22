@@ -101,7 +101,11 @@ struct CommandPaletteView: View {
     private func row(_ result: SearchResult, isSelected: Bool) -> some View {
         HStack {
             VStack(alignment: .leading, spacing: 2) {
+                // A preset name is user-typed and uncapped; without this a long one wraps to
+                // several lines and distorts the fixed-width overlay.
                 Text(highlightedName(result))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
                 // Uncategorised transforms are shown under "Scripts" in the sidebar; the
                 // subtitle says the same thing so the two surfaces agree.
                 Text(result.transformer.category ?? TransformCategory.scripts)

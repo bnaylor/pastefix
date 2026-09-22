@@ -19,7 +19,10 @@ struct SidebarView: View {
                         Button {
                             model.apply(transformer)
                         } label: {
+                            // Preset names are user-typed and uncapped; keep a row one row high.
                             Text(transformer.name)
+                                .lineLimit(1)
+                                .truncationMode(.tail)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .contentShape(Rectangle())
                         }

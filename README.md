@@ -62,13 +62,22 @@ Nothing is blocked: Pastefix never refuses to capture or save something because 
 
 The scan only covers buffers up to 256 KB. Over that it doesn't run, and rather than leave the action bar looking clean Pastefix shows a grey **"Not scanned for secrets"** badge; Redact Secrets refuses the buffer with an error instead of quietly doing nothing, and a history row that was never examined carries no shield either way. Known limits: a credential value made only of letters — no digit anywhere — is not flagged, and neither is anything over 256 KB, which says "Not scanned" instead.
 
+## Regex presets (Plan 12)
+
+Settings → **Presets** lets you define your own find & replace rules as regular expressions — no script, no shell, no JavaScript required. Pick a preset from the menu at the top, or start one with the **+** button — **+** opens an unsaved draft, marked *(unsaved)*, and nothing reaches the palette until you press Save. Each preset has a name, a pattern, a replacement, and four flags: **Case-insensitive**, **^ and $ match at line boundaries** (anchors), **. matches newlines** (dot-all), and **Replace all matches** (off replaces only the first match). Patterns and replacements are `NSRegularExpression` syntax, so a replacement can reference capture groups with `$1`, `$2`, and so on; the replacement field understands a few escapes, since it is a single-line field that can't hold a literal newline: `\n` gives a newline, `\t` a tab, `\\` one literal backslash, and `\$` a literal dollar (rather than a group reference). Any other escape is kept verbatim, so a replacement of `\d` inserts the two characters `\d`.
+
+Below the fields, a sample-input box shows a **live preview**: the transformed sample and a match count, debounced as you type, or an inline error if the pattern doesn't compile. The preview runs against at most 16 KB of the sample and gives up after 1 second — its own limits, separate from the real transform's, so an expensive pattern can only ever stall the preview, never the panel. Save is disabled while the pattern doesn't compile or the name is blank; an empty pattern doesn't compile either, and says so ("Pattern is empty"). A preset with unsaved edits is marked with a **•**, and changing the selection — or removing it — asks before discarding them. Leaving the tab or closing the Settings window saves an unsaved preset automatically if it is valid; if it is not (blank name, or a pattern that doesn't compile) it is kept while you switch tabs, but not once the window closes.
+
+Once saved, a preset behaves like any other transform: it appears in the ⌘K palette and in the sidebar under a **Presets** group, and can be enabled, disabled, and reordered in Settings → Transforms. Deleting a preset also forgets whatever you had set for it there. Running a preset against the clipboard buffer is capped at 256 KB of input, 2 MB of output (a pattern that matches the empty string applies its replacement at every position) and a 3-second timeout; over any of those it fails with an error instead of hanging the panel.
+
 ## Settings (Plan 2b)
 
-Pastefix includes a Settings window (⌘, or "Settings…" in the menu) with five tabs:
+Pastefix includes a Settings window (⌘, or "Settings…" in the menu) with six tabs:
 
 - **General:** Configure wrap width (default 400 columns), toggle auto-hide-on-blur (dismisses the panel when focus leaves), and choose a custom folder for user scripts (default `~/.config/pastefix/scripts/`).
 - **Privacy:** A **History** section (remember-history toggle, item-count stepper, and a Clear History dialog offering "Clear N items" — unpinned only — or "Clear Everything") and an **Excluded Apps** section (add/remove apps whose copies are never read into history, Restore Defaults).
 - **Snippets:** An Accessibility status line ("ready" / "needs Accessibility permission", with a shortcut to open System Settings) and a list of pinned snippets, each with an editable title, a per-snippet global-shortcut recorder, and Unpin.
+- **Presets:** A menu of your regex find & replace rules (+ / − to add/remove) above a full-width editor with the four flags and a live preview; see Regex presets above.
 - **Shortcut:** Rebind the global hotkey (default ⌘⇧C) and the history hotkey (default ⌘⇧V), each using an interactive keyboard recorder.
 - **Transforms:** Enable/disable individual transforms and drag to reorder them in the palette.
 

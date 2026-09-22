@@ -55,13 +55,14 @@ final class AppModel: ObservableObject {
         reload()
     }
 
-    /// Rebuild the transformer list from current settings (scripts dir + wrap
-    /// width) and apply the user's enable/reorder overrides. Safe to call any
-    /// time (e.g. on a script-directory change or a settings edit).
+    /// Rebuild the transformer list from current settings (scripts dir, wrap
+    /// width, regex presets) and apply the user's enable/reorder overrides. Safe to call any
+    /// time (e.g. on a script-directory change, a preset edit, or a settings edit).
     func reload() {
         let config = RegistryConfig(
             scriptsDirectory: settings.scriptsDirectoryURL,
-            wrapWidth: settings.wrapWidth
+            wrapWidth: settings.wrapWidth,
+            presets: settings.regexPresets
         )
         let loaded = TransformerRegistry(config: config).load()
         // Unfiltered (for the Settings list): order applied, nothing removed.

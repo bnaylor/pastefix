@@ -18,6 +18,10 @@ struct SettingsView: View {
     /// Bumped when the app comes to front so the Accessibility status re-reads `AXIsProcessTrusted`:
     /// the grant happens in System Settings, outside anything SwiftUI would observe.
     @State private var trustTick = 0
+    /// The Presets tab's draft, held here rather than in the tab: `TabView` tears the tab's view
+    /// down on a switch, which would silently throw away a half-typed preset. `@StateObject`, so
+    /// it survives every re-render of this view and dies with the Settings window.
+    @StateObject private var presetEditor = PresetEditorState()
 
     var body: some View {
         TabView {
@@ -26,6 +30,8 @@ struct SettingsView: View {
             snippets.tabItem { Label("Snippets", systemImage: "pin") }
             shortcut.tabItem { Label("Shortcut", systemImage: "keyboard") }
             transforms.tabItem { Label("Transforms", systemImage: "slider.horizontal.3") }
+            PresetsSettingsView(settings: settings, editor: presetEditor)
+                .tabItem { Label("Presets", systemImage: "text.badge.plus") }
         }
         .frame(width: 460, height: 400)
         .onAppear {

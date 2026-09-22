@@ -89,7 +89,7 @@ import Foundation
         let colorIDs = ["builtin.color.hex", "builtin.color.rgb", "builtin.color.hsl", "builtin.color.swift"]
         for id in colorIDs { #expect(byID[id] == TransformCategory.colors) }
         #expect(byID["builtin.redactsecrets"] == TransformCategory.privacy)
-        #expect(TransformCategory.builtinOrder == ["Layout", "Rich Text", "Characters", "URLs", "Case", "Data", "Colors", "Privacy"])
+        #expect(TransformCategory.builtinOrder == ["Layout", "Rich Text", "Characters", "URLs", "Case", "Data", "Colors", "Privacy", "Presets"])
     }
 
     @Test func richTextTransformsRegisteredInOrder() {
@@ -104,5 +104,17 @@ import Foundation
         let loaded = TransformerRegistry(config: .init(scriptsDirectory: dir, wrapWidth: 80)).load()
         #expect(loaded.first { $0.name == "Cat" }?.category == "Text")
         #expect(loaded.first { $0.name == "NoCat" }?.category == nil)
+    }
+
+    @Test func presetsSitBetweenBuiltinsAndScripts() {
+        // Mixed case on purpose: a case-sensitive `String.<` within the 900 band would return
+        // Banana, Zebra, apple — every capital ahead of every lowercase.
+        let z = RegexPreset(name: "Zebra", pattern: "z", replacement: "")
+        let a = RegexPreset(name: "apple", pattern: "a", replacement: "")
+        let b = RegexPreset(name: "Banana", pattern: "b", replacement: "")
+        let cfg = RegistryConfig(scriptsDirectory: URL(fileURLWithPath: "/nonexistent"), wrapWidth: 80, presets: [z, a, b])
+        let ids = TransformerRegistry(config: cfg).load().map(\.id)
+        #expect(ids.suffix(3) == ["preset:\(a.id.uuidString)", "preset:\(b.id.uuidString)", "preset:\(z.id.uuidString)"])
+        #expect(TransformCategory.builtinOrder.last == TransformCategory.presets)
     }
 }

@@ -4,11 +4,15 @@ public struct RegistryConfig: Sendable {
     public var scriptsDirectory: URL
     public var wrapWidth: Int
     public var timeout: TimeInterval
+    /// User-defined regex find & replace rules, surfaced as transforms at order band 900.
+    public var presets: [RegexPreset]
 
-    public init(scriptsDirectory: URL, wrapWidth: Int = 400, timeout: TimeInterval = 3) {
+    public init(scriptsDirectory: URL, wrapWidth: Int = 400, timeout: TimeInterval = 3,
+                presets: [RegexPreset] = []) {
         self.scriptsDirectory = scriptsDirectory
         self.wrapWidth = wrapWidth
         self.timeout = timeout
+        self.presets = presets
     }
 }
 
@@ -52,6 +56,12 @@ public struct TransformerRegistry {
             (110, "Redact Secrets", RedactSecrets()),
         ]
 
+        // Presets sit after every built-in (band 900) and before discovered scripts (1000+).
+        // No pre-sort: the single sort below orders the whole band.
+        for p in config.presets {
+            entries.append((900, p.name, RegexPresetTransformer(preset: p)))
+        }
+
         for url in discoverScriptFiles() {
             guard let source = try? String(contentsOf: url, encoding: .utf8) else { continue }
             let md = ScriptMetadata.parse(source)
@@ -64,8 +74,15 @@ public struct TransformerRegistry {
             entries.append((order, transformer.name, transformer))
         }
 
+        // Sort once, with the comparator we actually mean: `String.<` is case-sensitive, so a
+        // tuple sort would put every capitalised name ahead of every lowercase one within a band
+        // (presets at 900, scripts at 1000 — both user-named, both visibly wrong that way).
         return entries
-            .sorted { ($0.order, $0.name) < ($1.order, $1.name) }
+            .sorted {
+                $0.order == $1.order
+                    ? $0.name.localizedStandardCompare($1.name) == .orderedAscending
+                    : $0.order < $1.order
+            }
             .map(\.transformer)
     }
 
