@@ -76,7 +76,20 @@ struct UploadSettingsView: View {
                     Button("Clear Token") { clearToken() }
                         .disabled(!tokenIsStored && tokenDraft.isEmpty)
                 }
-                Text("The API token lives in the Keychain, never in Settings. Private, LAN and Tailscale addresses are expected here — that's the normal way to reach a self-hosted Zipline.")
+                // App Transport Security decides which of these actually work over plain `http`,
+                // and it is not the same set the previous wording promised. Measured on
+                // macOS 26.3.1 against a signed app bundle: http to an IP literal (192.168.x,
+                // 10.x, a Tailscale 100.x, 127.0.0.1) and to a `.local` name is permitted by the
+                // stock default; http to a dotted public-looking FQDN is refused with -1022 —
+                // and a MagicDNS name, `box.tailnet.ts.net`, is exactly that shape. Adding
+                // `NSAllowsLocalNetworking` (see Info.plist) does not change that verdict.
+                //
+                // So the caption tells the truth about which addresses work unencrypted rather
+                // than sending someone to configure everything and discover it at Upload. The
+                // remedy for the MagicDNS case is `https`, which Tailscale issues a real
+                // certificate for — and this feature has no cert-trust bypass, so it must be a
+                // real one.
+                Text("The API token lives in the Keychain, never in Settings. Private and LAN addresses are expected here — that's the normal way to reach a self-hosted Zipline. Plain http works for an IP address (a Tailscale 100.x one included) and for a .local name; a named host such as box.tailnet.ts.net needs https, which Tailscale can issue a certificate for.")
                     .font(.caption).foregroundStyle(.secondary)
             }
             Section("Upload Defaults") {

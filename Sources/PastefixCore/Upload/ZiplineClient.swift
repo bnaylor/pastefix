@@ -15,6 +15,11 @@ public protocol ZiplineUploading: Sendable {
 /// self-signed certificate fails, and that is the intended behaviour: TLS is
 /// the only transport protection this feature has, and an exception here would
 /// remove it for everyone to spare one person a certificate fix.
+///
+/// The request does carry a per-*task* delegate, `SameOriginRedirectPolicy`,
+/// which is a different thing: a task delegate has no authentication-challenge
+/// callback, so it is not a place a trust bypass can appear. The session still
+/// has no delegate at all.
 public struct URLSessionZiplineClient: ZiplineUploading {
     public let timeout: TimeInterval
     private let protocolClasses: [AnyClass]?
@@ -50,7 +55,8 @@ public struct URLSessionZiplineClient: ZiplineUploading {
         let data: Data
         let response: URLResponse
         do {
-            (data, response) = try await session.data(for: req)
+            // A *per-task* delegate, never a session delegate — see `SameOriginRedirectPolicy`.
+            (data, response) = try await session.data(for: req, delegate: SameOriginRedirectPolicy())
         } catch {
             throw ZiplineUploadError.transport(error.localizedDescription)
         }
@@ -116,6 +122,16 @@ public struct URLSessionZiplineClient: ZiplineUploading {
     /// of this URL, so there is nothing to scrub.
     private static func error(status: Int, body: Data, requestURL: URL) -> ZiplineUploadError {
         if status == 401 { return .unauthorized }
+        // A 3xx can only reach here because `SameOriginRedirectPolicy` refused to follow it:
+        // a same-origin redirect is followed and its final response is what lands. Say so,
+        // because a bare "Server error 308" with the upload's own URL in it is the least
+        // diagnosable message this client can produce.
+        if (300..<400).contains(status) {
+            return .server(status: status,
+                           message: "The server redirected the upload to a different host. "
+                                  + "Pastefix won't send your text or token to an address you "
+                                  + "didn't configure — set the server URL to the final address.")
+        }
         let object = try? JSONSerialization.jsonObject(with: body) as? [String: Any]
         let message = object?["message"] as? String
         if let message, let parsed = parseBadOption(message) {
@@ -136,5 +152,71 @@ public struct URLSessionZiplineClient: ZiplineUploading {
         var detail = String(message[message.index(after: close)...])
         if detail.hasPrefix(":") { detail.removeFirst() }
         return (header, detail.trimmingCharacters(in: .whitespaces))
+    }
+}
+
+/// The redirect policy for the upload request, attached to the *task* with
+/// `session.data(for:delegate:)`.
+///
+/// A task delegate, emphatically not a session delegate: `URLSessionZiplineClient` still
+/// passes no delegate to `URLSession(configuration:)`, so there remains nowhere for a
+/// `urlSession(_:didReceive:completionHandler:)` certificate-trust callback to be bolted on
+/// later. A self-signed certificate must keep failing. `URLSessionTaskDelegate` carries no
+/// authentication-challenge callback of its own for that hook to hide in.
+///
+/// **Policy: follow a redirect that stays on the origin the user configured (same scheme,
+/// host and port); refuse every other redirect.**
+///
+/// Refuse, rather than forward with the `authorization` header stripped, because the token
+/// is only one of the two secrets on this request. A 307/308 re-POSTs the *body* — the
+/// user's clipboard, which is the thing this whole feature is careful about — and dropping
+/// one header does nothing about that. There is no useful version of "send the text to a
+/// host the user never typed", so the safe answer is not to make the second request at all.
+/// It also removes the question of whether a given CFNetwork build strips `authorization`
+/// across origins by itself, which is version-dependent and not something to rely on.
+///
+/// What this costs: a reverse proxy that answers `http` with a 301 to `https` is
+/// cross-origin (the scheme differs) and is refused, so the user has to type the `https`
+/// URL. App Transport Security already forces that for any named host (see the ATS note in
+/// `UploadSettingsView`), so in practice it costs close to nothing. The benign same-origin
+/// cases — trailing-slash normalisation, a path rewrite in front of `api/upload` — still work.
+///
+/// Stateless, hence `@unchecked Sendable`: it stores nothing and the delegate method reads
+/// only its arguments.
+final class SameOriginRedirectPolicy: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+    func urlSession(_ session: URLSession,
+                    task: URLSessionTask,
+                    willPerformHTTPRedirection response: HTTPURLResponse,
+                    newRequest request: URLRequest,
+                    completionHandler: @escaping (URLRequest?) -> Void) {
+        completionHandler(Self.redirect(from: task.originalRequest?.url, to: request))
+    }
+
+    /// Compared against the **original** request's URL rather than the previous hop, so a
+    /// chain cannot walk off the configured origin one same-origin-looking step at a time.
+    static func redirect(from origin: URL?, to request: URLRequest) -> URLRequest? {
+        guard let origin, let target = request.url,
+              isSameOrigin(origin, target) else { return nil }
+        return request
+    }
+
+    /// Origin in the RFC 6454 sense: scheme, host and port, with the scheme's default port
+    /// filled in so `https://host` and `https://host:443` are the same origin. Case-folded
+    /// on scheme and host only — path and query are not part of an origin and a redirect is
+    /// allowed to change them.
+    static func isSameOrigin(_ a: URL, _ b: URL) -> Bool {
+        guard let aScheme = a.scheme?.lowercased(), let bScheme = b.scheme?.lowercased(),
+              let aHost = a.host?.lowercased(), let bHost = b.host?.lowercased(),
+              !aHost.isEmpty, !bHost.isEmpty else { return false }
+        return aScheme == bScheme && aHost == bHost && port(of: a) == port(of: b)
+    }
+
+    private static func port(of url: URL) -> Int? {
+        if let port = url.port { return port }
+        switch url.scheme?.lowercased() {
+        case "http": return 80
+        case "https": return 443
+        default: return nil
+        }
     }
 }

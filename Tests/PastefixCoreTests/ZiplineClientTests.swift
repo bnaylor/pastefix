@@ -10,9 +10,18 @@ private final class StubProtocol: URLProtocol, @unchecked Sendable {
     nonisolated(unsafe) static var capturedHeaders: [String: String] = [:]
     nonisolated(unsafe) static var capturedBody = Data()
     nonisolated(unsafe) static var failWith: Error?
+    /// When set, the *first* request is answered with `redirectStatus` and a `Location` of
+    /// this value; any request after that gets the normal canned response. Drives the
+    /// redirect-policy tests below.
+    nonisolated(unsafe) static var redirectTo: String?
+    nonisolated(unsafe) static var redirectStatus = 307
+    /// Every request this protocol saw, in order — so a test can assert on the *second* hop
+    /// (did it happen at all, and what did it carry) rather than only on the last one.
+    nonisolated(unsafe) static var requests: [(url: URL, headers: [String: String], body: Data)] = []
 
     static func reset() {
         status = 200; body = Data(); capturedHeaders = [:]; capturedBody = Data(); failWith = nil
+        redirectTo = nil; redirectStatus = 307; requests = []
     }
 
     override class func canInit(with request: URLRequest) -> Bool { true }
@@ -21,18 +30,34 @@ private final class StubProtocol: URLProtocol, @unchecked Sendable {
     override func startLoading() {
         Self.capturedHeaders = request.allHTTPHeaderFields ?? [:]
         // URLSession moves an upload body to `httpBodyStream`.
+        var thisBody = Data()
         if let stream = request.httpBodyStream {
             stream.open()
             defer { stream.close() }
             var buffer = [UInt8](repeating: 0, count: 64 * 1024)
             while case let read = stream.read(&buffer, maxLength: buffer.count), read > 0 {
-                Self.capturedBody.append(contentsOf: buffer[0..<read])
+                thisBody.append(contentsOf: buffer[0..<read])
             }
         } else if let body = request.httpBody {
-            Self.capturedBody = body
+            thisBody = body
         }
+        Self.capturedBody = thisBody
+        Self.requests.append((url: request.url!, headers: Self.capturedHeaders, body: thisBody))
         if let error = Self.failWith {
             client?.urlProtocol(self, didFailWithError: error)
+            return
+        }
+        if let location = Self.redirectTo, Self.requests.count == 1 {
+            let response = HTTPURLResponse(url: request.url!, statusCode: Self.redirectStatus,
+                                           httpVersion: "HTTP/1.1",
+                                           headerFields: ["Location": location])!
+            var followUp = request
+            followUp.url = URL(string: location, relativeTo: request.url)?.absoluteURL
+            // 307/308 preserve the method and the body; that is exactly why they matter here.
+            client?.urlProtocol(self, wasRedirectedTo: followUp, redirectResponse: response)
+            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocol(self, didLoad: Data())
+            client?.urlProtocolDidFinishLoading(self)
             return
         }
         let response = HTTPURLResponse(url: request.url!, statusCode: Self.status,
@@ -197,6 +222,96 @@ struct ZiplineClientTests {
         #expect(message?.contains("zip.example.test/api/upload") == true)
         // The token must never leak into a diagnostic message.
         #expect(message?.contains("tok_123") == false)
+    }
+
+    // MARK: - Redirects: same-origin is followed, cross-origin is refused
+
+    @Test("a same-origin redirect is followed and the upload succeeds")
+    func redirectSameOriginIsFollowed() async throws {
+        let c = client()
+        StubProtocol.redirectTo = "https://zip.example.test/zipline/api/upload"
+        StubProtocol.body = #"{"files":[{"url":"https://zip.example.test/u/abc"}]}"#.data(using: .utf8)!
+        let url = try await c.upload(upload, to: server, token: "tok_123")
+        #expect(url == URL(string: "https://zip.example.test/u/abc"))
+        // Two hops, and the second one is the redirect target.
+        #expect(StubProtocol.requests.count == 2)
+        #expect(StubProtocol.requests.last?.url.absoluteString == "https://zip.example.test/zipline/api/upload")
+    }
+
+    @Test("a cross-origin redirect is not followed: no second request, so no token and no text")
+    func redirectCrossOriginIsRefused() async throws {
+        let c = client()
+        StubProtocol.redirectTo = "https://evil.example.test/api/upload"
+        let thrown = await #expect(throws: ZiplineUploadError.self) {
+            try await c.upload(upload, to: server, token: "tok_123")
+        }
+        guard let thrown, case .server(let status, let message) = thrown else {
+            Issue.record("expected server, got \(String(describing: thrown))"); return
+        }
+        #expect(status == 307)
+        #expect(message?.contains("redirected") == true)
+        // The assertion that matters: the second request never happened at all, so neither
+        // the token nor the clipboard text was offered to the other origin.
+        #expect(StubProtocol.requests.count == 1)
+        #expect(StubProtocol.requests.allSatisfy { $0.url.host == "zip.example.test" })
+        let sentElsewhere = StubProtocol.requests.filter { $0.url.host != "zip.example.test" }
+        #expect(sentElsewhere.isEmpty)
+    }
+
+    @Test("a redirect to a different port on the same host is cross-origin and refused")
+    func redirectDifferentPortIsRefused() async throws {
+        let c = client()
+        StubProtocol.redirectTo = "https://zip.example.test:8443/api/upload"
+        await #expect(throws: ZiplineUploadError.self) {
+            try await c.upload(upload, to: server, token: "tok_123")
+        }
+        #expect(StubProtocol.requests.count == 1)
+    }
+
+    @Test("an http -> https upgrade is cross-origin and refused")
+    func redirectSchemeUpgradeIsRefused() async throws {
+        let c = client()
+        StubProtocol.redirectStatus = 301
+        StubProtocol.redirectTo = "https://zip.example.test/api/upload"
+        await #expect(throws: ZiplineUploadError.self) {
+            try await c.upload(upload, to: URL(string: "http://zip.example.test")!, token: "tok_123")
+        }
+        #expect(StubProtocol.requests.count == 1)
+    }
+
+    // The policy object itself, without a transport: these pin the origin comparison
+    // directly, so a change to `isSameOrigin` fails here with a readable reason rather than
+    // only as a puzzling integration failure.
+
+    @Test("the redirect policy allows a same-origin target and the scheme's default port")
+    func policyAllowsSameOrigin() {
+        let origin = URL(string: "https://zip.example.test/api/upload")!
+        #expect(SameOriginRedirectPolicy.redirect(
+            from: origin,
+            to: URLRequest(url: URL(string: "https://zip.example.test/elsewhere")!)) != nil)
+        // Explicit :443 is the same origin as an implicit one.
+        #expect(SameOriginRedirectPolicy.redirect(
+            from: origin,
+            to: URLRequest(url: URL(string: "https://zip.example.test:443/api/upload")!)) != nil)
+        // Host comparison is case-insensitive; a case difference is not a different origin.
+        #expect(SameOriginRedirectPolicy.redirect(
+            from: origin,
+            to: URLRequest(url: URL(string: "https://ZIP.EXAMPLE.TEST/api/upload")!)) != nil)
+    }
+
+    @Test("the redirect policy refuses a different host, port or scheme")
+    func policyRefusesCrossOrigin() {
+        let origin = URL(string: "https://zip.example.test/api/upload")!
+        for target in ["https://evil.example.test/api/upload",
+                       "https://zip.example.test.evil.test/api/upload",
+                       "https://zip.example.test:8443/api/upload",
+                       "http://zip.example.test/api/upload",
+                       "file:///etc/passwd"] {
+            #expect(SameOriginRedirectPolicy.redirect(
+                from: origin,
+                to: URLRequest(url: URL(string: target)!)) == nil,
+                    "should have refused \(target)")
+        }
     }
 
     // MARK: - parseBadOption: malformed inputs fall back to the generic server case
