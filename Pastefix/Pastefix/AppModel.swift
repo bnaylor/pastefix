@@ -107,6 +107,11 @@ final class AppModel: ObservableObject {
     /// Credentials found when the buffer was captured or refreshed; drives the action-bar badge.
     var secretMatches: [SecretMatch] { document?.secretMatches ?? [] }
 
+    /// True when the buffer was too large to scan, so `secretMatches` is empty for want of a scan
+    /// rather than for want of secrets. Drives the grey "Not scanned for secrets" badge: an
+    /// unscanned buffer must not look like a clean one.
+    var secretScanSkipped: Bool { document?.secretScanSkipped ?? false }
+
     /// Selects the next detected secret in the editor, cycling back to the first.
     ///
     /// Re-scans the *live* buffer rather than reusing `document.secretMatches`: those ranges were

@@ -337,6 +337,18 @@ struct PanelView: View {
                 .buttonStyle(.plain)
                 .help("Looks like credentials: \(Set(model.secretMatches.map(\.kind.displayName)).sorted().joined(separator: ", ")). Click to select the next one; use Redact Secrets (⌘K) to mask them.")
                 .accessibilityLabel("\(n) possible secrets; click to select the next one")
+            } else if model.secretScanSkipped {
+                // The buffer was never examined, so showing nothing here would be indistinguishable
+                // from "scanned and found nothing" — the user would act on a clean-looking bar.
+                // Grey, not orange: this is an absence of knowledge, not a finding. Nothing to
+                // click, so unlike the orange badge it needs no overlay guard.
+                Label("Not scanned for secrets", systemImage: "shield.slash")
+                    .font(.caption)
+                    .padding(.horizontal, 8).padding(.vertical, 3)
+                    .background(.quaternary, in: Capsule())
+                    .foregroundStyle(.secondary)
+                    .help("This text is over 256 KB, the limit for the secrets scan.")
+                    .accessibilityLabel("Not scanned for secrets; this text is over the 256 KB scan limit")
             }
             if let summary = model.detectedSummary {
                 Text("Detected: \(summary)")

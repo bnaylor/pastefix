@@ -12,6 +12,10 @@ public struct PasteDocument: Sendable {
     /// (init, push, undo/redo, refresh) so a redact transform pins to the same ranges the
     /// palette was built from, rather than re-scanning after every keystroke.
     public private(set) var secretMatches: [SecretMatch]
+    /// True when `working` was over `SecretDetector.maxBytes` and so was never examined. An empty
+    /// `secretMatches` then means "unknown", not "clean", and the UI must say so — silence reads
+    /// as a clean bill of health. Recomputed on exactly the same events as `secretMatches`.
+    public private(set) var secretScanSkipped: Bool
     /// How Save should write the buffer. Set by an `OutputModeTransformer`; reset to
     /// `.plain` whenever the document is re-armed for a new summon (`refresh`).
     public var outputMode: OutputMode = .plain
@@ -24,6 +28,7 @@ public struct PasteDocument: Sendable {
         let secrets = SecretDetector.scan(history[0])
         self.detectedKinds = ContentDetector.detect(history[0], secrets: secrets)
         self.secretMatches = secrets
+        self.secretScanSkipped = !SecretDetector.isScannable(history[0])
         self.outputMode = .plain
     }
 
@@ -72,5 +77,6 @@ public struct PasteDocument: Sendable {
         let secrets = SecretDetector.scan(working)
         detectedKinds = ContentDetector.detect(working, secrets: secrets)
         secretMatches = secrets
+        secretScanSkipped = !SecretDetector.isScannable(working)
     }
 }

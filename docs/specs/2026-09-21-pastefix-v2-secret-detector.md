@@ -76,10 +76,11 @@ The plan below was written before implementation; these are where the shipped co
   first END at or after it **whose label string is identical** (`RSA ` matches `RSA `, not `EC `)
   and that ends within `maxPEMBodyLength` = 16 384 characters. A longer body is not matched at
   all; `SecretDetectorTests.privateKeyBodyLimit` pins that.
-- **The generic-assignment value is accepted by length-normalised entropy or by UUID shape**,
-  not by a fixed 3.5 bits/char bar. Shannon entropy caps at log2(n) for an n-character value, so a
+- **The generic-assignment value is accepted by alphabet-normalised entropy or by UUID shape**,
+  not by a fixed 3.5 bits/char bar and not by the length-normalised bar this line used to describe
+  (see the round-3 amendment below). Shannon entropy caps at log2(n) for an n-character value, so a
   fixed bar is a far harder test at 16 characters than at 40 — a random 16-hex value cleared 3.5
-  only 11% of the time. The test is now `entropy(v) >= 0.75 * log2(min(v.count, 64))`. A v4 UUID
+  only 11% of the time. A v4 UUID
   scores 3.39 bits/char — below `changeme-changeme` — because 36 characters are a poor sample of a
   122-bit secret, so no entropy threshold can separate the two; UUID-shaped values are accepted on
   shape instead, and only ever reach the test behind a credential key name, so a bare `id: <uuid>`
@@ -105,6 +106,67 @@ The plan below was written before implementation; these are where the shipped co
   candidate walk never stops early — the 4 096 budget bounds validations of weak candidates only.
   A flood of genuine minimal JWTs is real work (~125 ms per 256 KB) and is not capped.
 
+- **Entropy is normalised by the value's alphabet, not its length** (round 3, PR #42 review).
+  `H` is bounded by both `log2(alphabet)` and `log2(length)`, and for a real key the alphabet is
+  the binding one — 4.0 bits/char for hex however long the key — while `log2(length)` keeps
+  growing. Dividing by the length therefore made the bar *harder* the stronger the secret:
+  measured over 200 random samples per length, 16-hex values were caught 173/200 and 40-, 48- and
+  64-hex values **0/200**, so a 256-bit `api_key` scanned clean. The test is now
+  `entropy(v) / log2(distinct(v)) >= 0.75`, which is length-independent, plus two cheap guards
+  that do the real filtering: the value must contain an ASCII digit (round 2) and must draw on at
+  least **6 distinct characters** (`aaaaaaaa1aaaaaaa`, `abcabcabcabcabc1`). The alphabet bar alone
+  is loose — `changeme-changeme` scores 0.97 of its own alphabet's maximum — and is meant to be:
+  it asks "are these characters arranged randomly?", and the digit and distinct-character rules
+  ask whether the value is a placeholder. Measured after the change: 2 000/2 000 random hex values
+  fire at every length from 16 to 64.
+- **The generic value class is `[^\s"',;]{16,256}`** (round 3), terminated by `(?![^\s"',;])`,
+  with one trailing `.` stripped from the captured range. The old allow-list
+  (`[A-Za-z0-9_\-+/=.]`) missed the commonest human password shape outright —
+  `{"password": "Tr0ub4dor&3xKcd-9zQ"}` and `password: hunter2!SuperSecret99` both scanned clean —
+  because `&`, `!`, `$`, `#`, `%` and `*` sat outside it, which is far broader than the disclosed
+  "letters-only values are not flagged" limit. Excluding only whitespace and the characters that
+  *delimit* a value (quotes, comma, semicolon) keeps the value-only capture inside a JSON blob;
+  the period strip keeps `token: ABCD1234EFGH5678.` from swallowing the sentence's full stop.
+- **Vendor rules end in `(?![A-Za-z0-9_\-])`, not `\b`** (round 3). `-` is a non-word character,
+  so `\b` succeeds *inside* a hyphenated token: a 300-character `xoxb-` token matched its first
+  202 characters, redaction left 100 characters of live token in the buffer and the rescan came
+  back **clean** — a false all-clear on a partially redacted secret. The same applied to
+  `openAIKey`, `stripeKey`, `githubToken`, `googleAPIKey`, and to `awsSecretKey`, which had no
+  trailing boundary at all (a 50-character value redacted 40 and left 10). The AWS rule uses the
+  lookahead over its own alphabet, `(?![A-Za-z0-9_\-/+=])`, so a 41st `/`, `+` or `=` blocks the
+  partial match too. An over-long token now fails the rule outright: no match and no badge is the
+  honest answer, as it already was for an over-long generic value.
+- **An unscanned buffer is a visible state, not silence** (round 3). `scan` returns `[]` for
+  anything over 256 KB, and every consumer read that as "clean": the badge rendered nothing,
+  `RedactSecrets` returned the input verbatim so the coordinator reported `.unchanged` and cleared
+  the error message, and history persisted `containsSecret = false`. A buffer 17 bytes over the cap
+  with `AKIAIOSFODNN7EXAMPLE` at position 0 told the user nothing at all. The cap stays (partial
+  results from a half-scanned buffer would mislead worse), but the absence of a scan is now carried
+  everywhere the result is:
+  - `SecretDetector.isScannable(_:) -> Bool` — the single test, used by every caller.
+  - `PasteDocument.secretScanSkipped: Bool`, recomputed on exactly the same events as
+    `secretMatches`.
+  - The action bar shows a grey, non-interactive "Not scanned for secrets" capsule
+    (`shield.slash`, tooltip "This text is over 256 KB, the limit for the secrets scan.") in place
+    of the orange badge. Grey because it is an absence of knowledge, not a finding; non-interactive
+    because there is nothing to select, which is also why it needs no overlay guard.
+  - `RedactSecrets.apply` throws `TransformError.invalidInput("Too large to scan for secrets
+    (limit 256 KB)")` rather than reporting no change.
+  - `HistoryItem.containsSecret` is **`Bool?`**: nil = never examined (a pre-Plan-11 index, or a
+    text the scanner declined), false = scanned and clean, true = scanned and dirty. Legacy indexes
+    decode to nil, `record`/`pinText` set a value only when the text was scannable (history's
+    `maxTextBytes` equals the cap, so in practice always), and the overlay glyph shows only for
+    `== true`.
+- **`record` refreshes `containsSecret` on the identical-text early return** (round 3), and so does
+  `pinText`'s promote path. Without it a row whose flag was never set — every pre-Plan-11 item —
+  stayed unflagged however often the user copied the secret again, because re-copying takes the
+  dedupe path. This is also how a legacy nil eventually resolves: `load()` still never re-scans.
+- **`boundedCost`'s wall-clock bound is 1 s, not 150 ms** (round 3). The code meets the 150 ms
+  budget in isolation, but the assertion is measured while 48 other suites run in parallel and
+  failed the full suite at 166 ms. The regressions this test exists for — the JWT regex at 10 s per
+  256 KB, the lazy PEM window at 3 s per MB — are two orders of magnitude clear of 1 s. Every
+  adversarial shape is kept: the shapes are the test, the stopwatch is only the alarm.
+
 ## Scope
 
 **In scope:**
@@ -119,8 +181,8 @@ The plan below was written before implementation; these are where the shipped co
   re-scanned live on badge click); orange warning badge "N secret(s)" with kinds in the
   tooltip; click selects the next match in the editor (`TextEditor(text:selection:)`).
   The Detected badge omits `.secret`.
-- History: `HistoryItem.containsSecret: Bool` set at `record`/`pinText` time; overlay rows
-  show a shield glyph; legacy indexes decode as `false`.
+- History: `HistoryItem.containsSecret: Bool?` set at `record`/`pinText` time; overlay rows
+  show a shield glyph when it is `true`; legacy indexes decode as `nil` (never examined).
 - README, AGENTS (layout; Patterns: every detector regex bounded, per-line cap), spec.
 
 **Out of scope:** PII (emails, phones, cards); refusing captures; a Save confirmation;
@@ -157,6 +219,7 @@ public struct SecretMatch: Sendable, Equatable {
 }
 public enum SecretDetector {
     public static let maxBytes = 1_048_576
+    public static func isScannable(_ text: String) -> Bool     // utf8 count <= maxBytes; [] above it is "unknown", not "clean"
     public static func scan(_ text: String) -> [SecretMatch]   // sorted by range, non-overlapping (first wins)
     static func entropy(_ s: String) -> Double
 }
@@ -170,10 +233,11 @@ public struct RedactSecrets: Transformer { /* builtin.redactsecrets, "Redact Sec
 
 ### PastefixAppCore
 
-- `PasteDocument.secretMatches: [SecretMatch]` recomputed in `redetect()` and `init`
-  (same events as `detectedKinds`).
-- `HistoryItem.containsSecret: Bool` (tolerant decode → false); `HistoryStore.record` and
-  `pinText` set it from `SecretDetector.scan(text).isEmpty == false` (text only; images no).
+- `PasteDocument.secretMatches: [SecretMatch]` and `secretScanSkipped: Bool` recomputed in
+  `redetect()` and `init` (same events as `detectedKinds`).
+- `HistoryItem.containsSecret: Bool?` (tolerant decode → nil, "never examined");
+  `HistoryStore.record` and `pinText` set it from `SecretDetector.scan(text).isEmpty == false`
+  when `isScannable(text)` (text only; images no), and refresh it when the same text is re-copied.
 - `PaletteOrdering`/`TransformSearch` need no change (`applicableKinds` already works).
 
 ### Pastefix app
@@ -186,7 +250,8 @@ public struct RedactSecrets: Transformer { /* builtin.redactsecrets, "Redact Sec
   `Button { model.selectNextSecret() } label: { Label("\(n) secret\(n == 1 ? "" : "s")", systemImage: "exclamationmark.shield") }`
   orange tint, `.help("Looks like credentials: <kinds>. Click to select the next one. Use Redact Secrets (⌘K) to mask them.")`,
   visible when `n > 0` and no overlay is open.
-- `HistoryOverlayView` row: leading `shield.lefthalf.filled` (orange) when `item.containsSecret`.
+- `HistoryOverlayView` row: leading `shield.lefthalf.filled` (orange) when
+  `item.containsSecret == true`.
 
 ## Data flow
 

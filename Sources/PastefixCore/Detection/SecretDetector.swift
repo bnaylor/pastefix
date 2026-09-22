@@ -44,16 +44,18 @@ public struct SecretMatch: Sendable, Equatable {
 /// rules that a bounded regex still could not do in linear time — JWTs and PEM private-key
 /// blocks — are hand-written left-to-right scans instead (see `jwtRanges` / `privateKeyRanges`).
 /// The generic key=value rule additionally requires a high-entropy value so `password=changeme`
-/// stays quiet.
+/// stays quiet. A buffer over `maxBytes` is not scanned at all — `isScannable` is how a caller
+/// tells that apart from a clean scan, and every caller must.
 public enum SecretDetector {
     /// Measured on a 1 MB prose-like buffer: ~170ms, over the 150ms budget, so the cap is
     /// tightened to 256 KiB (Plan 11 Task 2, carried item C2).
     public static let maxBytes = 262_144
-    /// Shannon entropy caps at log2(n) bits/char for an n-character value, so a fixed 3.5-bit
-    /// bar is a far harder test at 16 characters (ceiling 4.0) than at 40 — measured, a random
-    /// 16-hex value cleared it only 11% of the time. The bar is a fraction of the achievable
-    /// maximum instead; see `isHighEntropy`.
+    /// The entropy bar, as a fraction of what the value's OWN alphabet could reach; see
+    /// `normalisedEntropy`.
     static let minNormalisedEntropy = 0.75
+    /// Values drawing on fewer distinct characters than this are not credentials, whatever they
+    /// score: `abcabcabcabcabc1` uses four and reaches 0.91 of its tiny alphabet's maximum.
+    static let minDistinctCharacters = 6
     /// How far past a BEGIN marker its matching END marker may sit. A PEM whose body exceeds
     /// this is not matched at all (a documented limit, pinned by `privateKeyBodyLimit`).
     static let maxPEMBodyLength = 16_384
@@ -69,23 +71,39 @@ public enum SecretDetector {
     /// hid every JWT that followed them.
     static let maxWeakJWTCandidates = 4_096
 
-    private struct Rule { let kind: SecretKind; let regex: NSRegularExpression; let group: Int; let needsEntropy: Bool }
+    private struct Rule {
+        let kind: SecretKind; let regex: NSRegularExpression; let group: Int; let needsEntropy: Bool
+        /// Drop one trailing "." from the captured range (see `genericAssignment`).
+        var trimsSentencePeriod = false
+    }
     private static func rx(_ p: String, _ o: NSRegularExpression.Options = []) -> NSRegularExpression { try! NSRegularExpression(pattern: p, options: o) }
+    /// Every vendor rule ends in `(?![A-Za-z0-9_\-])` (the AWS secret in the same lookahead over
+    /// its own alphabet) rather than `\b`. `-` is a non-word character, so `\b` succeeds *inside*
+    /// a hyphenated token: a 300-character `xoxb-` token matched its first 202 characters,
+    /// redaction left the tail behind and the rescan came back clean — a false all-clear on a
+    /// partially redacted secret. With the lookahead an over-long token does not match at all.
     private static let rules: [Rule] = [
         Rule(kind: .awsAccessKey, regex: rx(#"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b"#), group: 0, needsEntropy: false),
-        Rule(kind: .awsSecretKey, regex: rx(#"aws[_-]?secret[_-]?(?:access[_-]?)?key\W{0,5}([A-Za-z0-9/+=]{40})"#, .caseInsensitive), group: 1, needsEntropy: false),
-        Rule(kind: .githubToken, regex: rx(#"\b(?:gh[pousr]_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{22,255})\b"#), group: 0, needsEntropy: false),
-        Rule(kind: .openAIKey, regex: rx(#"\bsk-(?:proj-)?[A-Za-z0-9_-]{20,200}\b"#), group: 0, needsEntropy: false),
-        Rule(kind: .slackToken, regex: rx(#"\bxox[abprs]-[A-Za-z0-9-]{10,200}\b"#), group: 0, needsEntropy: false),
-        Rule(kind: .stripeKey, regex: rx(#"\b(?:sk|rk)_live_[A-Za-z0-9]{16,200}\b"#), group: 0, needsEntropy: false),
-        Rule(kind: .googleAPIKey, regex: rx(#"\bAIza[0-9A-Za-z_-]{35}\b"#), group: 0, needsEntropy: false),
+        Rule(kind: .awsSecretKey, regex: rx(#"aws[_-]?secret[_-]?(?:access[_-]?)?key\W{0,5}([A-Za-z0-9/+=]{40})(?![A-Za-z0-9_\-/+=])"#, .caseInsensitive), group: 1, needsEntropy: false),
+        Rule(kind: .githubToken, regex: rx(#"\b(?:gh[pousr]_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{22,255})(?![A-Za-z0-9_\-])"#), group: 0, needsEntropy: false),
+        Rule(kind: .openAIKey, regex: rx(#"\bsk-(?:proj-)?[A-Za-z0-9_-]{20,200}(?![A-Za-z0-9_\-])"#), group: 0, needsEntropy: false),
+        Rule(kind: .slackToken, regex: rx(#"\bxox[abprs]-[A-Za-z0-9-]{10,200}(?![A-Za-z0-9_\-])"#), group: 0, needsEntropy: false),
+        Rule(kind: .stripeKey, regex: rx(#"\b(?:sk|rk)_live_[A-Za-z0-9]{16,200}(?![A-Za-z0-9_\-])"#), group: 0, needsEntropy: false),
+        Rule(kind: .googleAPIKey, regex: rx(#"\bAIza[0-9A-Za-z_-]{35}(?![A-Za-z0-9_\-])"#), group: 0, needsEntropy: false),
         Rule(kind: .passwordInURL, regex: rx(#"\b[a-z][a-z0-9+.-]{1,15}://[^\s/:@]{1,64}:([^\s/@]{1,128})@"#, .caseInsensitive), group: 1, needsEntropy: false),
         // The key name may be quoted (JSON, YAML, PHP) and the separator may be a PHP fat arrow;
         // without the optional quotes every `{"password": "..."}` blob — the commonest way a
         // credential reaches the clipboard — was silently missed. The trailing negative lookahead
         // makes an over-long value fail outright rather than match its first 256 characters and
         // leave a redacted tail behind.
-        Rule(kind: .genericAssignment, regex: rx(#"["']?\b(?:password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|auth[_-]?token|client[_-]?secret)\b["']?\s*(?:=>|[:=])\s*["']?([A-Za-z0-9_\-+/=.]{16,256})["']?(?![A-Za-z0-9_\-+/=.])"#, .caseInsensitive), group: 1, needsEntropy: true),
+        //
+        // The value class is everything except whitespace and the characters that *delimit* a
+        // value (quotes, comma, semicolon). An allow-list of `[A-Za-z0-9_\-+/=.]` missed the
+        // commonest human password shape outright — `Tr0ub4dor&3xKcd-9zQ` and
+        // `hunter2!SuperSecret99` both scanned clean — because `&`, `!`, `$`, `#`, `%` and `*` sat
+        // outside it. `trimsSentencePeriod` then gives back the one character the wider class
+        // over-claims: a value at the end of a sentence.
+        Rule(kind: .genericAssignment, regex: rx(#"["']?\b(?:password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|auth[_-]?token|client[_-]?secret)\b["']?\s*(?:=>|[:=])\s*["']?([^\s"',;]{16,256})["']?(?![^\s"',;])"#, .caseInsensitive), group: 1, needsEntropy: true, trimsSentencePeriod: true),
     ]
 
     /// Declaration order of `SecretKind`, used as the deterministic tie-break when two rules
@@ -93,15 +111,27 @@ public enum SecretDetector {
     private static let kindOrder: [SecretKind: Int] =
         Dictionary(uniqueKeysWithValues: SecretKind.allCases.enumerated().map { ($1, $0) })
 
+    /// Whether `scan` will actually examine this text. A buffer over the cap is not scanned at
+    /// all, and callers must be able to tell that apart from "scanned and clean": an empty result
+    /// from an unscanned buffer is not evidence of anything. `PasteDocument.secretScanSkipped`,
+    /// the "Not scanned for secrets" badge, `RedactSecrets` (which throws) and
+    /// `HistoryItem.containsSecret == nil` are the four places that distinction is kept.
+    public static func isScannable(_ text: String) -> Bool { text.utf8.count <= maxBytes }
+
     public static func scan(_ text: String) -> [SecretMatch] {
-        guard text.utf8.count <= maxBytes, !text.isEmpty else { return [] }
+        guard isScannable(text), !text.isEmpty else { return [] }
         let ns = text as NSString
         let full = NSRange(location: 0, length: ns.length)
         var found: [(range: NSRange, kind: SecretKind)] = []
         for rule in rules {
             for m in rule.regex.matches(in: text, range: full) {
-                let r = m.range(at: rule.group)
+                var r = m.range(at: rule.group)
                 guard r.location != NSNotFound else { continue }
+                // A value class that admits punctuation also admits the full stop that ends the
+                // sentence it sits in; redacting it swallowed the period. One only: a trailing
+                // dot is a sentence, two is part of the token.
+                if rule.trimsSentencePeriod, r.length > 0,
+                   ns.character(at: NSMaxRange(r) - 1) == UInt16(UInt8(ascii: ".")) { r.length -= 1 }
                 if rule.needsEntropy, !isHighEntropy(ns.substring(with: r)) { continue }
                 found.append((r, rule.kind))
             }
@@ -304,18 +334,34 @@ public enum SecretDetector {
         // which is the accepted price for not crying wolf on every config template.
         guard s.utf8.contains(where: { $0 >= 0x30 && $0 <= 0x39 }) else { return false }
         if uuidShape.firstMatch(in: s, range: NSRange(location: 0, length: (s as NSString).length)) != nil { return true }
-        return normalisedEntropy(s) >= minNormalisedEntropy
+        return distinctCharacters(s) >= minDistinctCharacters && normalisedEntropy(s) >= minNormalisedEntropy
     }
 
     private static let uuidShape = rx(#"^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$"#)
 
-    /// Shannon entropy as a fraction of the maximum a value of this length could reach.
-    /// Capped at 64 characters so a long value is not held to an ever-rising bar.
+    /// Shannon entropy as a fraction of the maximum the value's own *alphabet* could reach.
+    ///
+    /// Not the maximum its *length* could reach, which is the same quantity read the wrong way
+    /// round. `H` is bounded by both `log2(alphabet)` and `log2(length)`, and for a real key the
+    /// alphabet is the binding one — 4.0 bits/char for hex, whatever the length — while the length
+    /// divisor keeps growing. Dividing by `log2(length)` therefore made the bar *harder* the
+    /// longer, and so the stronger, the secret: measured over 200 random samples per length,
+    /// 16-hex values were caught 173/200 and 40-, 48- and 64-hex values 0/200. A 256-bit key
+    /// scanned clean. Dividing by `log2(distinct)` asks the question that was always meant —
+    /// "given the characters this value actually uses, are they arranged randomly?" — and is
+    /// length-independent, so it keeps the 16-character fix without inverting above it.
+    ///
+    /// It is a loose test on its own: any well-mixed value scores near 1.0, including
+    /// `changeme-changeme` (0.97). The digit requirement and `minDistinctCharacters` in
+    /// `isHighEntropy` are what keep placeholders quiet.
     static func normalisedEntropy(_ s: String) -> Double {
-        let n = min(s.count, 64)
-        guard n > 1 else { return 0 }
-        return entropy(s) / log2(Double(n))
+        let distinct = distinctCharacters(s)
+        guard distinct > 1 else { return 0 }
+        return entropy(s) / log2(Double(distinct))
     }
+
+    /// How many distinct characters the value draws on — its observed alphabet.
+    static func distinctCharacters(_ s: String) -> Int { Set(s).count }
 
     /// Shannon entropy in bits per character.
     static func entropy(_ s: String) -> Double {

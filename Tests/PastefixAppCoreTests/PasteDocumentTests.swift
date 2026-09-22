@@ -91,6 +91,19 @@ import PastefixCore
         #expect(d.secretMatches.isEmpty && !d.detectedKinds.contains(.secret))
     }
 
+    @Test func oversizeBufferIsFlaggedUnscannedNotClean() {
+        // An empty `secretMatches` from a buffer that was never scanned is not a clean bill of
+        // health, and the badge needs to be able to tell the two apart.
+        let big = String(repeating: "a", count: SecretDetector.maxBytes) + " AKIAIOSFODNN7EXAMPLE"
+        var d = PasteDocument(origin: ClipboardSnapshot(plainText: big, richRTFD: nil))
+        #expect(d.secretScanSkipped && d.secretMatches.isEmpty && !d.detectedKinds.contains(.secret))
+        d.pushState("AKIAIOSFODNN7EXAMPLE")                    // back under the cap
+        #expect(!d.secretScanSkipped && d.secretMatches.map(\.kind) == [.awsAccessKey])
+        d.undo()
+        #expect(d.secretScanSkipped && d.secretMatches.isEmpty)
+        #expect(!doc("small").secretScanSkipped)
+    }
+
     @Test func outputModeDefaultsSurvivesPushResetsOnRefresh() {
         var d = PasteDocument(origin: ClipboardSnapshot(plainText: "a", richRTFD: nil))
         #expect(d.outputMode == .plain)

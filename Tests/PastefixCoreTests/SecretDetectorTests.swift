@@ -115,7 +115,13 @@ import Testing
                            ("sk- near misses", nearMisses)] {
             #expect(s.utf8.count <= SecretDetector.maxBytes, "\(label) must not be rejected by the size guard")
             let t = clock.measure { _ = SecretDetector.scan(s) }
-            #expect(t < .milliseconds(150), "\(label) took \(t)")
+            // 1 s, not the 150 ms budget: this is wall-clock time measured while 48 other suites
+            // run in parallel, and at 150 ms it failed the full suite (166 ms) while passing in
+            // isolation. The regressions it exists to catch — the JWT regex at 10 s per 256 KB,
+            // the lazy PEM window at 3 s per MB — are two orders of magnitude clear of 1 s, so
+            // the bound still catches them without being a coin toss. Every adversarial shape is
+            // kept; the shapes are the test, the stopwatch is only the alarm.
+            #expect(t < .seconds(1), "\(label) took \(t)")
         }
         // The guard, not the content: an oversize buffer holding a real key must still be empty.
         let oversize = String(repeating: "a", count: SecretDetector.maxBytes) + " AKIAIOSFODNN7EXAMPLE"
@@ -152,7 +158,7 @@ import Testing
             #expect(m.map(\.kind) == [.jwt], "\(label): \(m.count) matches")
             #expect(m.map { String(buffer[$0.range]) } == [jwt])
             let t = ContinuousClock().measure { _ = SecretDetector.scan(buffer) }
-            #expect(t < .milliseconds(150), "\(label) took \(t)")
+            #expect(t < .seconds(1), "\(label) took \(t)")     // load-tolerant, as in `boundedCost`
         }
         #expect(5_000 > SecretDetector.maxWeakJWTCandidates)     // the budget really is exhausted
     }
@@ -180,13 +186,40 @@ import Testing
         #expect(SecretDetector.entropy("aaaaaaaa") == 0)
         #expect(SecretDetector.entropy("9f8e7d6c5b4a39281706f5e4d3c2b1a0") > 3.5)
     }
-    @Test func entropyBarIsLengthNormalised() {
-        // A fixed 3.5 bits/char bar is unreachable for short values (a 16-char value tops out at
-        // 4.0), so short hex secrets were missed ~89% of the time. The bar is a fraction of the
-        // achievable maximum instead.
-        #expect(kinds("api_key=a3f9c1e7b2d84f06") == [.genericAssignment])         // 16 hex chars
+    @Test func entropyBarIsAlphabetNormalised() {
+        // Normalising by log2(length) made the bar HARDER the longer the value, so detection fell
+        // monotonically as the secret got stronger: measured over 200 random samples per length,
+        // 16-hex cleared 173/200 and 40-, 48- and 64-hex cleared 0/200 — a 256-bit key scanned
+        // clean. Normalising by the observed alphabet is length-independent; these fixed random
+        // hex literals are one sample each of lengths that used to be invisible, and under the
+        // alphabet bar 2 000/2 000 random hex values clear it at every one of these lengths.
+        for hex in ["eee65f53e9421ce5",                                                  // 16
+                    "0211670eae679f02e8d28a79",                                          // 24
+                    "023c39c200661fccd268a29a0d347301",                                  // 32
+                    "ef56e64dc3cd6089065c3146e80a9c222670bbe4",                          // 40
+                    "f4c54977656cf2d133187c8df95247f2866028de71159b42",                  // 48
+                    "b4ea410fb9102f29a422eb14ab2f2d0f0cc022238daceee2092f073ff80b9465"] { // 64
+            #expect(kinds("api_key = \(hex)") == [.genericAssignment], "\(hex.count)-hex missed")
+        }
+        // Quiet, and by which rule: the alphabet bar is loose on its own (every placeholder below
+        // clears it), so the digit requirement and the distinct-character floor are what silence
+        // these. Pinning the mechanism keeps a future tweak honest.
+        for placeholder in ["changeme-changeme", "your-token-here-xx", "please-change-me-now",
+                            "example-value-goes-here", "/var/run/secrets/tok"] {
+            let hasDigit = placeholder.contains(where: \.isNumber)
+            #expect(!hasDigit)                                                    // no digit
+            #expect(kinds("token = \(placeholder)") == [], "\(placeholder) fired")
+        }
+        #expect(SecretDetector.distinctCharacters("aaaaaaaa1aaaaaaa") < SecretDetector.minDistinctCharacters)
+        #expect(SecretDetector.normalisedEntropy("aaaaaaaa1aaaaaaa") < SecretDetector.minNormalisedEntropy)
+        #expect(kinds("token = aaaaaaaa1aaaaaaa") == [])
+        // Four distinct characters, but well mixed: 0.91 of its own alphabet's maximum. Only the
+        // distinct-character floor stops this one.
+        #expect(SecretDetector.normalisedEntropy("abcabcabcabcabc1") >= SecretDetector.minNormalisedEntropy)
+        #expect(SecretDetector.distinctCharacters("abcabcabcabcabc1") < SecretDetector.minDistinctCharacters)
+        #expect(kinds("token = abcabcabcabcabc1") == [])
+        #expect(kinds("token = null") == [])
         #expect(kinds("api_key: \"9f8e7d6c5b4a39281706f5e4d3c2b1a0\"") == [.genericAssignment])
-        #expect(kinds("password=changeme-changeme") == [])
         #expect(kinds("secret=aaaaaaaaaaaaaaaaaaaa") == [])
         // A UUID scores 3.39 bits/char — below `changeme-changeme` — because 36 characters is a
         // poor sample of a 122-bit secret, so it is accepted on shape. It only gets here behind a
@@ -194,7 +227,46 @@ import Testing
         #expect(kinds("api_key=550e8400-e29b-41d4-a716-446655440000") == [.genericAssignment])
         #expect(kinds("id: 550e8400-e29b-41d4-a716-446655440000") == [])
         #expect(SecretDetector.normalisedEntropy("a3f9c1e7b2d84f06") >= SecretDetector.minNormalisedEntropy)
-        #expect(SecretDetector.normalisedEntropy("changeme-changeme") < SecretDetector.minNormalisedEntropy)
+    }
+    @Test func genericAssignmentSeesPunctuationInValues() {
+        // The commonest human password shape. An allow-list value class missed both of these
+        // outright — `&` and `!` sat outside it — which is much broader than the disclosed
+        // "letters-only values are not flagged" limit.
+        #expect(kinds("{\"password\": \"Tr0ub4dor&3xKcd-9zQ\"}") == [.genericAssignment])
+        #expect(texts("{\"password\": \"Tr0ub4dor&3xKcd-9zQ\"}") == ["Tr0ub4dor&3xKcd-9zQ"])   // value only
+        #expect(kinds("password: hunter2!SuperSecret99") == [.genericAssignment])
+        // One trailing full stop is the sentence's, not the token's.
+        #expect(texts("token: ABCD1234EFGH5678.") == ["ABCD1234EFGH5678"])
+        let out = SecretRedactor.redact("token: ABCD1234EFGH5678.", matches: SecretDetector.scan("token: ABCD1234EFGH5678."))
+        #expect(out == "token: [REDACTED credential].")
+    }
+    @Test func vendorRulesDoNotMatchMidToken() {
+        // `\b` succeeds before `-`, so an over-long hyphenated token matched a prefix: redaction
+        // left the tail in the buffer and the rescan came back clean. The lookahead makes the
+        // whole match fail instead — no badge is honest, a partial redaction is not.
+        let longTail = String(repeating: "aB9cD8eF7gH6iJ5kL4mN3oP2qR1sT0uV", count: 10)     // 320 chars
+        #expect(kinds("xoxb-" + longTail) == [])
+        #expect(kinds("sk-" + longTail) == [])
+        #expect(kinds("sk_live_" + longTail) == [])
+        // A 50-character AWS secret value: 40 characters of it used to redact, leaving 10 behind.
+        #expect(kinds("aws_secret_access_key = wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEYabcdefghij") == [])
+        // Canonical lengths are untouched.
+        #expect(kinds("xoxb-1234567890-abcdefghij") == [.slackToken])
+        #expect(kinds("aws_secret_access_key = wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY") == [.awsSecretKey])
+        #expect(kinds("ghp_" + String(repeating: "a", count: 36)) == [.githubToken])
+        #expect(kinds("AIza" + String(repeating: "q", count: 35)) == [.googleAPIKey])
+        #expect(kinds("OPENAI=sk-proj-" + String(repeating: "x9", count: 20)) == [.openAIKey])
+        #expect(kinds("sk_live_" + String(repeating: "Ab1", count: 8)) == [.stripeKey])
+    }
+    @Test func isScannableMarksTheUnexaminedBuffer() {
+        // The scan cap is also a claim cap: `scan` returning [] above it is the absence of a
+        // scan, and `isScannable` is how every caller tells that apart from a clean result.
+        let oversize = String(repeating: "a", count: SecretDetector.maxBytes) + " AKIAIOSFODNN7EXAMPLE"
+        #expect(!SecretDetector.isScannable(oversize))
+        #expect(SecretDetector.scan(oversize).isEmpty)
+        #expect(SecretDetector.isScannable(String(repeating: "a", count: SecretDetector.maxBytes)))
+        #expect(SecretDetector.isScannable("AKIAIOSFODNN7EXAMPLE") && !SecretDetector.scan("AKIAIOSFODNN7EXAMPLE").isEmpty)
+        #expect(SecretDetector.isScannable(""))
     }
     @Test func genericAssignmentValueNeedsADigit() {
         // Placeholders and paths score as "random" on normalised Shannon entropy — every one of

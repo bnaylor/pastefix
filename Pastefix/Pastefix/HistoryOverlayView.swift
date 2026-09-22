@@ -267,7 +267,9 @@ struct HistoryOverlayView: View {
     private func row(_ result: HistorySearchResult, isSelected: Bool) -> some View {
         let item = result.item
         return HStack(spacing: 10) {
-            if item.containsSecret {
+            // `== true` only: nil is "never examined" (a pre-Plan-11 row), and a glyph there
+            // would be a claim the store cannot make.
+            if item.containsSecret == true {
                 Image(systemName: "shield.lefthalf.filled")
                     .foregroundStyle(.orange)
                     .help("Looks like it contains a credential")
