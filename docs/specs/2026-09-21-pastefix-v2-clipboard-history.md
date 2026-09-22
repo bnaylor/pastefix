@@ -57,9 +57,10 @@ read of this spec.
    apps. A tick that sees empty declared types is retried next tick rather
    than treated as a real (empty) change. PNG over the image budget is
    skipped before decoding; TIFF is gated by a header-only pixel count (>25M
-   pixels skipped) before paying for a decode + PNG re-encode — that decode
-   and re-encode is the one image cost still paid on the main actor, since a
-   TIFF's PNG size is unknown until the PNG exists.
+   pixels skipped) before paying for a decode + PNG re-encode, and that decode
+   and re-encode runs off the main actor (Amendment 9) because a TIFF's PNG
+   size is unknown until the PNG exists — so the change-count re-check and the
+   stage-2 filter pass both happen a second time, after it.
 5. **The store is constructed with the user's configured cap directly**, and
    cap changes from Settings are clamped and debounced 400 ms in the app layer
    before reaching `HistoryStore.limits`, so holding the Settings stepper
@@ -82,8 +83,30 @@ read of this spec.
    real password managers write the marker in the same burst as the content,
    which is covered. Verified in the manual pass: same-burst and legacy markers
    are skipped; a marker delayed by 700 ms was not.
-9. **Deferred:** TIFF→PNG conversion (and the thumbnail read) still run on the
-   main actor — #32.
+9. **TIFF→PNG conversion runs off the main actor** (#32; deferred out of the
+   original build, done later). A photographic TIFF inside the pixel ceiling
+   costs 0.4 s (6.6 MP) to 1.3 s (20.4 MP) to decode and re-encode, often for a
+   PNG the image budget then discards, and the poll timer runs in `.common`
+   mode, so on the main actor that stall lands during menu tracking. `read`
+   therefore returns the raw TIFF plus its header pixel size and converts
+   nothing; `tick` runs stage 2 as usual and then hands the bytes to a detached
+   task (only `Data` and `Int` cross), and the capture happens from the
+   completion, back on the main actor. Everything that can change while the
+   conversion runs is decided there and not before: the change count is
+   re-checked (a pasteboard that turned over drops the item, the same rule as
+   the post-read check), and the stage-2 filters run again over the types
+   approved earlier *unioned with those declared now* — `setData` still doesn't
+   bump the change count, and the conversion window is far wider than the
+   read's. Attribution stays the pre-conversion sample, since the source app is
+   determined before the read and a second later the newest activation may be
+   an app the user switched to after copying; only the exclusion check gets the
+   widened set of recent bundle ids. One conversion is in flight at a time,
+   superseded by a generation number (and by `stop()`). A conversion that fails
+   or produces a PNG over the budget records the item's text if it has any and
+   nothing otherwise — `PendingImage.resolve` in `PastefixAppCore`, the one
+   testable piece of this. The overlay's thumbnail blob read and ImageIO decode
+   moved off the main actor the same way, keyed by item id so a row recycled
+   mid-load can't install the wrong thumbnail.
 
 ## Scope
 
@@ -296,11 +319,12 @@ characters, "…" when truncated; `"Image \(w)×\(h)"` for image-only items),
     [NSAttributedString.self])` **only if** `availableType(from: [.rtf,
     .rtfd, .html]) != nil` (the Plan 2a lesson), serialised to RTFD data;
     `imagePNG` from `.png` directly (skipped before decoding if over
-    `maxImageBytes`), else from `.tiff` via `NSBitmapImageRep` → PNG, gated
-    by a header-only pixel count (>25M pixels skipped, since TIFF byte size
-    does not correlate with PNG-compressed size) before paying for the
-    decode + re-encode; `imagePixelWidth`/`imagePixelHeight` read from the
-    image header, no full decode required.
+    `maxImageBytes`); a `.tiff`-only image is carried out of the read
+    unconverted, gated by a header-only pixel count (>25M pixels skipped,
+    since TIFF byte size does not correlate with PNG-compressed size) and
+    converted to PNG off the main actor afterwards (Amendment 9);
+    `imagePixelWidth`/`imagePixelHeight` read from the image header, no full
+    decode required.
   - If the pasteboard's `changeCount` changed again while the read was in
     flight, discard the read (it may mix this change's marker types with a
     later change's content) and roll `lastChangeCount` back one so the next
@@ -309,7 +333,9 @@ characters, "…" when truncated; `"Image \(w)×\(h)"` for image-only items),
     using the union of the types sampled before and after the read (see
     Amendment 4), for filters that need content `read` alone populates (e.g.
     `sourceBundleID`, for #10's app exclusion). If every filter says yes, call
-    `onCapture`.
+    `onCapture` — unless the image is still an unconverted TIFF, in which case
+    the conversion's completion calls it, after re-running both checks
+    (Amendment 9).
   - The first tick after `start()` only records the current `changeCount`; it
     does not capture what was already on the clipboard.
 - `protocol CaptureFilter: Sendable { func shouldRead(types: [NSPasteboard.PasteboardType]) -> Bool; func shouldCapture(_ candidate: CaptureCandidate, types: [NSPasteboard.PasteboardType]) -> Bool }`
@@ -355,7 +381,10 @@ for images. Existing `writePlain` remains and calls it.
 - Image row: 44×44 thumbnail, trailing hint "↵ copies". Thumbnails are ImageIO
   thumbnails (`CGImageSourceCreateThumbnailAtIndex`, not a full decode)
   downsampled to a maximum of 88 px (2× the 44pt slot, for Retina), cached per
-  item id up to 64 images with FIFO eviction — see Amendment 6.
+  item id up to 64 images with FIFO eviction — see Amendment 6. The blob read
+  and the decode both run off the main actor (Amendment 9); the result is
+  installed by item id, and a load already in flight for that id is not
+  started twice.
 - Visible row count derives from the panel's available height at open time,
   not a fixed 8: 4 rows at the panel's minimum height, up to a cap of 8.
 - Keys: ↑↓ wrap; ↵ → `model.load(item)` (text/rich) or `model.copyBack(item)`

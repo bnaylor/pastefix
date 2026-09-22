@@ -28,6 +28,9 @@ struct HistoryOverlayView: View {
     /// frame, with `thumbnailOrder` as the FIFO eviction order.
     @State private var thumbnails: [UUID: NSImage] = [:]
     @State private var thumbnailOrder: [UUID] = []
+    /// Ids whose blob read + decode is in flight, so a re-render (or a second row for the same
+    /// item) doesn't start the same off-main load again.
+    @State private var thumbnailsLoading: Set<UUID> = []
     @FocusState private var fieldFocused: Bool
 
     /// Tall enough for the 44pt image thumbnails; the palette's rows are text-only at 44.
@@ -86,7 +89,7 @@ struct HistoryOverlayView: View {
         .onChange(of: history.items) { _, _ in refreshResults() }
         // The view is torn down on close, so this is belt-and-braces — but the cache is the one
         // piece of state here that is worth megabytes.
-        .onDisappear { thumbnails.removeAll(); thumbnailOrder.removeAll() }
+        .onDisappear { thumbnails.removeAll(); thumbnailOrder.removeAll(); thumbnailsLoading.removeAll() }
     }
 
     /// How many rows fit above the footer at this panel height, given the number of section
@@ -353,25 +356,47 @@ struct HistoryOverlayView: View {
             Image(nsImage: image).resizable().scaledToFit()
         } else {
             Color.secondary.opacity(0.2)
-                .task(id: item.id) { cacheThumbnail(for: item) }
+                .task(id: item.id) { await cacheThumbnail(for: item) }
         }
     }
 
-    /// Decodes the blob straight down to thumbnail size — a 5MB PNG decoded whole would cost
-    /// tens of megabytes of bitmap to fill a 44pt slot — and evicts FIFO at the cache cap.
-    private func cacheThumbnail(for item: HistoryItem) {
-        guard thumbnails[item.id] == nil,
-              let data = history.imagePNG(for: item),
-              let image = Self.downsample(data, maxPixelSize: Self.thumbnailPixelSize) else { return }
+    /// Reads the blob and decodes it straight down to thumbnail size — a 5MB PNG decoded whole
+    /// would cost tens of megabytes of bitmap to fill a 44pt slot — off the main actor (#32),
+    /// hopping back only to install the result, and evicts FIFO at the cache cap.
+    ///
+    /// The result is keyed to the id it was loaded for, never to "the row that asked": the
+    /// overlay can be scrolled, filtered or re-ranked while the bytes are in flight, and the row
+    /// that started this load may be showing a different item by the time it lands. The
+    /// `thumbnailsLoading` set is the other half of that — without it, a re-render while the read
+    /// is in flight starts a second read of the same blob.
+    private func cacheThumbnail(for item: HistoryItem) async {
+        let id = item.id
+        guard thumbnails[id] == nil, !thumbnailsLoading.contains(id),
+              let url = history.imageURL(for: item) else { return }
+        thumbnailsLoading.insert(id)
+        let maxPixelSize = Self.thumbnailPixelSize
+        // Only Sendable values cross: a file URL and an Int. The `NSImage` wrapper is built back
+        // here on the main actor, so nothing AppKit-mutable is constructed off it.
+        let decoded = await Task.detached(priority: .utility) { () -> CGImage? in
+            guard let data = try? Data(contentsOf: url) else { return nil }
+            return HistoryOverlayView.downsample(data, maxPixelSize: maxPixelSize)
+        }.value
+        thumbnailsLoading.remove(id)
+        // Cancellation means the row is gone (`.task(id:)` is torn down with it); the next
+        // appearance re-requests the thumbnail.
+        guard !Task.isCancelled, let decoded, thumbnails[id] == nil else { return }
         while thumbnails.count >= Self.thumbnailCacheLimit, let oldest = thumbnailOrder.first {
             thumbnailOrder.removeFirst()
             thumbnails.removeValue(forKey: oldest)
         }
-        thumbnails[item.id] = image
-        thumbnailOrder.append(item.id)
+        thumbnails[id] = NSImage(cgImage: decoded,
+                                 size: NSSize(width: decoded.width, height: decoded.height))
+        thumbnailOrder.append(id)
     }
 
-    private static func downsample(_ data: Data, maxPixelSize: Int) -> NSImage? {
+    /// `nonisolated` so the read + decode above can run off the main actor: it touches nothing
+    /// but its arguments and ImageIO.
+    nonisolated private static func downsample(_ data: Data, maxPixelSize: Int) -> CGImage? {
         let sourceOptions = [kCGImageSourceShouldCache: false] as CFDictionary
         guard let source = CGImageSourceCreateWithData(data as CFData, sourceOptions) else { return nil }
         let options = [
@@ -379,8 +404,7 @@ struct HistoryOverlayView: View {
             kCGImageSourceCreateThumbnailWithTransform: true,
             kCGImageSourceThumbnailMaxPixelSize: maxPixelSize,
         ] as CFDictionary
-        guard let thumbnail = CGImageSourceCreateThumbnailAtIndex(source, 0, options) else { return nil }
-        return NSImage(cgImage: thumbnail, size: NSSize(width: thumbnail.width, height: thumbnail.height))
+        return CGImageSourceCreateThumbnailAtIndex(source, 0, options)
     }
 
     // MARK: Actions (every one reads live state)

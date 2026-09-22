@@ -266,8 +266,19 @@ public final class HistoryStore: ObservableObject {
     }
 
     public func imagePNG(for item: HistoryItem) -> Data? {
+        guard let url = imageURL(for: item) else { return nil }
+        return try? Data(contentsOf: url)
+    }
+
+    /// Where an item's image blob lives, or nil when it has none.
+    ///
+    /// Exposed so a caller can read the bytes off the main actor — the overlay's thumbnails do,
+    /// since a 5 MB blob read plus decode is not main-actor work (#32). The path still comes from
+    /// the item's id and nowhere else, exactly as `imagePNG` gets it: an index that claims some
+    /// other file name cannot redirect the read (Critical Invariant 12).
+    public func imageURL(for item: HistoryItem) -> URL? {
         guard item.imageFile != nil else { return nil }
-        return try? Data(contentsOf: blobURL(item.id, ext: Self.imageExtension))
+        return blobURL(item.id, ext: Self.imageExtension)
     }
 
     public var totalBytes: Int { items.reduce(0) { $0 + $1.byteCount } }

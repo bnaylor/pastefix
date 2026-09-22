@@ -58,8 +58,8 @@ final class FrontmostAppTracker {
     ///
     /// `entries` only holds activations the notification stream has already delivered to us, and
     /// a delivery can lose the race with the poll timer in the same runloop pass (or arrive after
-    /// a main-thread stall such as the TIFF re-encode). So `NSWorkspace.frontmostApplication` is
-    /// cross-checked in and unioned into `recentBundleIDs`: it can only ever WIDEN the set an
+    /// any main-thread stall — a long rich-text import, say). So
+    /// `NSWorkspace.frontmostApplication` is cross-checked in and unioned into `recentBundleIDs`: it can only ever WIDEN the set an
     /// exclusion can match, never change attribution, which stays the newest tracked activation.
     /// This narrows the window rather than closing it — `NSWorkspace`'s own frontmost cache is
     /// updated asynchronously too, so a blocked main thread can leave it just as stale as ours.
