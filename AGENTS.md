@@ -310,7 +310,7 @@ When you **significantly expand the project** — a new target, subsystem, scrip
 | 7 — Sensitive-app exclusion | AppExclusionFilter, FrontmostAppTracker, Privacy tab, menu-bar pause | ✅ merged — PR #34 (`b2b5166`) — [spec](docs/specs/2026-09-21-pastefix-v2-sensitive-app-exclusion.md), [plan](docs/plans/2026-09-21-pastefix-v2-sensitive-app-exclusion.md) |
 | 8 — Markdown ↔ rich text | MarkdownHTML, MarkdownFromRich, OutputMode, Rich Text category | ✅ merged — PR #35 (`1d99648`) — [spec](docs/specs/2026-09-21-pastefix-v2-markdown-rich-text.md), [plan](docs/plans/2026-09-21-pastefix-v2-markdown-rich-text.md) |
 | 9 — Pinned snippets | pin/unpin, Pinned section, ⇧↵ paste, per-snippet hotkeys, Snippets tab | ✅ merged — PR #38 (`08f72d6`) — [spec](docs/specs/2026-09-21-pastefix-v2-pinned-snippets.md), [plan](docs/plans/2026-09-21-pastefix-v2-pinned-snippets.md) |
-| 10 — Markdown preview | MarkdownPreview, MarkdownPreviewView, ⌘⇧M toggle | 🟡 in progress, branch feat/markdown-preview — [spec](docs/specs/2026-09-21-pastefix-v2-markdown-preview.md), [plan](docs/plans/2026-09-21-pastefix-v2-markdown-preview.md) |
+| 10 — Markdown preview | MarkdownPreview, MarkdownPreviewView, ⌘⇧M toggle | ✅ merged — PR #40 (`c98cca8`) — [spec](docs/specs/2026-09-21-pastefix-v2-markdown-preview.md), [plan](docs/plans/2026-09-21-pastefix-v2-markdown-preview.md) |
 
 Historical reference material for the 2007 and 2019 incarnations is vendored under [`docs/inputs/legacy/`](docs/inputs/legacy/).
 

@@ -1,6 +1,6 @@
 ---
 type: spec
-status: approved
+status: implemented
 id: 2026-09-21-pastefix-v2-markdown-preview
 title: Pastefix v2 — Markdown Preview in the Panel (Plan 10)
 description: A toggleable, read-only rendered preview of the working buffer that reuses the Plan 8 Markdown → HTML renderer and AppKit's HTML importer; ⌘⇧M swaps the editor area for the preview; no network, dark-mode aware, debounced, size-capped.
