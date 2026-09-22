@@ -1,7 +1,12 @@
 import SwiftUI
 import AppKit
 import ImageIO
+import os
 import PastefixAppCore
+
+/// Same category as the capture path's: an item whose image blob will not decode is a history
+/// inconsistency, and a grey placeholder is not a report of one.
+private let historyLog = Logger(subsystem: "net.scromp.Pastefix", category: "history")
 
 /// ⌘Y / ⌘⇧V overlay: type to filter the clipboard history, ↑↓ to choose, ↵ to open,
 /// ⌘↵ to copy back, ⌘⌫ to remove, Esc to close.
@@ -31,6 +36,12 @@ struct HistoryOverlayView: View {
     /// Ids whose blob read + decode is in flight, so a re-render (or a second row for the same
     /// item) doesn't start the same off-main load again.
     @State private var thumbnailsLoading: Set<UUID> = []
+    /// Ids whose blob would not decode. The item claims an `imageFile`, which `HistoryStore` only
+    /// sets after the blob is written atomically — so a failure means missing or corrupt, which
+    /// re-reading cannot cure. Remembering them keeps a scroll past a bad row from re-reading the
+    /// same dead blob (and re-logging it) on every appearance. Cleared with the cache on close,
+    /// so a later session still tries once.
+    @State private var thumbnailsFailed: Set<UUID> = []
     @FocusState private var fieldFocused: Bool
 
     /// Tall enough for the 44pt image thumbnails; the palette's rows are text-only at 44.
@@ -89,7 +100,10 @@ struct HistoryOverlayView: View {
         .onChange(of: history.items) { _, _ in refreshResults() }
         // The view is torn down on close, so this is belt-and-braces — but the cache is the one
         // piece of state here that is worth megabytes.
-        .onDisappear { thumbnails.removeAll(); thumbnailOrder.removeAll(); thumbnailsLoading.removeAll() }
+        .onDisappear {
+            thumbnails.removeAll(); thumbnailOrder.removeAll()
+            thumbnailsLoading.removeAll(); thumbnailsFailed.removeAll()
+        }
     }
 
     /// How many rows fit above the footer at this panel height, given the number of section
@@ -372,6 +386,7 @@ struct HistoryOverlayView: View {
     private func cacheThumbnail(for item: HistoryItem) async {
         let id = item.id
         guard thumbnails[id] == nil, !thumbnailsLoading.contains(id),
+              !thumbnailsFailed.contains(id),
               let url = history.imageURL(for: item) else { return }
         thumbnailsLoading.insert(id)
         let maxPixelSize = Self.thumbnailPixelSize
@@ -381,8 +396,9 @@ struct HistoryOverlayView: View {
             guard let data = try? Data(contentsOf: url) else { return nil }
             return HistoryOverlayView.downsample(data, maxPixelSize: maxPixelSize)
         }.value
-        // Cleared on every exit from here on, so a load that fails or lands late can always be
-        // retried by the next row that asks for this id.
+        // Cleared on every exit from here on, so a load that lands late never leaves the id
+        // looking busy. A failure moves it to `thumbnailsFailed` instead of becoming retriable:
+        // the blob is gone, not slow.
         thumbnailsLoading.remove(id)
         // A decoded image is installed whatever happened to the row that asked for it. The
         // `.task(id:)` is cancelled as soon as the row goes away — filtered out by a keystroke,
@@ -391,7 +407,14 @@ struct HistoryOverlayView: View {
         // `thumbnailsLoading` and will not fire again. Throwing the result away on cancellation
         // therefore stranded that row on the grey placeholder for good. The result is keyed to
         // the id, not to the row, so there is nothing to throw away.
-        guard let decoded, thumbnails[id] == nil else { return }
+        guard let decoded else {
+            // The row stays on the placeholder, which is the right end state for a blob that is
+            // not there — but silently is the wrong way to arrive at it.
+            thumbnailsFailed.insert(id)
+            historyLog.notice("thumbnail load failed: image blob missing or undecodable")
+            return
+        }
+        guard thumbnails[id] == nil else { return }
         while thumbnails.count >= Self.thumbnailCacheLimit, let oldest = thumbnailOrder.first {
             thumbnailOrder.removeFirst()
             thumbnails.removeValue(forKey: oldest)
