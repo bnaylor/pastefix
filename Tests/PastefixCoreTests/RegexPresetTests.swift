@@ -50,6 +50,14 @@ import Foundation
         #expect(ContinuousClock.now - start < .seconds(2))
     }
 
+    @Test func previewReportsOutputAndMatchCount() throws {
+        let p = RegexPreset(name: "o", pattern: "o", replacement: "0")
+        let r = try RegexPresetTransformer.preview("foo boo", preset: p, deadline: .now + .seconds(1))
+        #expect(r.output == "f00 b00" && r.matches == 4)
+        var once = p; once.replaceAll = false
+        #expect(try RegexPresetTransformer.preview("foo boo", preset: once, deadline: .now + .seconds(1)).matches == 1)
+    }
+
     @Test func identity() {
         let p = RegexPreset(name: "n", pattern: "a", replacement: "b")
         let t = RegexPresetTransformer(preset: p)

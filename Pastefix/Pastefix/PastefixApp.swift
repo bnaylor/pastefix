@@ -190,6 +190,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             .store(in: &cancellables)
 
+        // Rebuild the registry when a regex preset is added, edited or removed, so the palette
+        // and the Transforms list pick it up without a relaunch. Debounced because Save on an
+        // edited preset republishes the whole array, and the +/− buttons can fire in quick
+        // succession; `removeDuplicates` drops the republishes that carry no actual change.
+        settings.$regexPresets
+            .dropFirst()
+            .removeDuplicates()
+            .debounce(for: .milliseconds(200), scheduler: DispatchQueue.main)
+            .sink { [weak self] _ in MainActor.assumeIsolated { self?.model.reload() } }
+            .store(in: &cancellables)
+
         // Grow/shrink the panel when the sidebar is toggled: SwiftUI's minWidth can't
         // resize an AppKit window on its own.
         settings.$showSidebar

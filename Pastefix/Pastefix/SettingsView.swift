@@ -26,6 +26,8 @@ struct SettingsView: View {
             snippets.tabItem { Label("Snippets", systemImage: "pin") }
             shortcut.tabItem { Label("Shortcut", systemImage: "keyboard") }
             transforms.tabItem { Label("Transforms", systemImage: "slider.horizontal.3") }
+            PresetsSettingsView(settings: settings)
+                .tabItem { Label("Presets", systemImage: "text.badge.plus") }
         }
         .frame(width: 460, height: 400)
         .onAppear {
