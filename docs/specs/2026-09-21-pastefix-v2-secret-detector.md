@@ -87,6 +87,15 @@ The plan below was written before implementation; these are where the shipped co
   the result, instead of paying the (main-actor, up to 256 KB) scan twice — once inside `detect`
   and once for `secretMatches`.
 
+- **Generic-assignment values must contain a digit** (round 2). The normalised-entropy bar alone
+  admitted placeholder values (`your-token-here-xx`, `please-change-me-now`); requiring at least
+  one ASCII digit silences them at the cost of missing letters-only keys (~3% of random keys).
+  UUID-shaped values are accepted by shape regardless.
+- **JWT candidates are validated by decoding the header's last base64url group** and requiring it
+  to close a JSON object (`}`), so a plausible prefix no longer buys a full validation; the
+  candidate walk never stops early — the 4 096 budget bounds validations of weak candidates only.
+  A flood of genuine minimal JWTs is real work (~125 ms per 256 KB) and is not capped.
+
 ## Scope
 
 **In scope:**

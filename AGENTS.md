@@ -285,6 +285,16 @@ Also caught in review on `29c1d02`: a page truncated at the byte cap mid-charact
 - **A byte cap is not a cost cap** (PR #40 review): the importer's cost tracks list structure, not size, so `MarkdownPreview` caps `<li>` count as well as bytes. Anything main-actor and synchronous needs the cap on the work.
 - **`#expect` on an optional-chained receiver can never fail** (PR #40 review): `#expect((f?.familyName ?? "").contains("Menlo"))` expands to a call check whose result is discarded (the compiler says "result of call to 'contains' is unused") and passes on any input. Bind to a local first — and treat that warning as a broken test, not noise.
 
+*Secret detector (Plan 11) — two independent reviews measured the same regex disaster; a timing test only protects against the shapes it contains:*
+- **A three-class bounded regex still backtracks catastrophically** (`85ced94`): `[A-Za-z0-9_-]{8,2048}\.[…]{8,4096}\.[…]{8,2048}` restarted a 2 KB scan at every hyphen — 10 s per 256 KB of base64url, 41 s per MB, on the main actor at every summon and capture. Tokenise linearly and validate; never regex a JWT.
+- **A timing test with spaces in its input tests nothing** (`85ced94`): `"sk-abc "` repeated caps every run at 7 chars. Adversarial timing shapes must be single unbroken runs, BEGIN-without-END floods, and maximal-length prefixes.
+- **A lazy `[\s\S]{0,N}?` window is O(n×N)** (`85ced94`): 3 s per MB of BEGIN markers with no END. Find both markers with bounded patterns and pair them.
+- **Quoted keys** (`85ced94`): `\b(password|…)\b\s*[:=]` cannot see `"password": "…"`, which is how JSON/YAML/PHP write credentials. Allow an optional quote before and after the key and accept `=>`.
+- **A redaction token must not re-trigger the detector** (`85ced94`): a bare `[REDACTED]` still matched the URL-password class, so the badge never cleared. Test detector quiescence (`scan(redact(x)).isEmpty`), not string idempotence.
+- **Shannon entropy is length-biased** (`85ced94`, `98b6a84`): a fixed 3.5 bits/char fires on 11% of random 16-hex keys and on none of the placeholders you want quiet; normalise by log2(min(len, 64)) and require a digit.
+- **A candidate cap that stops the walk is a silent off-switch** (`98b6a84`): realistic identifier-heavy text exhausted the JWT budget and every later JWT was missed. Budgets bound work on weak candidates, never the scan.
+- **The app target's deployment target was 14.6 while the project said 26.3** (`e06fb8e`): `TextSelection` failed to compile until the target-level override was found. Check `xcodebuild -showBuildSettings`, not the project pane.
+
 ## Definition of Done
 
 Before opening or updating a PR:
