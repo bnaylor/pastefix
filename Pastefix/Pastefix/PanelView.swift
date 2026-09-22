@@ -13,6 +13,8 @@ struct PanelView: View {
     @State private var isPreviewing = false
     @State private var previewText = NSAttributedString()
     @State private var previewTask: Task<Void, Never>?
+    /// The editor's selection, owned here rather than on the model — see `selectionBinding`.
+    @State private var editorSelection: TextSelection?
     @FocusState private var editorFocused: Bool
     @FocusState private var pinTitleFocused: Bool
 
@@ -21,6 +23,75 @@ struct PanelView: View {
             get: { model.document?.working ?? "" },
             set: { model.setWorking($0) }
         )
+    }
+
+    /// The editor's selection, kept in this view's `@State` and never on the model.
+    ///
+    /// A `TextEditor` writes its selection back through this binding whenever the caret moves or
+    /// it gains or loses focus. While that binding went to an `@Published` property, every one of
+    /// those writes published on `AppModel`, re-rendered the whole panel — overlays included —
+    /// and re-applied the selection to the editor, which took first responder back from the ⌘K
+    /// palette's search field the moment it appeared. Local state keeps those writes inside the
+    /// editor's own subtree.
+    ///
+    /// The getter is a guard, not a transform, and it does two things. It hands the editor
+    /// nothing while an overlay is open: `nil` is "no preference" (it does not move the caret),
+    /// and a re-applied selection is precisely what pulls focus out of the overlay's field. And
+    /// it re-validates the stored selection against the buffer the editor actually has, because a
+    /// `String.Index` made against a longer buffer is undefined against a shorter one — the
+    /// `onChange` clamp below converges the state, but nothing promises it ran before the render
+    /// that hands this value down.
+    private var selectionBinding: Binding<TextSelection?> {
+        Binding(
+            get: {
+                guard !isPaletteOpen, !isHistoryOpen, let selection = editorSelection else { return nil }
+                return isExpressible(selection, in: model.document?.working ?? "") ? selection : nil
+            },
+            set: { editorSelection = $0 }
+        )
+    }
+
+    /// True when every range of `selection` is a usable range of `text`. `TextRangeClamp.remap`
+    /// from a string to itself is exactly that test — bounds *and* grapheme boundaries — and it
+    /// compares indices (safe offset arithmetic) before measuring anything.
+    private func isExpressible(_ selection: TextSelection, in text: String) -> Bool {
+        switch selection.indices {
+        case .selection(let range):
+            return TextRangeClamp.remap(range, from: text, to: text) != nil
+        case .multiSelection(let ranges):
+            return ranges.ranges.allSatisfy { TextRangeClamp.remap($0, from: text, to: text) != nil }
+        @unknown default:
+            return false
+        }
+    }
+
+    /// Carries the caret across a buffer replacement — a landed transform, undo, redo.
+    ///
+    /// Clearing the selection instead is safe but throws the caret back to the start of the
+    /// buffer on every apply, including the many that barely touch the text (`8e0520c`), so the
+    /// selection is re-expressed at the same UTF-16 offsets in the new buffer and dropped only
+    /// when they don't exist there. The second attempt covers the other caller of this handler:
+    /// an ordinary keystroke, where the editor has *already* reported a selection against the new
+    /// text and the caret can legitimately sit past the old buffer's end — validating that
+    /// against `current` leaves it exactly where the user put it.
+    private func carrySelection(from previous: String, to current: String) {
+        guard let range = firstRange(of: editorSelection) else { return }
+        let carried = TextRangeClamp.remap(range, from: previous, to: current)
+            ?? TextRangeClamp.remap(range, from: current, to: current)
+        let updated = carried.map { TextSelection(range: $0) }
+        // Writing an equal value would invalidate the view for nothing on every keystroke.
+        if updated != editorSelection { editorSelection = updated }
+    }
+
+    /// The selection's range in the buffer it was made against. A multi-selection (⌥-drag) is
+    /// represented by its first range: carrying one range beats dropping the caret entirely, and
+    /// the badge — the only other writer — never makes one.
+    private func firstRange(of selection: TextSelection?) -> Range<String.Index>? {
+        switch selection?.indices {
+        case .selection(let range): return range
+        case .multiSelection(let ranges): return ranges.ranges.first
+        default: return nil
+        }
     }
 
     var body: some View {
@@ -38,7 +109,7 @@ struct PanelView: View {
                             // `textContainerInset`, which matches the editor's gutter.
                             MarkdownPreviewView(text: previewText)
                         } else {
-                            TextEditor(text: workingBinding, selection: $model.editorSelection)
+                            TextEditor(text: workingBinding, selection: selectionBinding)
                                 .font(.system(.body, design: .monospaced))
                                 .padding(8)
                                 .disabled(model.isApplying)
@@ -88,6 +159,8 @@ struct PanelView: View {
         .onChange(of: model.sessionGeneration) { _, _ in
             isPaletteOpen = false
             isHistoryOpen = false
+            // A `String.Index` into the buffer that just went away has no meaning in the new one.
+            editorSelection = nil
             // A new summon always starts in the editor: the preview is a view of *this*
             // buffer, and leaving it on would show the previous session's render until the
             // debounce lands. The render is dropped too — the next ⌘⇧M turns the preview on
@@ -105,8 +178,24 @@ struct PanelView: View {
         }
         // Transforms, undo/redo and typing all land here; the debounce keeps a fast-changing
         // buffer from re-rendering HTML on every keystroke.
-        .onChange(of: model.document?.working) { _, _ in
+        .onChange(of: model.document?.working) { previous, current in
             if isPreviewing { scheduleRender() }
+            // The model swaps the whole buffer out from under the editor on a landed transform,
+            // undo or redo; the selection it is holding indexes the buffer that just left.
+            carrySelection(from: previous ?? "", to: current ?? "")
+        }
+        // The secrets badge asks for a selection rather than setting one: the live selection is
+        // this view's. One-shot, like `historyOverlayRequested` — cleared as it is consumed, so
+        // clicking the badge again moves the caret to the next match. Ignored while an overlay is
+        // up (the badge is hidden then) because applying a selection there is what takes first
+        // responder away from the overlay's search field.
+        .onChange(of: model.requestedSelection) { _, requested in
+            guard let requested else { return }
+            if !isPaletteOpen && !isHistoryOpen && !isPreviewing {
+                editorSelection = requested
+                editorFocused = true
+            }
+            model.requestedSelection = nil
         }
         // ⌘⇧V summons straight into the history overlay; the flag is a one-shot request,
         // so reset it here or the next summon would reopen the overlay by itself.
@@ -238,7 +327,7 @@ struct PanelView: View {
             // matches, but the click re-scans the live buffer — see `AppModel.selectNextSecret`.
             if !model.secretMatches.isEmpty && !isPaletteOpen && !isHistoryOpen && !isPreviewing {
                 let n = model.secretMatches.count
-                Button { model.selectNextSecret(); editorFocused = true } label: {
+                Button { model.selectNextSecret() } label: {
                     Label("\(n) secret\(n == 1 ? "" : "s")", systemImage: "exclamationmark.shield")
                         .font(.caption)
                         .padding(.horizontal, 8).padding(.vertical, 3)

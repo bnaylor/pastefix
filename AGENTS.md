@@ -294,6 +294,7 @@ Also caught in review on `29c1d02`: a page truncated at the byte cap mid-charact
 - **Shannon entropy is length-biased** (`85ced94`, `98b6a84`): a fixed 3.5 bits/char fires on 11% of random 16-hex keys and on none of the placeholders you want quiet; normalise by log2(min(len, 64)) and require a digit.
 - **A candidate cap that stops the walk is a silent off-switch** (`98b6a84`): realistic identifier-heavy text exhausted the JWT budget and every later JWT was missed. Budgets bound work on weak candidates, never the scan.
 - **The app target's deployment target was 14.6 while the project said 26.3** (`e06fb8e`): `TextSelection` failed to compile until the target-level override was found. Check `xcodebuild -showBuildSettings`, not the project pane.
+- **A selection binding into an `ObservableObject` steals focus** (this commit): a `TextEditor` writes its selection back on every caret move and focus change, so an `@Published` selection republished the model, re-rendered the panel and re-applied the selection to the editor — ⌘K opened the palette and the editor immediately took first responder back, so typing went into the buffer. Editor selection belongs in the view's `@State`; the model may only *request* one, one-shot.
 
 ## Definition of Done
 

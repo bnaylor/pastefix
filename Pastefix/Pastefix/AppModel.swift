@@ -16,9 +16,15 @@ final class AppModel: ObservableObject {
     /// Set by the ⌘⇧V hotkey; PanelView opens the history overlay and resets it.
     @Published var historyOverlayRequested = false
 
-    /// The editor's selection, driven by the secrets badge. Bound by `PanelView`'s `TextEditor`,
-    /// so writing it here moves the insertion point on screen.
-    @Published var editorSelection: TextSelection?
+    /// A one-shot request to move the editor's selection, written by the secrets badge and
+    /// cleared by `PanelView` as soon as it consumes it.
+    ///
+    /// The *live* selection deliberately does not live here — it is `PanelView`'s own `@State`.
+    /// A `TextEditor` writes its selection back through the binding whenever the caret moves or
+    /// focus changes, so a binding into this object published on the model, re-rendered the whole
+    /// panel and re-applied the selection to the editor, which took first responder back from the
+    /// ⌘K palette's search field the instant it appeared.
+    @Published var requestedSelection: TextSelection?
 
     /// Cycle position for `selectNextSecret`, reset wherever `document` is replaced.
     private var nextSecretIndex = 0
@@ -113,7 +119,7 @@ final class AppModel: ObservableObject {
         let live = SecretDetector.scan(doc.working)
         guard !live.isEmpty else { return }
         nextSecretIndex %= live.count
-        editorSelection = TextSelection(range: live[nextSecretIndex].range)
+        requestedSelection = TextSelection(range: live[nextSecretIndex].range)
         nextSecretIndex += 1
     }
 
@@ -142,9 +148,10 @@ final class AppModel: ObservableObject {
                 self.isApplying = false
                 return
             }
-            let previous = current.working
             self.document = updated
-            self.carrySelection(from: previous, to: updated.working)
+            // The caret is `PanelView`'s to carry across the new buffer; the badge's cycle
+            // restarts here because the match list belongs to the buffer that just went away.
+            self.resetSecretSelection()
             switch outcome {
             case .applied, .unchanged: self.errorMessage = nil
             case .failed(let message): self.errorMessage = message
@@ -161,18 +168,16 @@ final class AppModel: ObservableObject {
 
     func undo() {
         guard var doc = document else { return }
-        let previous = doc.working
         doc.undo()
         document = doc
-        carrySelection(from: previous, to: doc.working)
+        resetSecretSelection()
     }
 
     func redo() {
         guard var doc = document else { return }
-        let previous = doc.working
         doc.redo()
         document = doc
-        carrySelection(from: previous, to: doc.working)
+        resetSecretSelection()
     }
 
     func refresh() {
@@ -183,42 +188,17 @@ final class AppModel: ObservableObject {
         resetSecretSelection()
     }
 
-    /// Drops the selection and restarts the badge's cycle, for the points that start a *new*
-    /// session (summon, load, refresh, end of session): there is nothing to carry across, and a
-    /// `String.Index` from the old buffer applied to the new one is undefined and traps.
-    private func resetSecretSelection() {
-        editorSelection = nil
-        nextSecretIndex = 0
-    }
-
-    /// Carries the caret/selection across a document replacement *within* a session — a landed
-    /// transform result, undo, redo.
+    /// Drops any pending badge request and restarts its cycle.
     ///
-    /// `TextSelection` holds `Range<String.Index>` values, valid only against the exact string
-    /// they were made from, so a stale one traps on a shorter buffer. Clearing it is safe but
-    /// throws the caret back to the start of the buffer on every apply, including the many that
-    /// barely touch the text, so the selection is re-expressed at the same UTF-16 offsets in the
-    /// new buffer and dropped only when they don't exist there (`TextRangeClamp.remap`). The
-    /// badge's cycle still restarts: the match list belongs to the buffer that just went away.
-    private func carrySelection(from previous: String, to current: String) {
+    /// Called wherever the buffer is replaced — a new session (summon, load, refresh, end of
+    /// session) and a landed transform, undo or redo. A request carries `String.Index` values
+    /// into the buffer it was made against, and applying one to a shorter string is undefined and
+    /// traps, so a request that hasn't been consumed by the time the buffer moves is dropped
+    /// rather than carried. The live caret is `PanelView`'s and is clamped there
+    /// (`TextRangeClamp.remap`) so an ordinary transform doesn't throw it back to the start.
+    private func resetSecretSelection() {
+        requestedSelection = nil
         nextSecretIndex = 0
-        guard let range = selectedRange(editorSelection),
-              let remapped = TextRangeClamp.remap(range, from: previous, to: current) else {
-            editorSelection = nil
-            return
-        }
-        editorSelection = TextSelection(range: remapped)
-    }
-
-    /// The selection's range in the buffer it was made against. A multi-selection (⌥-drag) is
-    /// represented by its first range: carrying one range beats dropping the caret entirely, and
-    /// the only writer here (`selectNextSecret`) never makes one.
-    private func selectedRange(_ selection: TextSelection?) -> Range<String.Index>? {
-        switch selection?.indices {
-        case .selection(let range): return range
-        case .multiSelection(let ranges): return ranges.ranges.first
-        default: return nil
-        }
     }
 
     func save() {

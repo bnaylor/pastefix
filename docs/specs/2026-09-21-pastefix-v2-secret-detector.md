@@ -49,6 +49,15 @@ The plan below was written before implementation; these are where the shipped co
 - **The secrets badge hides during the Markdown preview**, alongside the two overlays. The
   preview replaces the editor with a read-only text view, so a badge click would have nothing to
   select in and would silently do nothing.
+- **The editor's selection lives in `PanelView`'s `@State`, not on `AppModel`.** A `TextEditor`
+  writes its selection back through the binding on every caret move and every focus change, so an
+  `@Published var editorSelection` republished the model on each of those, re-rendered the whole
+  panel and re-applied the selection to the editor — which took first responder back from the ⌘K
+  palette's search field the instant it appeared (typed characters landed in the editor). The live
+  selection is now local view state, clamped there across transforms/undo/redo with
+  `TextRangeClamp.remap` and withheld from the editor entirely while an overlay is open;
+  `AppModel.requestedSelection` is a one-shot request the badge writes and `PanelView` consumes
+  (applying it and focusing the editor), like `historyOverlayRequested`.
 - **JWTs are found by a linear tokeniser, not a regex.** The three-class pattern the Decisions
   table implies (`[A-Za-z0-9_-]{8,2048}\.…`) backtracks catastrophically despite every quantifier
   being bounded: `-` is inside the class *and* creates a `\b` position, so the engine retries a
