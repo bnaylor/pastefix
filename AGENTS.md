@@ -342,7 +342,7 @@ When you **significantly expand the project** — a new target, subsystem, scrip
 | 9 — Pinned snippets | pin/unpin, Pinned section, ⇧↵ paste, per-snippet hotkeys, Snippets tab | ✅ merged — PR #38 (`08f72d6`) — [spec](docs/specs/2026-09-21-pastefix-v2-pinned-snippets.md), [plan](docs/plans/2026-09-21-pastefix-v2-pinned-snippets.md) |
 | 10 — Markdown preview | MarkdownPreview, MarkdownPreviewView, ⌘⇧M toggle | ✅ merged — PR #40 (`c98cca8`) — [spec](docs/specs/2026-09-21-pastefix-v2-markdown-preview.md), [plan](docs/plans/2026-09-21-pastefix-v2-markdown-preview.md) |
 | 11 — Secret detector | SecretDetector, Redact Secrets, secrets badge, history flag | ✅ merged — PR #42 (`85d7fd7`) — [spec](docs/specs/2026-09-21-pastefix-v2-secret-detector.md), [plan](docs/plans/2026-09-21-pastefix-v2-secret-detector.md) |
-| 12 — Regex presets | RegexPreset, RegexPresetTransformer, Presets tab | 🟡 in progress, branch feat/regex-presets — [spec](docs/specs/2026-09-21-pastefix-v2-regex-presets.md), [plan](docs/plans/2026-09-21-pastefix-v2-regex-presets.md) |
+| 12 — Regex presets | RegexPreset, RegexPresetTransformer, Presets tab | ✅ merged — PR #44 (`955f01b`) — [spec](docs/specs/2026-09-21-pastefix-v2-regex-presets.md), [plan](docs/plans/2026-09-21-pastefix-v2-regex-presets.md) |
 
 Historical reference material for the 2007 and 2019 incarnations is vendored under [`docs/inputs/legacy/`](docs/inputs/legacy/).
 

@@ -1,6 +1,6 @@
 # Pastefix v2 Regex Presets (Plan 12) — Implementation Plan
 
-> ## 🟡 STATUS: IN PROGRESS — branch feat/regex-presets
+> ## ✅ STATUS: COMPLETE — merged to main via PR #44 (`955f01b`, 2026-09-22)
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 >
