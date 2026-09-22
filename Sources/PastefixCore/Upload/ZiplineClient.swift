@@ -16,10 +16,12 @@ public protocol ZiplineUploading: Sendable {
 /// the only transport protection this feature has, and an exception here would
 /// remove it for everyone to spare one person a certificate fix.
 ///
-/// The request does carry a per-*task* delegate, `SameOriginRedirectPolicy`,
-/// which is a different thing: a task delegate has no authentication-challenge
-/// callback, so it is not a place a trust bypass can appear. The session still
-/// has no delegate at all.
+/// The request does carry a per-*task* delegate, `SameOriginRedirectPolicy`, attached solely
+/// to police redirects. `URLSessionTaskDelegate` does expose authentication-challenge
+/// callbacks — the session-level one it inherits plus its own task-level one — and this type
+/// deliberately implements neither, so a challenge falls through to default handling and an
+/// untrusted certificate still fails the request. Implementing one here is exactly how a
+/// trust bypass would get added, and that must not happen.
 public struct URLSessionZiplineClient: ZiplineUploading {
     public let timeout: TimeInterval
     private let protocolClasses: [AnyClass]?
@@ -158,11 +160,13 @@ public struct URLSessionZiplineClient: ZiplineUploading {
 /// The redirect policy for the upload request, attached to the *task* with
 /// `session.data(for:delegate:)`.
 ///
-/// A task delegate, emphatically not a session delegate: `URLSessionZiplineClient` still
-/// passes no delegate to `URLSession(configuration:)`, so there remains nowhere for a
-/// `urlSession(_:didReceive:completionHandler:)` certificate-trust callback to be bolted on
-/// later. A self-signed certificate must keep failing. `URLSessionTaskDelegate` carries no
-/// authentication-challenge callback of its own for that hook to hide in.
+/// A task delegate, emphatically not a session delegate — but not because a task delegate is
+/// incapable of the thing that must not happen here. `URLSessionTaskDelegate` inherits the
+/// session-level `urlSession(_:didReceive:completionHandler:)` and declares its own
+/// task-level challenge callback besides; either is a place a certificate-trust bypass could
+/// be bolted on. This type implements neither, on purpose: no challenge callback here means
+/// every challenge falls through to default handling, and a self-signed certificate keeps
+/// failing. Adding one is exactly how that would stop being true, so it must not happen.
 ///
 /// **Policy: follow a redirect that stays on the origin the user configured (same scheme,
 /// host and port); refuse every other redirect.**
@@ -184,6 +188,14 @@ public struct URLSessionZiplineClient: ZiplineUploading {
 /// Stateless, hence `@unchecked Sendable`: it stores nothing and the delegate method reads
 /// only its arguments.
 final class SameOriginRedirectPolicy: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+    /// Checks the claim above rather than merely stating it: this type must not gain a
+    /// challenge callback, session-level or task-level, by accident.
+    override init() {
+        super.init()
+        assert(!responds(to: #selector(URLSessionDelegate.urlSession(_:didReceive:completionHandler:))))
+        assert(!responds(to: #selector(URLSessionTaskDelegate.urlSession(_:task:didReceive:completionHandler:))))
+    }
+
     func urlSession(_ session: URLSession,
                     task: URLSessionTask,
                     willPerformHTTPRedirection response: HTTPURLResponse,
