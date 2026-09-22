@@ -66,11 +66,21 @@ struct UploadOverlayView: View {
     private static let cardBottomMargin: CGFloat = 24
     /// Header row (46), three dividers (3), footer (30).
     private static let cardChromeHeight: CGFloat = 79
-    /// The action row and its padding. Pinned below the scroll region, never inside it: an Upload
-    /// or Cancel button that can be scrolled out of reach is the one thing a height budget must
-    /// not produce. The failure banner shares this block and is allowed to push the card a little
-    /// taller — a failure is not the moment to start hiding text.
+    /// The action row and its padding (12 above, 12 below, a ~22pt button between: ~46pt
+    /// measured, budgeted at 60). Pinned below the scroll region, never inside it: an Upload or
+    /// Cancel button that can be scrolled out of reach is the one thing a height budget must not
+    /// produce. The failure banner shares this block and is budgeted separately below — it used
+    /// to be exempt from the budget entirely, which was a bug; see `scrollHeight(forPanelHeight:)`.
     private static let actionBlockHeight: CGFloat = 60
+    /// What the failure banner adds to the action block when there is one. `errorBanner` is
+    /// `.callout` at `lineLimit(3)` — ~16pt a line, so 48 at worst — plus the 8pt `VStack`
+    /// spacing between it and the action row.
+    ///
+    /// Budgeted at the worst case rather than measured per message, so the estimate can only
+    /// over-reserve. Over-reserving on a one-line banner leaves ~32pt of panel unused below the
+    /// card, which nobody can see; under-reserving pushes Retry and Cancel past the window's
+    /// bottom edge, which is exactly what this constant exists to stop.
+    private static let bannerBlockHeight: CGFloat = 56
     /// The three option rows, the divider under them, their spacings, and the scroll region's own
     /// 12pt padding top and bottom.
     private static let optionsHeight: CGFloat = 133
@@ -80,9 +90,11 @@ struct UploadOverlayView: View {
     /// label, the disposition radio group and its caption.
     private static let findingsChromeHeight: CGFloat = 112
     private static let findingLineHeight: CGFloat = 16
-    /// The floor on the scroll region, for a panel too short to hold even the option rows. The
-    /// panel's own 380pt minimum leaves 177, so this is unreachable today; it is here so the
-    /// arithmetic cannot produce a negative height if those numbers ever move.
+    /// The floor on the scroll region, for a panel too short to hold even the option rows. At the
+    /// panel's own 380pt minimum the budget leaves 177 with no banner and 121 with one, so this
+    /// is not binding today — but only by 1pt in the banner case, which is worth knowing before
+    /// anyone moves these numbers. It is a floor, so reaching it means the card grows past the
+    /// panel again; it exists so the arithmetic cannot produce a negative height.
     private static let minScrollHeight: CGFloat = 120
 
     /// The overlay's whole state, in the order it can be entered.
@@ -288,15 +300,22 @@ struct UploadOverlayView: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(12)
+                // The *option* controls are inert while the request is on the wire: changing the
+                // expiry of an upload that has already been sent would only mislead about what
+                // was sent. They stay on screen, greyed, rather than being swapped out — seeing
+                // what you sent is the point of showing them at all.
+                //
+                // On the content, not on the `ScrollView`: `.disabled` takes out the scroll
+                // *gesture* too, and on a short panel during a 60 s upload that leaves the user
+                // unable to scroll back to the findings list to re-read what they just sent.
+                // Inert is the goal; unreadable is not.
+                //
+                // Scoped to the scroll region and not the action row below either: Cancel has to
+                // stay pressable for the whole upload, which with a 60 s client timeout can be a
+                // long time to be stuck.
+                .disabled(phase == .uploading)
             }
             .frame(height: scrollHeight)
-            // The *option* controls are inert while the request is on the wire: changing the
-            // expiry of an upload that has already been sent would only mislead about what was
-            // sent. They stay on screen, greyed, rather than being swapped out — seeing what you
-            // sent is the point of showing them at all. Deliberately scoped to the scroll region
-            // and not the action row below: Cancel has to stay pressable for the whole upload,
-            // which with a 60 s client timeout can be a long time to be stuck.
-            .disabled(phase == .uploading)
             Divider()
             VStack(alignment: .leading, spacing: 8) {
                 if let message = bannerMessage {
@@ -597,8 +616,14 @@ struct UploadOverlayView: View {
 
     /// `ZiplineUpload.defaultExtension(for:)`'s priority, applied to the kinds `PasteDocument`
     /// already holds. Calling that function instead would re-run the whole `ContentDetector`
-    /// (a capped secret scan included) on every `init` for an answer the document has cached
-    /// since the buffer last changed.
+    /// (a capped secret scan included) on every `init`.
+    ///
+    /// Those kinds can be stale, and it is worth being exact about how: `PasteDocument` detects
+    /// on discrete events — init, push, undo, redo, refresh — and `setWorking` deliberately does
+    /// *not* redetect (`PasteDocument.swift:54`), so typing into the panel does not update them.
+    /// Summon plain text, type JSON, press ⌘⇧U and this seeds `txt`, not `json`. That is fine
+    /// here: this is only the seed for an editable control, and it is consulted at all only when
+    /// the user has expressed no preference of their own.
     private static func detectedExtension(_ kinds: Set<ContentKind>?) -> String {
         guard let kinds else { return "txt" }
         if kinds.contains(.json) { return "json" }
@@ -636,12 +661,38 @@ struct UploadOverlayView: View {
     }
 
     /// The height the scrolling region gets: the smaller of what its content needs and what the
-    /// panel has left after the card's chrome and the pinned action row.
+    /// panel has left after everything that is not the scroll region.
+    ///
+    /// The arithmetic, re-derived from the constants — the numbers a previous version of this
+    /// comment carried were wrong, so do not trust a remembered figure over this:
+    ///
+    ///     card     = cardChromeHeight(79) + scrollHeight + actionBlockHeight(60) + banner(0|56)
+    ///     on panel = cardTopPadding(40) + card + cardBottomMargin(24)
+    ///     fits when scrollHeight <= panelHeight - 203 - banner
+    ///
+    /// At `PanelMetrics.minContentHeight` (380) that is 177 with no banner and 121 with one. The
+    /// budget is written to consume the panel *exactly*, so there is no spare cushion to absorb
+    /// an un-budgeted block: the only real slack anywhere here is `actionBlockHeight`'s 60pt over
+    /// a ~46pt action row, about 14pt. That is why the banner is a term in this expression rather
+    /// than something allowed to "push the card a little taller" — it was exempt once, and at
+    /// minimum height a one-line banner overflowed by ~10pt and a three-line one by ~42pt,
+    /// pushing Retry and Cancel below the window's bottom edge where they cannot be clicked.
+    ///
+    /// The `ScrollView` takes a *definite* height from this, so it will not compress to take up
+    /// the slack on its own; if this number is too big, the card simply grows past the panel.
     private func scrollHeight(forPanelHeight panelHeight: CGFloat) -> CGFloat {
         let available = max(Self.minScrollHeight,
                             panelHeight - Self.cardTopPadding - Self.cardBottomMargin
-                                - Self.cardChromeHeight - Self.actionBlockHeight)
+                                - Self.cardChromeHeight - Self.actionBlockHeight
+                                - bannerHeight)
         return min(Self.optionsHeight + secretBlockHeight, available)
+    }
+
+    /// The banner is drawn only in a `.failed` phase, and `bannerMessage` is also nil when the
+    /// failure is one already shown inline against a control — so this asks the same question the
+    /// view does rather than a looser "are we failed?", and the budget matches what is rendered.
+    private var bannerHeight: CGFloat {
+        bannerMessage == nil ? 0 : Self.bannerBlockHeight
     }
 
     /// What the secret block adds to the scroll region's content. An estimate, and only has to be
