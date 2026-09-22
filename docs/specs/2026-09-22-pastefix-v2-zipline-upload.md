@@ -228,11 +228,26 @@ JSON-backed shape as every other setting.
 so dismissing the overlay mid-scan abandons the work rather than stopping it —
 the same shape as the TIFF decode in #32/#46, and the same rule applies: do not
 describe it as a bound. The scan is linear tokenisation since the PR #42
-rewrite, so this is expected to be cheap, but **the implementation plan opens
-with a measurement** of the real cost curve above 256 KB. If a megabyte costs
-seconds of CPU after dismissal, that becomes a cancellation check inside
-`SecretDetector` and a progress bar instead of a spinner — a design change, and
-better found before the UI is built than after.
+rewrite.
+
+Measured on Apple M4 Max, Swift 6.3, debug build via `swift test`
+(Task 1, `SecretDetectorScaleTests`): 256 KB in 0.057s, 1 MB in 0.215s,
+4 MB in 0.841s — linear (each ~4x step in size costs ~3.8-3.9x the time). 4 MB
+stays under the 2s gate, so the overlay uses an indeterminate spinner and
+`SecretDetector` keeps no cancellation point, as with the TIFF decode in #46.
+
+Methodology note: `SecretDetector.scan` starts with
+`guard isScannable(text) else { return [] }`, i.e. it already refuses to scan
+anything over 256 KB and returns empty immediately — calling `scan` directly
+on a 1 MB or 4 MB buffer measures that guard, not the scanner, and returns in
+~0s every time. `SecretDetectorScaleTests` gets a real number by routing the
+same unmodified `scan()` through a sequence of ≤256 KB calls (packed on line
+boundaries so no secret spans a chunk edge) and summing elapsed time. This
+does not change the conclusion above, but it does confirm what row "Scan cap"
+above already commits to: making the upload path scan a >256 KB buffer at all
+requires Task 2 to either lift or bypass this guard for that call site —
+that's a source change independent of these timing numbers, not contingent on
+them.
 
 ## Testing
 
