@@ -46,13 +46,51 @@ struct ZiplineSettingsTests {
         #expect(SettingsStore.expiry(fromRaw: "nonsense") == .relative("1d"))
     }
 
-    @Test("the token is not a settings key")
+    @Test("no settings key is token- or credential-shaped")
     func tokenIsNotInDefaults() {
         let suite = "net.scromp.Pastefix.tests.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!
         let s = SettingsStore(defaults: defaults)
+
+        // `didSet` does not fire on the assignments `SettingsStore.init` performs on itself — so
+        // a key is missing from `dictionaryRepresentation()` until something *reassigns* the
+        // property, not merely because the store was constructed. The previous version of this
+        // test relied on that: it set exactly one property (`ziplineServerURL`) and then checked
+        // for exactly the keys that single assignment could have produced, which is a test that
+        // cannot fail no matter what else the type does. Reassigning every persisted property
+        // here — not just the Zipline ones — is what makes the scan below actually mean
+        // something: it now covers every key `SettingsStore` can currently write, not the one key
+        // an earlier version of this test happened to poke.
+        //
+        // This still cannot catch a future property whose own assignment is missing from this
+        // list: an untouched `didSet` never runs, and a key that never runs `defaults.set` never
+        // appears in `dictionaryRepresentation()` for the scan below to see, credential-shaped or
+        // not. So when a new persisted property is added to `SettingsStore`, add its assignment
+        // here too — this list is the guard, not just documentation of one.
+        s.wrapWidth = 500
+        s.autoHideOnBlur.toggle()
+        s.showSidebar.toggle()
+        s.scriptsDirectoryPath = "/tmp/pastefix-test-scripts"
+        s.transformEnabled = ["x": false]
+        s.transformOrder = ["x": 10]
+        s.historyEnabled.toggle()
+        s.historyMaxItems = 250
+        s.historyExcludedBundleIDs = ["com.example.test"]
+        s.regexPresets = [RegexPreset(name: "t", pattern: "a", replacement: "b")]
         s.ziplineServerURL = "https://zip.example.test"
-        let keys = defaults.dictionaryRepresentation().keys
-        #expect(!keys.contains { $0.lowercased().contains("token") })
+        s.ziplineDefaultExpiry = "7d"
+        s.ziplineDefaultBurnOnRead.toggle()
+        s.ziplineDefaultExtension = "md"
+
+        // Key names only, per the type's own contract: the token is meant to live in the
+        // Keychain, under `KeychainTokenStore`, never as a `UserDefaults` key at all — so no key
+        // this suite holds should even be named like a credential, whatever the corresponding
+        // value is.
+        let credentialWords = ["token", "secret", "password", "credential", "apikey", "auth"]
+        for key in defaults.dictionaryRepresentation().keys {
+            let lowered = key.lowercased()
+            let hit = credentialWords.first { lowered.contains($0) }
+            #expect(hit == nil, "Settings key '\(key)' looks credential-shaped (matched '\(hit ?? "")') and must not be persisted to UserDefaults.")
+        }
     }
 }
