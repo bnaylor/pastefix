@@ -65,6 +65,31 @@ The plan below was written before implementation; these are where the shipped co
    a build with a different field list — or one hand-edited preset — silently wiped *every*
    preset, permanently, on the next `didSet`. `init(from:)` is explicit: `id`, `name` and
    `pattern` are required; everything else is `decodeIfPresent` with the memberwise default.
+8. **`expandEscapes` emits an ICU template, so backslashes are doubled.** Its output is handed
+   to `NSRegularExpression.replacementString(for:in:offset:template:)`, which reads `$1` as a
+   group reference and treats a backslash as an escape — i.e. it un-escapes the string a second
+   time. The first implementation emitted backslashes raw, so a user could not produce a literal
+   backslash at all (`\\` yielded the empty string) and every unrecognised escape lost its
+   backslash (`\d` yielded `d`). The rule is now: `\n`/`\t` become real characters; `\\` and any
+   other `\x` are emitted with a *doubled* backslash so one survives ICU; `\$` is passed through
+   so ICU turns it into a literal dollar. The tests assert through `apply`, not on the
+   intermediate template — the old test pinned `expandEscapes(#"\\n"#) == #"\n"#` while the user
+   was actually getting `n`.
+9. **Output is capped at 2 MB (`8 * maxBytes`), not just input and time.** A replacement is
+   applied once per match, so output size is not bounded by input size: pattern `(?:)` with a
+   4 KB replacement over a 256 KB input reached **1.2 GB peak RSS** inside the 3 s window before
+   the deadline discarded all of it. `replace` now throws
+   `invalidInput("Replacement output is too large (limit 2 MB)")` as soon as the accumulated
+   output passes the cap. `preview` also applies the 256 KB *input* cap, which previously lived
+   only in `apply` — `preview` is a second public door into `replace`.
+10. **The timeout race is a second error path, not a bound.** `withThrowingTaskGroup` awaits its
+   remaining children before propagating an error, so the sleeping task cannot cut a running
+   synchronous `replace` loose: measured with a deadline-blind worker, the sleeper fired at
+   3.189 s and the caller unblocked at 10.911 s. The in-block deadline check — reachable only
+   because of `.reportProgress` (amendment 1) — is the entire protection; the race only ensures
+   that a deadline noticed slightly late still surfaces as `.timeout` at exactly 3 s. Comments
+   crediting the race with "a hard timeout race so the panel never hangs" were wrong and are
+   gone: they told a future reader that deleting `.reportProgress` was safe.
 
 ## Scope
 
@@ -103,7 +128,7 @@ sharing presets as scripts; multi-step pipelines; a regex lint beyond "does it c
 | Order | Fixed band 900, name-sorted; user reorder via existing overrides | Between built-ins and scripts; Invariant 8 amended. |
 | Category | `TransformCategory.presets` = "Presets", last in `builtinOrder` | Fixed placement before Scripts instead of the alphabetical custom bucket. |
 | Safety | 256 KB input cap; detached execution with a 3 s race; `enumerateMatches` `stop` on deadline; compile at edit time | A catastrophic user pattern must fail loudly, not freeze the panel (Plans 8/11). The orphaned matcher thread finishing late is accepted and documented. |
-| Replacement escapes | Expand `\n`, `\t`, `\\` before handing the template to `NSRegularExpression` | Single-line text fields can't type newlines; `\\` lets a literal backslash through. |
+| Replacement escapes | Expand `\n`, `\t` to real characters and re-escape the rest for ICU before handing the template to `NSRegularExpression` | Single-line text fields can't type newlines. The result is a *template*, which ICU un-escapes a second time, so `\\` must be emitted doubled to yield one backslash, `\$` is kept so ICU makes a literal dollar, and any other `\x` is doubled so the escape survives verbatim (see amendment 8). |
 | Preview | Sample box, 200 ms debounce, 16 KB cap, 1 s timeout, shows "n matches" or the error | Authoring is where a slow or wrong pattern should be caught. |
 | Flags | Four toggles mapping to `.caseInsensitive`, `.anchorsMatchLines`, `.dotMatchesLineSeparators`, and replace-all vs first | The four that matter for find & replace; everything else stays default. |
 
@@ -179,7 +204,7 @@ under Presets for enable/reorder; the sidebar shows a Presets group before Scrip
 
 ## Testing
 
-`Tests/PastefixCoreTests/RegexPresetTests`: template groups `$1`; escapes `\n`/`\t`/`\\`; each
+`Tests/PastefixCoreTests/RegexPresetTests`: template groups `$1`; escapes `\n`/`\t`/`\\`/`\$`/`\d`, asserted end to end through `apply` because the intermediate template is not what the user sees; each
 flag (case, anchors, dot-all); first vs all; invalid pattern throws `invalidInput`; over-cap
 throws; deadline honoured on a pathological pattern (`(a+)+$` on `"a"*40 + "!"` with a 50 ms
 deadline throws `timeout`, and the async `apply` also times out — mark that test's bound

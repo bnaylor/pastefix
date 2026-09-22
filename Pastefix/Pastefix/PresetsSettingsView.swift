@@ -23,7 +23,10 @@ struct PresetsSettingsView: View {
     @State private var pending: PendingAction?
 
     /// The preview runs on a slice of the sample, not the whole thing: this is a live keystroke-
-    /// driven path, and a user pattern's cost is theirs to choose, not ours to trust.
+    /// driven path, and a user pattern's cost is theirs to choose, not ours to trust. Measured in
+    /// UTF-8 bytes, like the engine's own caps — `prefix(16_384)` counts Characters, and 16 384
+    /// emoji is ~65 KB, which both overstates the documented 16 KB and could walk into
+    /// `preview`'s 256 KB input cap.
     private static let sampleLimit = 16_384
     /// `nonisolated` so the detached preview can read it: with `SWIFT_DEFAULT_ACTOR_ISOLATION =
     /// MainActor` a plain static would be main-actor state, which is an error in Swift 6 mode.
@@ -247,7 +250,7 @@ struct PresetsSettingsView: View {
     private func schedulePreview() {
         previewTask?.cancel()
         guard let preset = draft, !preset.pattern.isEmpty else { preview = ""; previewInfo = ""; return }
-        let text = String(sample.prefix(Self.sampleLimit))
+        let text = Self.sampleSlice(sample)
         previewTask = Task {
             try? await Task.sleep(for: .milliseconds(200))
             guard !Task.isCancelled else { return }
@@ -269,6 +272,21 @@ struct PresetsSettingsView: View {
             preview = outcome.output
             previewInfo = outcome.info
         }
+    }
+
+    /// The first `sampleLimit` UTF-8 bytes of the sample, cut on a Character boundary so the
+    /// preview never shows a `\u{FFFD}` the sample doesn't contain.
+    private static func sampleSlice(_ text: String) -> String {
+        guard text.utf8.count > sampleLimit else { return text }
+        var out = ""
+        var bytes = 0
+        for character in text {
+            let size = character.utf8.count
+            if bytes + size > sampleLimit { break }
+            out.append(character)
+            bytes += size
+        }
+        return out
     }
 
     /// What the detached preview hands back. A plain `Sendable` value with the message already

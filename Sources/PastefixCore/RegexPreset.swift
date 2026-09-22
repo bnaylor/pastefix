@@ -57,7 +57,21 @@ public struct RegexPreset: Codable, Sendable, Equatable, Identifiable {
         catch { throw TransformError.invalidInput("Invalid pattern: \(error.localizedDescription)") }
     }
 
-    /// `\n` → newline, `\t` → tab, `\\` → `\`; single left-to-right pass so `\\n` stays `\n` literally.
+    /// Expands the escapes a single-line replacement field can't hold literally, and hands the
+    /// result on as an **ICU template** — which is the whole subtlety here.
+    ///
+    /// `NSRegularExpression.replacementString(for:in:offset:template:)` reads the result again:
+    /// `$1` is a group reference, and a backslash escapes the character after it. So a backslash
+    /// this function emits raw is eaten a second time, and the user never sees it — `\\` produced
+    /// nothing at all and `\d` produced a bare `d`. Every backslash that must survive to the
+    /// output is therefore emitted **doubled**.
+    ///
+    /// Single left-to-right pass, so `\\n` is an escaped backslash followed by `n`, not a newline:
+    /// - `\n` → newline, `\t` → tab (real characters; ICU passes them through)
+    /// - `\\` → `\\` → one literal backslash in the output
+    /// - `\$` → `\$` → kept as-is, so ICU escapes the dollar into a literal `$`
+    /// - any other `\x` → `\\x` → the escape survives verbatim (`\d` stays `\d`)
+    /// - a trailing lone `\` → `\\` → one literal backslash
     public static func expandEscapes(_ template: String) -> String {
         var out = ""
         var it = template.makeIterator()
@@ -66,9 +80,10 @@ public struct RegexPreset: Codable, Sendable, Equatable, Identifiable {
             switch it.next() {
             case "n": out.append("\n")
             case "t": out.append("\t")
-            case "\\": out.append("\\")
-            case let other?: out.append("\\"); out.append(other)
-            case nil: out.append("\\")
+            case "\\": out.append("\\\\")
+            case "$": out.append("\\$")
+            case let other?: out.append("\\\\"); out.append(other)
+            case nil: out.append("\\\\")
             }
         }
         return out

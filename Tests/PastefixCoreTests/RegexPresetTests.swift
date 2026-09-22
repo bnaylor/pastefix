@@ -15,8 +15,29 @@ import Foundation
     @Test func escapesInReplacement() async throws {
         let p = RegexPreset(name: "nl", pattern: ", ", replacement: #"\n"#)
         #expect(try await run(p, "a, b, c") == "a\nb\nc")
-        #expect(RegexPreset.expandEscapes(#"\\n"#) == #"\n"#)      // escaped backslash stays literal
+        // Intermediate form: `expandEscapes` emits an ICU *template*, so every backslash that has
+        // to reach the output is doubled — see `escapesSurviveTheICUTemplate` for what a user sees.
+        #expect(RegexPreset.expandEscapes(#"\\n"#) == #"\\n"#)     // escaped backslash, then "n"
         #expect(RegexPreset.expandEscapes(#"x\ty"#) == "x\ty")
+        #expect(RegexPreset.expandEscapes(#"\d"#) == #"\\d"#)      // unknown escape kept verbatim
+        #expect(RegexPreset.expandEscapes(#"\$1"#) == #"\$1"#)     // ICU escapes the dollar
+        #expect(RegexPreset.expandEscapes(#"end\"#) == #"end\\"#)  // trailing lone backslash
+    }
+
+    /// End to end through `apply`, because the template is read a second time by
+    /// `replacementString(template:)`: a backslash emitted raw is eaten there, and the user's
+    /// `\\` produced nothing at all while `\d` produced a bare `d`.
+    @Test func escapesSurviveTheICUTemplate() async throws {
+        func replaced(_ replacement: String) async throws -> String {
+            try await run(RegexPreset(name: "e", pattern: "a", replacement: replacement), "a")
+        }
+        #expect(try await replaced(#"\\"#) == #"\"#)               // one literal backslash
+        #expect(try await replaced(#"\d"#) == #"\d"#)              // regex escape survives
+        #expect(try await replaced(#"\$1"#) == "$1")               // literal dollar, not group 1
+        #expect(try await replaced(#"C:\dir\x"#) == #"C:\dir\x"#)  // \t and \n would be real here
+        // Group references and the two real escapes still work together.
+        let both = RegexPreset(name: "both", pattern: #"(\w+) (\w+)"#, replacement: #"$1-\n-$2"#)
+        #expect(try await run(both, "hello world") == "hello-\n-world")
     }
 
     @Test func flags() async throws {
@@ -37,6 +58,25 @@ import Foundation
         let p = RegexPreset(name: "any", pattern: "a", replacement: "b")
         await #expect(throws: TransformError.invalidInput("Text is too large for a regex preset (limit 256 KB)")) {
             try await run(p, String(repeating: "a", count: RegexPresetTransformer.maxBytes + 1))
+        }
+    }
+
+    /// Input size doesn't bound output size: a zero-width pattern applies the replacement at every
+    /// position. Measured at 1.2 GB peak RSS before this cap existed.
+    @Test func outputCap() async {
+        let p = RegexPreset(name: "blow up", pattern: "(?:)", replacement: String(repeating: "x", count: 4096))
+        let start = ContinuousClock.now
+        await #expect(throws: TransformError.invalidInput("Replacement output is too large (limit 2 MB)")) {
+            try await run(p, String(repeating: "a", count: 65_536))
+        }
+        #expect(ContinuousClock.now - start < .seconds(2))
+    }
+
+    @Test func previewIsCappedLikeApply() {
+        let p = RegexPreset(name: "any", pattern: "a", replacement: "b")
+        #expect(throws: TransformError.invalidInput("Text is too large for a regex preset (limit 256 KB)")) {
+            try RegexPresetTransformer.preview(String(repeating: "a", count: RegexPresetTransformer.maxBytes + 1),
+                                               preset: p, deadline: .now + .seconds(1))
         }
     }
 
