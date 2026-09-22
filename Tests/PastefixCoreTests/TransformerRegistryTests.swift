@@ -87,7 +87,7 @@ import Foundation
         for id in dataIDs { #expect(byID[id] == TransformCategory.data) }
         let colorIDs = ["builtin.color.hex", "builtin.color.rgb", "builtin.color.hsl", "builtin.color.swift"]
         for id in colorIDs { #expect(byID[id] == TransformCategory.colors) }
-        #expect(TransformCategory.builtinOrder == ["Layout", "Rich Text", "Characters", "URLs", "Case", "Data", "Colors"])
+        #expect(TransformCategory.builtinOrder == ["Layout", "Rich Text", "Characters", "URLs", "Case", "Data", "Colors", "Privacy"])
     }
 
     @Test func richTextTransformsRegisteredInOrder() {

@@ -21,6 +21,7 @@ public enum ContentDetector {
         if percentRegex.firstMatch(in: trimmed, range: NSRange(location: 0, length: (trimmed as NSString).length)) != nil { kinds.insert(.percentEncoded) }
         if entityRegex.firstMatch(in: trimmed, range: NSRange(location: 0, length: (trimmed as NSString).length)) != nil { kinds.insert(.htmlEntities) }
         if MarkdownDetector.looksLikeMarkdown(text) { kinds.insert(.markdown) }
+        if !SecretDetector.scan(text).isEmpty { kinds.insert(.secret) }
         return kinds
     }
 
