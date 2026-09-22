@@ -267,6 +267,12 @@ struct HistoryOverlayView: View {
     private func row(_ result: HistorySearchResult, isSelected: Bool) -> some View {
         let item = result.item
         return HStack(spacing: 10) {
+            if item.containsSecret {
+                Image(systemName: "shield.lefthalf.filled")
+                    .foregroundStyle(.orange)
+                    .help("Looks like it contains a credential")
+                    .accessibilityLabel("Looks like it contains a credential")
+            }
             if item.pinned {
                 Image(systemName: "pin.fill")
                     .foregroundStyle(Color.accentColor)

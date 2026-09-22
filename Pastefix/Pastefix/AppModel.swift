@@ -1,6 +1,7 @@
 import Foundation
 import AppKit
 import Combine
+import SwiftUI
 import PastefixCore
 import PastefixAppCore
 
@@ -14,6 +15,13 @@ final class AppModel: ObservableObject {
 
     /// Set by the ⌘⇧V hotkey; PanelView opens the history overlay and resets it.
     @Published var historyOverlayRequested = false
+
+    /// The editor's selection, driven by the secrets badge. Bound by `PanelView`'s `TextEditor`,
+    /// so writing it here moves the insertion point on screen.
+    @Published var editorSelection: TextSelection?
+
+    /// Cycle position for `selectNextSecret`, reset with every new session.
+    private var nextSecretIndex = 0
 
     let settings: SettingsStore
     let history: HistoryStore
@@ -62,6 +70,7 @@ final class AppModel: ObservableObject {
 
     func summon() {
         errorMessage = nil
+        nextSecretIndex = 0
         sessionGeneration &+= 1
         document = PasteDocument(origin: ClipboardBridge.snapshot())
     }
@@ -81,10 +90,31 @@ final class AppModel: ObservableObject {
         return transformers.filter { TransformCoordinator.isEnabled($0, for: document) }
     }
 
-    /// "URL", "URL, JSON", or nil when nothing was detected.
+    /// "URL", "URL, JSON", or nil when nothing was detected. Never lists "Secrets": the orange
+    /// badge next to it already says so, in the one place that can act on it.
     var detectedSummary: String? {
-        guard let kinds = document?.detectedKinds, !kinds.isEmpty else { return nil }
-        return ContentKind.allCases.filter(kinds.contains).map(\.displayName).joined(separator: ", ")
+        guard let kinds = document?.detectedKinds else { return nil }
+        let names = ContentKind.allCases.filter { $0 != .secret && kinds.contains($0) }.map(\.displayName)
+        return names.isEmpty ? nil : names.joined(separator: ", ")
+    }
+
+    /// Credentials found when the buffer was captured or refreshed; drives the action-bar badge.
+    var secretMatches: [SecretMatch] { document?.secretMatches ?? [] }
+
+    /// Selects the next detected secret in the editor, cycling back to the first.
+    ///
+    /// Re-scans the *live* buffer rather than reusing `document.secretMatches`: those ranges were
+    /// pinned when the document was captured or refreshed and index a string the user may have
+    /// edited since, so selecting one could highlight unrelated text — or trap on an index the
+    /// buffer no longer has. If the edits removed every match there is nothing to select and the
+    /// click is a no-op; the badge keeps the pinned count until the document refreshes.
+    func selectNextSecret() {
+        guard let doc = document else { return }
+        let live = SecretDetector.scan(doc.working)
+        guard !live.isEmpty else { return }
+        nextSecretIndex %= live.count
+        editorSelection = TextSelection(range: live[nextSecretIndex].range)
+        nextSecretIndex += 1
     }
 
     /// The parsed colour when the buffer is a colour literal; drives the action-bar swatch.
@@ -174,6 +204,7 @@ final class AppModel: ObservableObject {
         // image. Put it straight back on the clipboard instead of opening an empty editor.
         guard item.hasText else { copyBack(item); return }
         errorMessage = nil
+        nextSecretIndex = 0
         sessionGeneration &+= 1
         document = PasteDocument(origin: ClipboardSnapshot(plainText: item.plainText ?? "", richRTFD: history.richRTFD(for: item)))
     }

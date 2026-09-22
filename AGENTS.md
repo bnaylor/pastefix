@@ -55,6 +55,7 @@ Two caveats:
   requirements — the workflow they encode (TDD, plan-then-execute, verify before
   claiming done) applies regardless of whether the skills are available.
 
+- **Deployment targets differ by layer:** the `Pastefix` app target is **macOS 15.0** (it uses `TextEditor(text:selection:)` / `TextSelection`, macOS 15+, to select detected secrets); `PastefixCore` and `PastefixAppCore` stay at **macOS 14**. Keep package code free of 15-only API.
 - Toolchain: Swift 6 (developed on 6.3 / Xcode 26.4), strict concurrency.
 - Tests use the built-in **Swift Testing** framework (`import Testing`, `@Test`, `#expect`) — not XCTest.
 - Fixture scripts under `Tests/PastefixCoreTests/Fixtures/` are executed directly, so they **must be committed executable** (`git ls-files -s` shows mode `100755`).

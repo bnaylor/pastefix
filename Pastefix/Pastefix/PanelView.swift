@@ -38,7 +38,7 @@ struct PanelView: View {
                             // `textContainerInset`, which matches the editor's gutter.
                             MarkdownPreviewView(text: previewText)
                         } else {
-                            TextEditor(text: workingBinding)
+                            TextEditor(text: workingBinding, selection: $model.editorSelection)
                                 .font(.system(.body, design: .monospaced))
                                 .padding(8)
                                 .disabled(model.isApplying)
@@ -230,6 +230,23 @@ struct PanelView: View {
                     .overlay(RoundedRectangle(cornerRadius: 3).strokeBorder(.secondary.opacity(0.4), lineWidth: 0.5))
                     .frame(width: 14, height: 14)
                     .accessibilityLabel("Detected color \(color.cssHex)")
+            }
+            // Hidden while an overlay is up: the backdrop dims the action bar, and the click
+            // target underneath it would select text the user cannot see. Its count comes from
+            // the document's pinned matches, but the click re-scans the live buffer — see
+            // `AppModel.selectNextSecret`.
+            if !model.secretMatches.isEmpty && !isPaletteOpen && !isHistoryOpen {
+                let n = model.secretMatches.count
+                Button { model.selectNextSecret(); editorFocused = true } label: {
+                    Label("\(n) secret\(n == 1 ? "" : "s")", systemImage: "exclamationmark.shield")
+                        .font(.caption)
+                        .padding(.horizontal, 8).padding(.vertical, 3)
+                        .background(Color.orange.opacity(0.18), in: Capsule())
+                        .foregroundStyle(.orange)
+                }
+                .buttonStyle(.plain)
+                .help("Looks like credentials: \(Set(model.secretMatches.map(\.kind.displayName)).sorted().joined(separator: ", ")). Click to select the next one; use Redact Secrets (⌘K) to mask them.")
+                .accessibilityLabel("\(n) possible secrets; click to select the next one")
             }
             if let summary = model.detectedSummary {
                 Text("Detected: \(summary)")
