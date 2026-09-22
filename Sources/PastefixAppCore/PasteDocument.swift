@@ -8,6 +8,14 @@ public struct PasteDocument: Sendable {
     public private(set) var history: [String]
     public private(set) var cursor: Int
     public private(set) var detectedKinds: Set<ContentKind>
+    /// Secret matches in `working`, recomputed on the same discrete events as `detectedKinds`
+    /// (init, push, undo/redo, refresh) so a redact transform pins to the same ranges the
+    /// palette was built from, rather than re-scanning after every keystroke.
+    public private(set) var secretMatches: [SecretMatch]
+    /// True when `working` was over `SecretDetector.maxBytes` and so was never examined. An empty
+    /// `secretMatches` then means "unknown", not "clean", and the UI must say so — silence reads
+    /// as a clean bill of health. Recomputed on exactly the same events as `secretMatches`.
+    public private(set) var secretScanSkipped: Bool
     /// How Save should write the buffer. Set by an `OutputModeTransformer`; reset to
     /// `.plain` whenever the document is re-armed for a new summon (`refresh`).
     public var outputMode: OutputMode = .plain
@@ -16,7 +24,11 @@ public struct PasteDocument: Sendable {
         self.origin = origin
         self.history = [origin.plainText ?? ""]
         self.cursor = 0
-        self.detectedKinds = ContentDetector.detect(history[0])
+        // One scan, two consumers: `ContentDetector.detect(_:)` would otherwise run its own.
+        let secrets = SecretDetector.scan(history[0])
+        self.detectedKinds = ContentDetector.detect(history[0], secrets: secrets)
+        self.secretMatches = secrets
+        self.secretScanSkipped = !SecretDetector.isScannable(history[0])
         self.outputMode = .plain
     }
 
@@ -24,9 +36,11 @@ public struct PasteDocument: Sendable {
     public var canUndo: Bool { cursor > 0 }
     public var canRedo: Bool { cursor < history.count - 1 }
 
-    /// Append a new state (e.g. a transform result). No-op if unchanged.
+    /// Append a new state (e.g. a transform result). Leaves `history`/`cursor` untouched if
+    /// unchanged, but still redetects: a push is a discrete event even when it lands on text a
+    /// prior `setWorking` already coalesced in, so detection resyncs to what's actually working.
     public mutating func pushState(_ text: String) {
-        guard text != working else { return }
+        guard text != working else { redetect(); return }
         history = Array(history.prefix(cursor + 1))
         history.append(text)
         cursor = history.count - 1
@@ -60,6 +74,9 @@ public struct PasteDocument: Sendable {
     }
 
     private mutating func redetect() {
-        detectedKinds = ContentDetector.detect(working)
+        let secrets = SecretDetector.scan(working)
+        detectedKinds = ContentDetector.detect(working, secrets: secrets)
+        secretMatches = secrets
+        secretScanSkipped = !SecretDetector.isScannable(working)
     }
 }

@@ -49,6 +49,7 @@ public struct TransformerRegistry {
             (101, "Color → CSS rgb()", ColorConvert(style: .rgb)),
             (102, "Color → CSS hsl()", ColorConvert(style: .hsl)),
             (103, "Color → SwiftUI Color", ColorConvert(style: .swift)),
+            (110, "Redact Secrets", RedactSecrets()),
         ]
 
         for url in discoverScriptFiles() {

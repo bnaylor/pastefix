@@ -392,6 +392,49 @@ import Foundation
             #expect(names == ["index.json"])
         }
     }
+    @Test func containsSecretFlagSetAtCaptureAndDecodesLegacyNil() throws {
+        try withDir { dir in
+            let s = HistoryStore(directory: dir)
+            let a = s.record(text("token=9f8e7d6c5b4a39281706f5e4d3c2b1a0"))!; let b = s.record(text("hello"))!
+            let img = s.record(CaptureCandidate(imagePNG: png(1)))!
+            // Three states, not two: scanned and dirty, scanned and clean, never examined.
+            #expect(a.containsSecret == true && b.containsSecret == false && img.containsSecret == nil)
+            let p = s.pinText("AKIAIOSFODNN7EXAMPLE", richRTFD: nil, title: nil)!
+            #expect(p.containsSecret == true)
+            s.flush()
+            #expect(HistoryStore(directory: dir).items.first { $0.id == a.id }?.containsSecret == true)
+            let legacy = #"[{"id":"00000000-0000-0000-0000-000000000002","capturedAt":"2026-09-01T00:00:00Z","plainText":"AKIAIOSFODNN7EXAMPLE","byteCount":20}]"#
+            try Data(legacy.utf8).write(to: dir.appendingPathComponent("index.json"))
+            // Still not recomputed at load — but the row is now "unknown", so the overlay shows
+            // no glyph without claiming the item is clean.
+            #expect(HistoryStore(directory: dir).items[0].containsSecret == nil)
+        }
+    }
+    @Test func recopyingRefreshesTheSecretFlagOnAnExistingItem() throws {
+        try withDir { dir in
+            // Two pre-Plan-11 rows (no `containsSecret` key), one of them pinned: both take the
+            // identical-text early return in `record`, which used to leave the flag untouched, so
+            // a legacy item never gained its shield however often the secret was copied again.
+            let secret = "token=9f8e7d6c5b4a39281706f5e4d3c2b1a0"
+            let legacy = """
+            [{"id":"00000000-0000-0000-0000-000000000001","capturedAt":"2026-09-01T00:00:00Z","plainText":"\(secret)","byteCount":37},
+             {"id":"00000000-0000-0000-0000-000000000002","capturedAt":"2026-09-01T00:00:00Z","plainText":"AKIAIOSFODNN7EXAMPLE","byteCount":20,"pinned":true,"pinnedAt":"2026-09-01T00:00:00Z"}]
+            """
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            try Data(legacy.utf8).write(to: dir.appendingPathComponent("index.json"))
+            let s = HistoryStore(directory: dir)
+            #expect(s.items.count == 2 && s.items.allSatisfy { $0.containsSecret == nil })
+            #expect(s.record(text(secret))?.containsSecret == true)
+            #expect(s.record(text("AKIAIOSFODNN7EXAMPLE"))?.containsSecret == true)      // the pin
+            #expect(s.items.allSatisfy { $0.containsSecret == true })
+            s.flush()
+            #expect(HistoryStore(directory: dir).items.allSatisfy { $0.containsSecret == true })
+            // The refresh is a scan, not a latch: re-copying text with nothing in it records
+            // false, twice, rather than leaving the row unknown or sticking on true.
+            #expect(s.record(text("hello"))?.containsSecret == false)
+            #expect(s.record(text("hello"))?.containsSecret == false)
+        }
+    }
     @Test func pinFieldsPersistAndOldIndexesLoad() throws {
         try withDir { dir in
             let s = HistoryStore(directory: dir)

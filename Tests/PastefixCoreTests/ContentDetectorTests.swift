@@ -37,7 +37,8 @@ import Foundation
         #expect(ContentKind.percentEncoded.displayName == "Percent-encoded")
         #expect(ContentKind.htmlEntities.displayName == "HTML entities")
         #expect(ContentKind.markdown.displayName == "Markdown")
-        #expect(ContentKind.allCases.count == 8)
+        #expect(ContentKind.secret.displayName == "Secrets")
+        #expect(ContentKind.allCases.count == 9)
     }
     @Test func detectsMarkdownAndCoexistsWithURL() {
         let kinds = ContentDetector.detect("# Notes\n\nsee https://example.com and **this**")
@@ -51,7 +52,7 @@ import Foundation
     }
     @Test func jwtKindExcludesBase64() {
         let t = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"
-        #expect(ContentDetector.detect(t) == [.jwt])
+        #expect(ContentDetector.detect(t) == [.jwt, .secret])   // a JWT is also a credential (SecretKind.jwt)
     }
     @Test func base64Kind() {
         #expect(ContentDetector.detect("SGVsbG8sIHdvcmxkLiBUaGlzIGlzIHRleHQu") == [.base64])
@@ -76,5 +77,18 @@ import Foundation
         // That is acceptable: document it. Assert only that it is not mis-detected as jwt/base64.
         #expect(ContentDetector.detect(out).isDisjoint(with: [.jwt, .base64]))
         #expect(!ContentDetector.detect(out).contains(.json))
+    }
+    @Test func secretKindCoexistsWithURL() {
+        let k = ContentDetector.detect("see https://example.com and AKIAIOSFODNN7EXAMPLE")
+        #expect(k.contains(.secret) && k.contains(.url) && ContentKind.secret.displayName == "Secrets")
+    }
+    /// The overload takes the caller's scan as the whole truth for `.secret` — it never runs one
+    /// of its own — so the callers that need the ranges too can scan once.
+    @Test func suppliedSecretsDecideTheSecretKind() {
+        let text = "see https://example.com and AKIAIOSFODNN7EXAMPLE"
+        #expect(!ContentDetector.detect(text, secrets: []).contains(.secret))
+        #expect(ContentDetector.detect(text, secrets: []).contains(.url))
+        #expect(ContentDetector.detect(text).contains(.secret))
+        #expect(ContentDetector.detect(text, secrets: SecretDetector.scan(text)) == ContentDetector.detect(text))
     }
 }

@@ -72,6 +72,7 @@ public enum TransformCategory {
     public static let data = "Data"
     public static let colors = "Colors"
     public static let scripts = "Scripts"
+    public static let privacy = "Privacy"
     /// Display order for the built-in categories; custom ones follow alphabetically, then Scripts.
-    public static let builtinOrder = [layout, richText, characters, urls, `case`, data, colors]
+    public static let builtinOrder = [layout, richText, characters, urls, `case`, data, colors, privacy]
 }

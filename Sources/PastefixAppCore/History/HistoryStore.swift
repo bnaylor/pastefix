@@ -1,6 +1,7 @@
 import Foundation
 import CryptoKit
 import os
+import PastefixCore
 
 /// File-scope so the off-main index writer can log without touching main-actor state.
 private let historyLog = Logger(subsystem: "net.scromp.Pastefix", category: "history")
@@ -105,6 +106,17 @@ public final class HistoryStore: ObservableObject {
 
         let hash = image.map { SHA256.hash(data: $0).map { String(format: "%02x", $0) }.joined() }
         if let existing = items.firstIndex(where: { hash != nil ? $0.imageHash == hash : ($0.imageFile == nil && $0.plainText == text) }) {
+            // Re-copying an item is a fresh look at its text, so the flag is refreshed from this
+            // scan before any of the early returns below. Without it an item whose flag was never
+            // set — a pre-Plan-11 index decodes nil — stayed unflagged forever, however often the
+            // user copied the secret again.
+            if items[existing].imageFile == nil, let t = text, SecretDetector.isScannable(t) {
+                let flag = !SecretDetector.scan(t).isEmpty
+                if items[existing].containsSecret != flag {
+                    items[existing].containsSecret = flag
+                    scheduleWrite()
+                }
+            }
             // A pin holds its own place: copying it again must not drag it into the recency
             // list or refresh `capturedAt`, which would reorder the unpinned section around it.
             if items[existing].pinned { return items[existing] }
@@ -131,6 +143,13 @@ public final class HistoryStore: ObservableObject {
         if let image, writeBlob(image, id: id, ext: Self.imageExtension) {
             item.imageFile = Self.blobName(id, ext: Self.imageExtension)
             bytes += image.count
+        }
+        // Text only: an image capture is never scanned, even if it also carries plain text. The
+        // flag stays nil unless a scan actually ran — `limits.maxTextBytes` equals
+        // `SecretDetector.maxBytes`, so in practice it always does, but "we looked and found
+        // nothing" must never be recorded for a text nobody looked at.
+        if item.imageFile == nil, let t = text, SecretDetector.isScannable(t) {
+            item.containsSecret = !SecretDetector.scan(t).isEmpty
         }
         guard item.hasText || item.imageFile != nil else {
             // The item is abandoned (e.g. the image write failed and there is no text left),
@@ -227,6 +246,7 @@ public final class HistoryStore: ObservableObject {
     @discardableResult
     public func pinText(_ text: String, richRTFD: Data?, title: String?, now: Date = Date()) -> HistoryItem? {
         if let i = items.firstIndex(where: { $0.imageFile == nil && $0.plainText == text }) {
+            if SecretDetector.isScannable(text) { items[i].containsSecret = !SecretDetector.scan(text).isEmpty }
             pin(items[i].id, title: title, now: now)
             return items[i]
         }

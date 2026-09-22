@@ -1,6 +1,7 @@
 import Foundation
 import AppKit
 import Combine
+import SwiftUI
 import PastefixCore
 import PastefixAppCore
 
@@ -14,6 +15,19 @@ final class AppModel: ObservableObject {
 
     /// Set by the ⌘⇧V hotkey; PanelView opens the history overlay and resets it.
     @Published var historyOverlayRequested = false
+
+    /// A one-shot request to move the editor's selection, written by the secrets badge and
+    /// cleared by `PanelView` as soon as it consumes it.
+    ///
+    /// The *live* selection deliberately does not live here — it is `PanelView`'s own `@State`.
+    /// A `TextEditor` writes its selection back through the binding whenever the caret moves or
+    /// focus changes, so a binding into this object published on the model, re-rendered the whole
+    /// panel and re-applied the selection to the editor, which took first responder back from the
+    /// ⌘K palette's search field the instant it appeared.
+    @Published var requestedSelection: TextSelection?
+
+    /// Cycle position for `selectNextSecret`, reset wherever `document` is replaced.
+    private var nextSecretIndex = 0
 
     let settings: SettingsStore
     let history: HistoryStore
@@ -62,6 +76,7 @@ final class AppModel: ObservableObject {
 
     func summon() {
         errorMessage = nil
+        resetSecretSelection()
         sessionGeneration &+= 1
         document = PasteDocument(origin: ClipboardBridge.snapshot())
     }
@@ -81,10 +96,36 @@ final class AppModel: ObservableObject {
         return transformers.filter { TransformCoordinator.isEnabled($0, for: document) }
     }
 
-    /// "URL", "URL, JSON", or nil when nothing was detected.
+    /// "URL", "URL, JSON", or nil when nothing was detected. Never lists "Secrets": the orange
+    /// badge next to it already says so, in the one place that can act on it.
     var detectedSummary: String? {
-        guard let kinds = document?.detectedKinds, !kinds.isEmpty else { return nil }
-        return ContentKind.allCases.filter(kinds.contains).map(\.displayName).joined(separator: ", ")
+        guard let kinds = document?.detectedKinds else { return nil }
+        let names = ContentKind.allCases.filter { $0 != .secret && kinds.contains($0) }.map(\.displayName)
+        return names.isEmpty ? nil : names.joined(separator: ", ")
+    }
+
+    /// Credentials found when the buffer was captured or refreshed; drives the action-bar badge.
+    var secretMatches: [SecretMatch] { document?.secretMatches ?? [] }
+
+    /// True when the buffer was too large to scan, so `secretMatches` is empty for want of a scan
+    /// rather than for want of secrets. Drives the grey "Not scanned for secrets" badge: an
+    /// unscanned buffer must not look like a clean one.
+    var secretScanSkipped: Bool { document?.secretScanSkipped ?? false }
+
+    /// Selects the next detected secret in the editor, cycling back to the first.
+    ///
+    /// Re-scans the *live* buffer rather than reusing `document.secretMatches`: those ranges were
+    /// pinned when the document was captured or refreshed and index a string the user may have
+    /// edited since, so selecting one could highlight unrelated text — or trap on an index the
+    /// buffer no longer has. If the edits removed every match there is nothing to select and the
+    /// click is a no-op; the badge keeps the pinned count until the document refreshes.
+    func selectNextSecret() {
+        guard let doc = document else { return }
+        let live = SecretDetector.scan(doc.working)
+        guard !live.isEmpty else { return }
+        nextSecretIndex %= live.count
+        requestedSelection = TextSelection(range: live[nextSecretIndex].range)
+        nextSecretIndex += 1
     }
 
     /// The parsed colour when the buffer is a colour literal; drives the action-bar swatch.
@@ -113,6 +154,9 @@ final class AppModel: ObservableObject {
                 return
             }
             self.document = updated
+            // The caret is `PanelView`'s to carry across the new buffer; the badge's cycle
+            // restarts here because the match list belongs to the buffer that just went away.
+            self.resetSecretSelection()
             switch outcome {
             case .applied, .unchanged: self.errorMessage = nil
             case .failed(let message): self.errorMessage = message
@@ -127,14 +171,39 @@ final class AppModel: ObservableObject {
         document = doc
     }
 
-    func undo() { guard var doc = document else { return }; doc.undo(); document = doc }
-    func redo() { guard var doc = document else { return }; doc.redo(); document = doc }
+    func undo() {
+        guard var doc = document else { return }
+        doc.undo()
+        document = doc
+        resetSecretSelection()
+    }
+
+    func redo() {
+        guard var doc = document else { return }
+        doc.redo()
+        document = doc
+        resetSecretSelection()
+    }
 
     func refresh() {
         guard var doc = document else { return }
         doc.refresh(origin: ClipboardBridge.snapshot())
         document = doc
         errorMessage = nil
+        resetSecretSelection()
+    }
+
+    /// Drops any pending badge request and restarts its cycle.
+    ///
+    /// Called wherever the buffer is replaced — a new session (summon, load, refresh, end of
+    /// session) and a landed transform, undo or redo. A request carries `String.Index` values
+    /// into the buffer it was made against, and applying one to a shorter string is undefined and
+    /// traps, so a request that hasn't been consumed by the time the buffer moves is dropped
+    /// rather than carried. The live caret is `PanelView`'s and is clamped there
+    /// (`TextRangeClamp.remap`) so an ordinary transform doesn't throw it back to the start.
+    private func resetSecretSelection() {
+        requestedSelection = nil
+        nextSecretIndex = 0
     }
 
     func save() {
@@ -174,6 +243,7 @@ final class AppModel: ObservableObject {
         // image. Put it straight back on the clipboard instead of opening an empty editor.
         guard item.hasText else { copyBack(item); return }
         errorMessage = nil
+        resetSecretSelection()
         sessionGeneration &+= 1
         document = PasteDocument(origin: ClipboardSnapshot(plainText: item.plainText ?? "", richRTFD: history.richRTFD(for: item)))
     }
@@ -242,6 +312,7 @@ final class AppModel: ObservableObject {
         document = nil
         errorMessage = nil
         isApplying = false
+        resetSecretSelection()
         sessionGeneration &+= 1
         onEndSession?()
     }

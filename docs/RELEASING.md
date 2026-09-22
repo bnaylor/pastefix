@@ -63,8 +63,9 @@ feature branch; the script refuses to honor it without `--dry-run`, and a real
 release must never set it.
 
 What it does, in order: archive (Release, Developer ID, hardened runtime,
-**universal** — `-destination 'generic/platform=macOS'`, because
-`minimumSystemVersion` 14.6 includes Intel Macs) → export → notarize + staple
+**universal** — `-destination 'generic/platform=macOS'`, because the appcast's
+minimum system version — read from the exported app's `LSMinimumSystemVersion`,
+currently 15.0 — still includes Intel Macs) → export → notarize + staple
 the app → DMG → sign + notarize + staple the DMG → `sign_update` (EdDSA) →
 tag → `gh release create` with the DMG → prepend an `<item>` to `appcast.xml`
 on `gh-pages`. Every step is fatal. The three irreversible steps (tag,

@@ -11,6 +11,7 @@ public enum ContentKind: String, CaseIterable, Sendable, Codable {
     case percentEncoded
     case htmlEntities
     case markdown
+    case secret
 
     /// Label for the "Detected: …" badge.
     public var displayName: String {
@@ -23,6 +24,7 @@ public enum ContentKind: String, CaseIterable, Sendable, Codable {
         case .percentEncoded: return "Percent-encoded"
         case .htmlEntities: return "HTML entities"
         case .markdown: return "Markdown"
+        case .secret: return "Secrets"
         }
     }
 }

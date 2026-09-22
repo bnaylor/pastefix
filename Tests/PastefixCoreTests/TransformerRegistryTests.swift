@@ -23,6 +23,7 @@ import Foundation
             "builtin.base64.encode", "builtin.base64.decode", "builtin.url.encode", "builtin.url.decode",
             "builtin.html.encode", "builtin.html.decode", "builtin.jwt.decode",
             "builtin.color.hex", "builtin.color.rgb", "builtin.color.hsl", "builtin.color.swift",
+            "builtin.redactsecrets",
         ])
     }
 
@@ -52,7 +53,7 @@ import Foundation
         let dir = FileManager.default.temporaryDirectory
             .appendingPathComponent("does-not-exist-\(UUID().uuidString)")
         let reg = TransformerRegistry(config: .init(scriptsDirectory: dir, wrapWidth: 80))
-        #expect(reg.load().count == 26)   // built-ins only, no crash
+        #expect(reg.load().count == 27)   // built-ins only, no crash
     }
 
     @Test func scriptKindsSurfaceAsApplicableKinds() throws {
@@ -87,7 +88,8 @@ import Foundation
         for id in dataIDs { #expect(byID[id] == TransformCategory.data) }
         let colorIDs = ["builtin.color.hex", "builtin.color.rgb", "builtin.color.hsl", "builtin.color.swift"]
         for id in colorIDs { #expect(byID[id] == TransformCategory.colors) }
-        #expect(TransformCategory.builtinOrder == ["Layout", "Rich Text", "Characters", "URLs", "Case", "Data", "Colors"])
+        #expect(byID["builtin.redactsecrets"] == TransformCategory.privacy)
+        #expect(TransformCategory.builtinOrder == ["Layout", "Rich Text", "Characters", "URLs", "Case", "Data", "Colors", "Privacy"])
     }
 
     @Test func richTextTransformsRegisteredInOrder() {
