@@ -90,6 +90,38 @@ The plan below was written before implementation; these are where the shipped co
    that a deadline noticed slightly late still surfaces as `.timeout` at exactly 3 s. Comments
    crediting the race with "a hard timeout race so the panel never hangs" were wrong and are
    gone: they told a future reader that deleting `.reportProgress` was safe.
+11. **The editor's draft is owned by `SettingsView`, and a valid draft auto-saves on the way
+   out.** As `@State` on the Presets tab the draft died with the view, and a `TabView` tears the
+   tab down on every switch — so the discard alert (amendment 6) covered a selection change, a
+   removal and **+**, but not the two exits a user actually takes: clicking another tab, and ⌘W.
+   `PresetEditorState` (an `ObservableObject` holding `selected` and `draft`) is now a
+   `@StateObject` on `SettingsView`, and `PresetsSettingsView.onDisappear` writes a dirty draft
+   to the store if it is savable. The rule: **a valid unsaved draft is saved automatically when
+   the tab or the window closes; an invalid one (no name, or a pattern that doesn't compile)
+   survives tab switches but not window close** — it can't be written to the store, and the
+   state object dies with the Settings window. No `NSWindow.willCloseNotification` observer: the
+   notification is per-window and filtering it down to the Settings window from inside a SwiftUI
+   tab costs more than it buys, and if `onDisappear` were ever *not* to fire on close, that same
+   fact would mean the scene — and the draft — is still alive.
+12. **Preset names are trimmed in `SettingsStore`, not in the editor.** Save validated
+   `name.trimmingCharacters(...)` and then stored the untrimmed string, so `"  x  "` was savable
+   and sorted ahead of every other name in the 900 band. `addPreset`/`updatePreset` trim
+   (`.whitespacesAndNewlines`, the same set the editor validates with) so every writer —
+   including the auto-save above — gets it.
+13. **`removePreset(id:)` also drops the preset's `transformEnabled`/`transformOrder` entries.**
+   They are keyed by `preset:<uuid>`, which no longer exists; left behind, restoring a presets
+   backup brings back a stale "disabled" for a preset the user deleted.
+14. **The presets array decodes element-wise.** Amendment 7's tolerant `init(from:)` only covered
+   *missing optional* keys; the array itself was still one `try?`, so a single malformed element
+   — a flag written as a string, a missing `name`, an `id` that isn't a UUID — decoded to `nil`,
+   became `[]`, and the next add/edit/delete wrote that empty array back over the file. Measured
+   against the real decoder: one good preset plus any one of those three lost *both*.
+   `SettingsStore.readLossyArray` decodes each element through a wrapper whose `init(from:)`
+   never throws (a bare `try? container.decode` is not guaranteed to advance the unkeyed
+   container's cursor), keeping the good ones. `historyExcludedBundleIDs` deliberately keeps the
+   whole-array decode: an all-bad `[String]` payload would decode element-wise to an *empty*
+   exclusion list, which is fail-open for a privacy feature, where falling back to the seeds is
+   fail-safe.
 
 ## Scope
 

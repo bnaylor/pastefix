@@ -16,7 +16,12 @@ public struct RegexPresetTransformer: Transformer {
 
     public init(preset: RegexPreset) { self.preset = preset }
 
-    public var id: String { "preset:\(preset.id.uuidString)" }
+    /// The transformer id a preset is surfaced under. A `static` as well as the instance
+    /// property because `SettingsStore` has to build the same string to clear a removed preset's
+    /// enable/order overrides, and two hand-written copies of an id format drift.
+    public static func transformerID(for presetID: UUID) -> String { "preset:\(presetID.uuidString)" }
+
+    public var id: String { Self.transformerID(for: preset.id) }
     public var name: String { preset.name }
     public let requiresRichInput = false
     public var source: TransformerSource { .preset(preset.id) }
