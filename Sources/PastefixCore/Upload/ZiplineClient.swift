@@ -25,7 +25,7 @@ public struct URLSessionZiplineClient: ZiplineUploading {
     }
 
     public func upload(_ request: ZiplineUpload, to server: URL, token: String) async throws -> URL {
-        let endpoint = server.appendingPathComponent("api/upload")
+        let endpoint = Self.endpoint(for: server)
         let boundary = "PastefixBoundary-\(UUID().uuidString)"
 
         var req = URLRequest(url: endpoint, cachePolicy: .reloadIgnoringLocalCacheData,
@@ -57,10 +57,32 @@ public struct URLSessionZiplineClient: ZiplineUploading {
 
         guard let http = response as? HTTPURLResponse else { throw ZiplineUploadError.malformedResponse }
         guard (200..<300).contains(http.statusCode) else {
-            throw Self.error(status: http.statusCode, body: data)
+            throw Self.error(status: http.statusCode, body: data, requestURL: endpoint)
         }
         guard let url = Self.shortURL(from: data) else { throw ZiplineUploadError.malformedResponse }
         return url
+    }
+
+    /// Zipline's own iShare-era config surfaces a `requestURL` of exactly
+    /// `https://host/api/upload` — a user migrating from iShare has that full
+    /// endpoint string in front of them and may reasonably paste it into the
+    /// server field. Appending `api/upload` unconditionally would double it
+    /// into `.../api/upload/api/upload` and 404 with no clue why. Normalise
+    /// instead: strip trailing slashes, then append only if the path does not
+    /// already end in `api/upload`. Idempotent for a bare host, a host with a
+    /// trailing slash, a host with a sub-path, and a host that already
+    /// includes the endpoint.
+    static func endpoint(for server: URL) -> URL {
+        guard var comps = URLComponents(url: server, resolvingAgainstBaseURL: false) else {
+            return server.appendingPathComponent("api/upload")
+        }
+        var path = comps.path
+        while path.hasSuffix("/") { path.removeLast() }
+        if !path.hasSuffix("/api/upload") && path != "api/upload" {
+            path += "/api/upload"
+        }
+        comps.path = path
+        return comps.url ?? server.appendingPathComponent("api/upload")
     }
 
     /// `multipart/form-data` requires a filename on the part; it is a form
@@ -87,14 +109,19 @@ public struct URLSessionZiplineClient: ZiplineUploading {
     /// Zipline replies `{"code":1001,"message":"bad options[<header>]: <detail>"}`
     /// for a header the user can fix in the overlay, which is why it does not
     /// collapse into the generic server case.
-    private static func error(status: Int, body: Data) -> ZiplineUploadError {
+    ///
+    /// `requestURL` backfills `.server`'s message only when the body carried
+    /// none: a bare 404 from a misconfigured server URL is otherwise
+    /// undiagnosable from the UI. Never the token — it is a header, not part
+    /// of this URL, so there is nothing to scrub.
+    private static func error(status: Int, body: Data, requestURL: URL) -> ZiplineUploadError {
         if status == 401 { return .unauthorized }
         let object = try? JSONSerialization.jsonObject(with: body) as? [String: Any]
         let message = object?["message"] as? String
         if let message, let parsed = parseBadOption(message) {
             return .badOption(header: parsed.header, message: parsed.detail)
         }
-        return .server(status: status, message: message)
+        return .server(status: status, message: message ?? "request to \(requestURL.absoluteString) failed")
     }
 
     static func parseBadOption(_ message: String) -> (header: String, detail: String)? {
@@ -102,6 +129,10 @@ public struct URLSessionZiplineClient: ZiplineUploading {
               let close = message.firstIndex(of: "]") else { return nil }
         let start = message.index(message.startIndex, offsetBy: "bad options[".count)
         let header = String(message[start..<close])
+        // An empty header name is not a header the overlay can point at;
+        // treat it as unparseable so it falls back to the generic server case
+        // rather than reporting `.badOption(header: "", ...)`.
+        guard !header.isEmpty else { return nil }
         var detail = String(message[message.index(after: close)...])
         if detail.hasPrefix(":") { detail.removeFirst() }
         return (header, detail.trimmingCharacters(in: .whitespaces))

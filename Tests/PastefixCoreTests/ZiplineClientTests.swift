@@ -94,7 +94,10 @@ struct ZiplineClientTests {
         let contentType = StubProtocol.capturedHeaders.first { $0.key.lowercased() == "content-type" }?.value ?? ""
         #expect(contentType.hasPrefix("multipart/form-data; boundary="))
         let boundary = String(contentType.split(separator: "=").last!)
-        #expect(body.contains("--\(boundary)"))
+        // Pinned to the opening delimiter specifically — `body.contains("--\(boundary)")`
+        // would also be satisfied by the closing `--boundary--` alone, so it would
+        // pass even if the client dropped the opening delimiter entirely.
+        #expect(body.hasPrefix("--\(boundary)\r\n"))
         #expect(body.contains(#"name="file""#))
         #expect(body.contains(#"filename="paste.txt""#))
         #expect(body.contains("hello world"))
@@ -144,6 +147,116 @@ struct ZiplineClientTests {
         }
         guard let thrown, case .transport = thrown else {
             Issue.record("expected transport, got \(String(describing: thrown))"); return
+        }
+    }
+
+    // MARK: - Endpoint normalisation (server URL -> /api/upload, no doubling)
+
+    @Test("a bare host gets /api/upload appended")
+    func endpointBareHost() {
+        let url = URLSessionZiplineClient.endpoint(for: URL(string: "https://zip.example.test")!)
+        #expect(url == URL(string: "https://zip.example.test/api/upload"))
+    }
+
+    @Test("a trailing slash does not produce a double slash before /api/upload")
+    func endpointTrailingSlash() {
+        let url = URLSessionZiplineClient.endpoint(for: URL(string: "https://zip.example.test/")!)
+        #expect(url == URL(string: "https://zip.example.test/api/upload"))
+    }
+
+    @Test("a sub-path is preserved ahead of /api/upload")
+    func endpointSubPath() {
+        let url = URLSessionZiplineClient.endpoint(for: URL(string: "https://zip.example.test/zipline")!)
+        #expect(url == URL(string: "https://zip.example.test/zipline/api/upload"))
+    }
+
+    @Test("a server URL that already ends in /api/upload is used as-is, not doubled")
+    func endpointAlreadyFull() {
+        let url = URLSessionZiplineClient.endpoint(for: URL(string: "https://zip.example.test/api/upload")!)
+        #expect(url == URL(string: "https://zip.example.test/api/upload"))
+    }
+
+    @Test("a full endpoint URL with a trailing slash is still not doubled")
+    func endpointAlreadyFullWithTrailingSlash() {
+        let url = URLSessionZiplineClient.endpoint(for: URL(string: "https://zip.example.test/api/upload/")!)
+        #expect(url == URL(string: "https://zip.example.test/api/upload"))
+    }
+
+    @Test("a 404 with no JSON message names the attempted URL, not just a bare status")
+    func serverErrorWithoutMessageNamesURL() async throws {
+        let c = client()
+        StubProtocol.status = 404
+        StubProtocol.body = Data()
+        let thrown = await #expect(throws: ZiplineUploadError.self) {
+            try await c.upload(upload, to: server, token: "tok_123")
+        }
+        guard let thrown, case .server(let status, let message) = thrown else {
+            Issue.record("expected server, got \(String(describing: thrown))"); return
+        }
+        #expect(status == 404)
+        #expect(message?.contains("zip.example.test/api/upload") == true)
+        // The token must never leak into a diagnostic message.
+        #expect(message?.contains("tok_123") == false)
+    }
+
+    // MARK: - parseBadOption: malformed inputs fall back to the generic server case
+
+    @Test("a message with no closing bracket does not parse as badOption")
+    func parseBadOptionNoClosingBracket() {
+        #expect(URLSessionZiplineClient.parseBadOption("bad options[x-zipline-deletes-at: oops") == nil)
+    }
+
+    @Test("a message with the wrong prefix does not parse as badOption")
+    func parseBadOptionWrongPrefix() {
+        #expect(URLSessionZiplineClient.parseBadOption("something else entirely") == nil)
+    }
+
+    @Test("an empty header name does not parse as badOption")
+    func parseBadOptionEmptyHeader() {
+        #expect(URLSessionZiplineClient.parseBadOption("bad options[]: x") == nil)
+    }
+
+    @Test("a malformed-prefix message surfaces as server, not badOption")
+    func malformedBadOptionMessageBecomesServer() async throws {
+        let c = client()
+        StubProtocol.status = 400
+        StubProtocol.body = #"{"code":1001,"message":"bad options[]: nonsense"}"#.data(using: .utf8)!
+        let thrown = await #expect(throws: ZiplineUploadError.self) {
+            try await c.upload(upload, to: server, token: "tok_123")
+        }
+        guard let thrown, case .server(let status, let message) = thrown else {
+            Issue.record("expected server, got \(String(describing: thrown))"); return
+        }
+        #expect(status == 400)
+        #expect(message == "bad options[]: nonsense")
+    }
+
+    // MARK: - shortURL's guard chain: every unreadable-body shape is malformed, never success
+
+    @Test("a non-JSON 2xx body is malformed")
+    func malformedNonJSON() async throws {
+        let c = client()
+        StubProtocol.body = "not json at all".data(using: .utf8)!
+        await #expect(throws: ZiplineUploadError.malformedResponse) {
+            try await c.upload(upload, to: server, token: "tok_123")
+        }
+    }
+
+    @Test("a 2xx JSON body with no files key is malformed")
+    func malformedNoFilesKey() async throws {
+        let c = client()
+        StubProtocol.body = #"{"ok":true}"#.data(using: .utf8)!
+        await #expect(throws: ZiplineUploadError.malformedResponse) {
+            try await c.upload(upload, to: server, token: "tok_123")
+        }
+    }
+
+    @Test("a files[0] with no url is malformed")
+    func malformedFileWithoutURL() async throws {
+        let c = client()
+        StubProtocol.body = #"{"files":[{"id":"a","name":"x.txt"}]}"#.data(using: .utf8)!
+        await #expect(throws: ZiplineUploadError.malformedResponse) {
+            try await c.upload(upload, to: server, token: "tok_123")
         }
     }
 }
