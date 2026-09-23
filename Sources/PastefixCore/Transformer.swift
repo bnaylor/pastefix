@@ -31,6 +31,13 @@ public enum TransformError: Error, Equatable {
     case invalidInput(String)
 }
 
+/// Defaults every transform gets unless it declares otherwise (see `Transformer.maxInputBytes`
+/// and `Transformer.timeout`, added in Task 2).
+public enum TransformLimits {
+    public static let defaultMaxInputBytes = 1_048_576
+    public static let defaultTimeout: TimeInterval = 3
+}
+
 /// How Save should write the buffer. Set by an `OutputModeTransformer`; lives on the document for the session.
 public enum OutputMode: String, Sendable, Equatable {
     case plain
