@@ -11,6 +11,31 @@ issues: [28, 29]
 
 # Pastefix v2 — Large-Buffer Safety (Plan 13)
 
+## Amendments (post-implementation)
+
+The sections below are updated in place to match what shipped; this list is the summary of what
+changed and why, for anyone comparing against an earlier read of this spec.
+
+1. **Defaults live in `TransformLimits`, not `Transformer`.** `Transformer.maxInputBytes`/`timeout`
+   default to `TransformLimits.defaultMaxInputBytes` (1 MB) / `TransformLimits.defaultTimeout` (3 s)
+   — a standalone enum in `Transformer.swift`, not static members of the protocol's default
+   extension.
+2. **The problem statement overstated where native transforms blocked.** `TransformCoordinator.apply`
+   is a nonisolated `async` function in the package, so a synchronous native body already ran off
+   the main actor before this plan; it was unbounded and uncancellable, not main-actor-blocking.
+   Detection was the actual main-actor cost: `PasteDocument.init`/`pushState`/`undo`/`redo` ran
+   `SecretDetector.scan` + `ContentDetector.detect` as part of a struct's synchronous init/mutation
+   on `AppModel`, a `@MainActor` class.
+3. **`Deadline.run` checks cancellation before starting.** It begins with `try
+   Task.checkCancellation()`, so an already-cancelled caller never spawns the body task at all.
+4. **The scheduler's single slot is soft across `cancelAll()`.** `cancelAll()` lets go of a running
+   scan rather than waiting for it: the scan keeps running to completion in the background,
+   cancelled and undelivered, and a `request` called immediately afterward may briefly overlap it.
+   The overlap is bounded by the same caps as any other scan and by `URLFinder` observing
+   cancellation.
+5. **`URLFinder.find` may return a partial list to a cancelled caller.** Every caller that is
+   cancelled discards its result regardless, so the partial list is never surfaced.
+
 Closes #28 (detection cost on the main actor) and #29 (native transforms have no input bound or
 cancellation).
 
@@ -26,9 +51,11 @@ cancellation).
 - Native transforms have no input bound. `MarkdownToRich` runs the same `MarkdownHTML.render`
   pipeline that `MarkdownPreview` capped at 16 KB / 200 list items in Plan 10, with no cap.
   Only `RegexPresetTransformer` and `RedactSecrets` bound themselves.
-- `TransformCoordinator.apply` awaits `transformer.apply` inline on the main actor's task, so a
-  synchronous native body blocks the UI for its full duration. Cancel/Save/re-summon only discard
-  the result through the `sessionGeneration` guard; the work keeps running.
+- Native transforms have no input bound or timeout, and no cancellation reaches a running one.
+  `TransformCoordinator.apply` is a nonisolated `async` function in the package, so a synchronous
+  native body does not itself block the main actor; the defect is that it is unbounded and
+  uncancellable — a pathological input just runs to completion off-main, and Cancel/Save/re-summon
+  only discard the result through the `sessionGeneration` guard while the work keeps running.
 
 ## Goals
 
@@ -95,8 +122,11 @@ public func cancelAll()
   fast). Same single-slot shape as `TIFFConversionSlot`, for the same reason: serialising
   without a slot would let rapid undo/redo stack 1 MB scans.
 - When a scan finishes, its result is delivered only if no waiting request has displaced it;
-  otherwise it is discarded and the waiting request starts. `cancelAll()` cancels the running
-  task and drops the waiting one; nothing is delivered afterwards.
+  otherwise it is discarded and the waiting request starts. `cancelAll()` drops the waiting
+  request and lets go of the running one rather than waiting for it: that scan keeps running to
+  completion in the background, cancelled and undelivered, and an immediate `request` right after
+  `cancelAll()` may briefly overlap it — bounded by the same caps as any other scan and by
+  `URLFinder` observing cancellation, so nothing accumulates.
 - `deliver` runs on the main actor with the originating request, so the receiver can compare
   generation and revision.
 
@@ -129,12 +159,17 @@ public func cancelAll()
 ### 5. `Transformer` caps and timeouts
 
 ```swift
+public enum TransformLimits {
+    public static let defaultMaxInputBytes = 1_048_576
+    public static let defaultTimeout: TimeInterval = 3
+}
+
 public protocol Transformer {
     // existing requirements…
     /// Largest `TransformInput.text` (UTF-8 bytes) this transform accepts. Enforced by the coordinator.
-    var maxInputBytes: Int { get }        // default Transformer.defaultMaxInputBytes = 1_048_576
+    var maxInputBytes: Int { get }        // default TransformLimits.defaultMaxInputBytes = 1_048_576
     /// Wall-clock budget for `apply`. Enforced by the coordinator via `Deadline.run`.
-    var timeout: TimeInterval { get }     // default Transformer.defaultTimeout = 3
+    var timeout: TimeInterval { get }     // default TransformLimits.defaultTimeout = 3
 }
 ```
 
@@ -153,10 +188,12 @@ Settings preview calls presets without the coordinator.
 
 ```swift
 public enum Deadline {
-    /// Runs `body` on a detached task and returns its value. Throws `TransformError.timeout` when
-    /// `seconds` elapse first, and `CancellationError` when the caller is cancelled first. In both
-    /// abandonment cases the body task is cancelled and its eventual result discarded; a body that
-    /// ignores cancellation runs to completion in the background but never blocks the caller.
+    /// Begins with `try Task.checkCancellation()`, so an already-cancelled caller never spawns
+    /// `body`. Otherwise runs `body` on a detached task and returns its value. Throws
+    /// `TransformError.timeout` when `seconds` elapse first, and `CancellationError` when the
+    /// caller is cancelled first. In both abandonment cases the body task is cancelled and its
+    /// eventual result discarded; a body that ignores cancellation runs to completion in the
+    /// background but never blocks the caller.
     public static func run<T: Sendable>(seconds: TimeInterval, priority: TaskPriority = .userInitiated,
                                         _ body: @escaping @Sendable () async throws -> T) async throws -> T
 }

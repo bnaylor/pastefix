@@ -10,6 +10,12 @@ timestamp: 2026-08-11T20:15:17Z
 
 # Pastefix v2 — Foundation + Transform Pipeline
 
+> **Amendment (Plan 13, 2026-09-23):** detection timing changed. `PasteDocument` no longer scans
+> synchronously as part of this pipeline's document/undo/redo flow; every discrete event marks
+> detection pending and `AppModel` hands the scan to an off-main `DetectionScheduler`, landing the
+> result only if the document hasn't moved on. See
+> `docs/specs/2026-09-23-pastefix-v2-large-buffer-safety.md`.
+
 ## Scope
 
 This spec covers the **first** design increment of Pastefix v2: the app
