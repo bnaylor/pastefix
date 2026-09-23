@@ -9,6 +9,12 @@ import PastefixCore
 /// fast). Queueing would let rapid undo/redo stack 1 MB scans — the `TIFFConversionSlot` lesson.
 /// A cancelled scan's result is discarded; so is a finished scan's when something newer is
 /// waiting, because the document it describes is already gone.
+///
+/// The slot is soft across `cancelAll()`: it lets go of the running scan rather than waiting for
+/// it, so that scan keeps running to completion in the background, cancelled and undelivered, and
+/// an immediate `request` right after `cancelAll()` may briefly overlap it. That's bounded by the
+/// same caps as any other scan and by `URLFinder` observing cancellation, so the overlap is short
+/// and never accumulates.
 @MainActor
 public final class DetectionScheduler {
     public struct Request: Sendable {

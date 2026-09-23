@@ -18,6 +18,16 @@ private func slowScan(_ log: Log, sleep: TimeInterval = 0.15) -> @Sendable (Stri
     { text in log.add(text); Thread.sleep(forTimeInterval: sleep); return DetectionResult.compute(text) }
 }
 
+/// Records whether an injected scan observed cancellation and how long that took.
+private final class CancelObservation: @unchecked Sendable {
+    private let lock = NSLock()
+    private var _cancelled = false
+    private var _elapsed: TimeInterval = 0
+    func recordCancelled(elapsed: TimeInterval) { lock.withLock { _cancelled = true; _elapsed = elapsed } }
+    var cancelled: Bool { lock.withLock { _cancelled } }
+    var elapsed: TimeInterval { lock.withLock { _elapsed } }
+}
+
 @Suite @MainActor struct DetectionSchedulerTests {
     @Test func deliversWithTheOriginatingRequest() async {
         var delivered: [(DetectionScheduler.Request, DetectionResult)] = []
@@ -25,7 +35,8 @@ private func slowScan(_ log: Log, sleep: TimeInterval = 0.15) -> @Sendable (Stri
         s.request(.init(text: "https://example.com", revision: 3, generation: 7))
         await settle(0.3)
         #expect(delivered.count == 1)
-        #expect(delivered.first?.0.revision == 3 && delivered.first?.0.generation == 7)
+        #expect(delivered.first?.0.revision == 3)
+        #expect(delivered.first?.0.generation == 7)
         #expect(delivered.first?.1.kinds == [.url])
     }
 
@@ -72,6 +83,31 @@ private func slowScan(_ log: Log, sleep: TimeInterval = 0.15) -> @Sendable (Stri
         s.cancelAll()
         s.request(.init(text: "B", revision: 0, generation: 2))
         await settle(0.4)
+        #expect(delivered == ["B"])
+    }
+
+    @Test func cancellationReachesTheRunningScan() async {
+        let observation = CancelObservation()
+        let compute: @Sendable (String) -> DetectionResult = { text in
+            let start = Date()
+            let deadline = ContinuousClock.now + .seconds(1)
+            while !Task.isCancelled && ContinuousClock.now < deadline {
+                Thread.sleep(forTimeInterval: 0.005)
+            }
+            if Task.isCancelled {
+                observation.recordCancelled(elapsed: Date().timeIntervalSince(start))
+            }
+            return DetectionResult.compute(text)
+        }
+        var delivered: [String] = []
+        let s = DetectionScheduler(compute: compute) { req, _ in delivered.append(req.text) }
+        s.request(.init(text: "A", revision: 0, generation: 1))
+        s.request(.init(text: "B", revision: 1, generation: 1))
+        // B is never displaced, so its scan runs the full spin to its own 1 s deadline before
+        // finishing normally; only A's cancellation is expected to be fast.
+        await settle(1.3)
+        #expect(observation.cancelled)
+        #expect(observation.elapsed < 0.5)
         #expect(delivered == ["B"])
     }
 }
