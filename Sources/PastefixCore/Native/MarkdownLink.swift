@@ -233,6 +233,9 @@ public struct MarkdownLink: Transformer {
     public let source: TransformerSource = .builtin
     public let applicableKinds: Set<ContentKind>? = [.url]
     public let category: String? = TransformCategory.urls
+    public var maxInputBytes: Int { URLFinder.maxBytes }
+    // One batch of fetches bounded by fetchTimeout, plus margin for the local scan and title parse.
+    public var timeout: TimeInterval { fetchTimeout + 2 }
 
     private let fetcher: any TitleFetcher
     private let fetchTimeout: TimeInterval

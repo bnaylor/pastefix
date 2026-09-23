@@ -7,6 +7,7 @@ public struct RedactSecrets: Transformer {
     public let source: TransformerSource = .builtin
     public let category: String? = TransformCategory.privacy
     public let applicableKinds: Set<ContentKind>? = [.secret]
+    public var maxInputBytes: Int { SecretDetector.maxBytes }
     public init() {}
     public func apply(_ input: TransformInput) async throws -> String {
         // Over the cap the scan does not run, so `redact` would return the input verbatim, the

@@ -8,7 +8,7 @@ public struct JSTransformer: Transformer {
     public let applicableKinds: Set<ContentKind>?
     public let category: String?
     private let url: URL
-    private let timeout: TimeInterval
+    public let timeout: TimeInterval
 
     public init(url: URL, metadata: ScriptMetadata, timeout: TimeInterval) {
         self.url = url

@@ -14,6 +14,7 @@ public enum Deadline {
         priority: TaskPriority = .userInitiated,
         _ body: @escaping @Sendable () async throws -> T
     ) async throws -> T {
+        try Task.checkCancellation()
         let gate = Gate<T>()
         let work = Task.detached(priority: priority) {
             let outcome: Result<T, any Error>

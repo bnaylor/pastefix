@@ -8,6 +8,10 @@ public struct MarkdownToRich: OutputModeTransformer {
     public let category: String? = TransformCategory.richText
     public let applicableKinds: Set<ContentKind>? = [.markdown]
     public let outputMode: OutputMode = .renderedMarkdown
+    // Same MarkdownHTML.render pipeline MarkdownPreview caps at 16 KB for display; ~1.1 s at
+    // 64 KB of list-heavy input (Plan 10 measurement) is the most the 3 s budget should be
+    // asked to cover.
+    public let maxInputBytes = 65_536
 
     public init() {}
 

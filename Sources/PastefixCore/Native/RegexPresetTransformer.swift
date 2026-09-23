@@ -4,7 +4,7 @@ import Foundation
 /// the input is capped, the output is capped (a zero-width pattern with a long replacement
 /// amplifies without bound), and the deadline is checked *inside* the scan via `.reportProgress`
 /// (Plans 8/11 lessons). The deadline check is the only thing that can actually stop a running
-/// pattern — see `apply` on what the timeout race can and cannot do.
+/// pattern — see `Deadline.run` on what its timeout can and cannot do.
 public struct RegexPresetTransformer: Transformer {
     public static let maxBytes = 262_144
     /// A replacement is applied per match, so output size is not bounded by input size: measured
@@ -26,24 +26,18 @@ public struct RegexPresetTransformer: Transformer {
     public let requiresRichInput = false
     public var source: TransformerSource { .preset(preset.id) }
     public var category: String? { TransformCategory.presets }
+    public var maxInputBytes: Int { Self.maxBytes }
+    public var timeout: TimeInterval { Self.timeout }
 
     public func apply(_ input: TransformInput) async throws -> String {
         try Self.checkInputSize(input.text)
         let preset = self.preset, text = input.text
         let deadline = ContinuousClock.now + .seconds(Self.timeout)
-        // The sleeping task is a second error path, NOT a bound on the work. Structured
-        // concurrency awaits every child before the group's error propagates, so a worker that
-        // ignores its deadline keeps the caller blocked no matter when the sleeper fires
-        // (measured: sleeper at 3.189 s, caller unblocked at 10.911 s, with a deadline-blind
-        // copy of `replace`). What actually stops a runaway pattern is the in-block deadline
-        // check below, which `.reportProgress` makes reachable; the race only guarantees that a
-        // deadline observed slightly late still surfaces as `.timeout` at exactly 3 s.
-        return try await withThrowingTaskGroup(of: String.self) { group in
-            group.addTask { try Self.replace(text, preset: preset, deadline: deadline).output }
-            group.addTask { try await Task.sleep(until: deadline, clock: .continuous); throw TransformError.timeout }
-            let first = try await group.next()!
-            group.cancelAll()
-            return first
+        // `Deadline.run` unblocks the caller at the deadline whatever the pattern does and cancels
+        // the worker; the in-block check below (reachable via `.reportProgress`) is what actually
+        // stops the pattern, on either the deadline or that cancellation.
+        return try await Deadline.run(seconds: Self.timeout) {
+            try Self.replace(text, preset: preset, deadline: deadline).output
         }
     }
 
@@ -72,7 +66,7 @@ public struct RegexPresetTransformer: Transformer {
         // user pattern (e.g. `(a+)+$` against a non-matching run) spends minutes inside a single
         // attempt with the block never invoked, and the deadline would be unobservable here.
         regex.enumerateMatches(in: text, options: [.reportProgress], range: NSRange(location: 0, length: ns.length)) { m, _, stop in
-            if let deadline, ContinuousClock.now > deadline { timedOut = true; stop.pointee = true; return }
+            if Task.isCancelled || (deadline.map { ContinuousClock.now > $0 } ?? false) { timedOut = true; stop.pointee = true; return }
             guard let m else { return }
             out += ns.substring(with: NSRange(location: cursor, length: m.range.location - cursor))
             out += regex.replacementString(for: m, in: text, offset: 0, template: template)
