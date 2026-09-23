@@ -121,6 +121,19 @@ import PastefixCore
         #expect(d.secretScanSkipped && d.secretMatches.isEmpty && !d.detectedKinds.contains(.secret))
     }
 
+    @Test func oversizeRoundTripFlipsTheSkipFlag() {
+        let big = String(repeating: "a", count: SecretDetector.maxBytes) + " AKIAIOSFODNN7EXAMPLE"
+        var d = doc(big)
+        settle(&d)
+        #expect(d.secretScanSkipped && d.secretMatches.isEmpty)
+        d.pushState("AKIAIOSFODNN7EXAMPLE")
+        settle(&d)
+        #expect(!d.secretScanSkipped && d.secretMatches.map(\.kind) == [.awsAccessKey])
+        d.undo()
+        settle(&d)
+        #expect(d.secretScanSkipped && d.secretMatches.isEmpty)
+    }
+
     @Test func computeMatchesTheOldInlineScan() {
         let r = DetectionResult.compute("see https://example.com and AKIAIOSFODNN7EXAMPLE")
         #expect(r.kinds == [.url, .secret] && r.secretMatches.count == 1 && !r.secretScanSkipped)

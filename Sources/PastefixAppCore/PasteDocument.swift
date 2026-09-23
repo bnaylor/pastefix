@@ -29,8 +29,6 @@ public struct PasteDocument: Sendable {
         self.origin = origin
         self.history = [origin.plainText ?? ""]
         self.cursor = 0
-        self.detection = .pending
-        self.detectionRevision = 0
         self.outputMode = .plain
     }
 

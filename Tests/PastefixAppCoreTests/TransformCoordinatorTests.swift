@@ -64,7 +64,8 @@ private struct FailingArming: OutputModeTransformer {
         #expect(outcome == .unchanged)
         #expect(updated.isDetecting)
         var settled = updated
-        settled.applyDetection(DetectionResult.compute(settled.working), revision: settled.detectionRevision)
+        let applied = settled.applyDetection(DetectionResult.compute(settled.working), revision: settled.detectionRevision)
+        #expect(applied)
         #expect(settled.secretMatches.count == 1)
         #expect(settled.detectedKinds.contains(.secret))
         #expect(updated.canUndo == false)
