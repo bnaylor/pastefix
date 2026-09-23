@@ -19,21 +19,31 @@ public enum TransformCoordinator {
     ) async -> (PasteDocument, TransformOutcome) {
         var doc = document
         let input = TransformInput(text: doc.working, richRTFD: doc.origin.richRTFD)
+        // Refuse before running: the cap is the only bound on a body inside an uninterruptible
+        // Foundation call, and the user is told the limit rather than watching a spinner.
+        guard input.text.utf8.count <= transformer.maxInputBytes else {
+            return (doc, .failed("\(transformer.name) is limited to \(ByteLimit.describe(transformer.maxInputBytes)) of text."))
+        }
         do {
-            let result = try await transformer.apply(input)
+            // Off the calling actor and abandoned at the transform's own deadline; a native body
+            // awaited inline here used to block the main actor for its full duration.
+            let result = try await Deadline.run(seconds: transformer.timeout) { try await transformer.apply(input) }
             if let arming = transformer as? OutputModeTransformer { doc.outputMode = arming.outputMode }
             // The outcome is decided before the push, but the push happens either way: on equal
-            // text `pushState` adds no history entry and doesn't truncate the redo stack, it just
-            // re-detects — which is the only thing that resyncs `detectedKinds`/`secretMatches`
-            // after a manual `setWorking` edit. Short-circuiting here (as this used to) made that
-            // re-detect unreachable, so a secret typed into the editor kept an empty badge until
-            // the next real push, undo, redo or refresh.
+            // text `pushState` adds no history entry and doesn't truncate the redo stack — it now
+            // only marks detection pending and bumps the revision, requesting the scan, which is
+            // still the only thing that resyncs `detectedKinds`/`secretMatches` after a manual
+            // `setWorking` edit. Short-circuiting here (as this used to) made that unreachable, so
+            // a secret typed into the editor kept an empty badge until the next real push, undo,
+            // redo or refresh.
             let outcome: TransformOutcome =
                 result == doc.working && !(transformer is OutputModeTransformer) ? .unchanged : .applied
             doc.pushState(result)
             return (doc, outcome)
         } catch let error as TransformError {
             return (doc, .failed(message(for: error)))
+        } catch is CancellationError {
+            return (doc, .failed("The transform was cancelled."))
         } catch {
             return (doc, .failed(error.localizedDescription))
         }
