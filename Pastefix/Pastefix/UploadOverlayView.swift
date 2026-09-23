@@ -28,6 +28,12 @@ struct UploadOverlayView: View {
     /// any other string is undefined — so the scan and the upload have to be looking at the same
     /// bytes. It is also the honest contract to offer: what was scanned is what gets sent.
     @State private var source: String
+    /// Whether `source` is the clipboard as it stands right now, or the panel's own buffer
+    /// (edited here, or loaded from history). Decided once in `init` for the same reason `source`
+    /// is snapshotted once: a label that re-derived itself later would start describing a
+    /// clipboard the bytes below it no longer came from. It is the header's claim about what is
+    /// about to be scanned and sent, so it has to be pinned to the same instant as the bytes.
+    @State private var sourceIsClipboard: Bool
     @State private var phase: Phase
     @State private var scanState: ScanState = .scanning
     /// Only true once the scan has been running long enough to be worth mentioning; see
@@ -64,8 +70,10 @@ struct UploadOverlayView: View {
     /// Kept clear below the card so it never sits flush against the panel's bottom edge — and,
     /// more to the point, so the height budget below stops short of it.
     private static let cardBottomMargin: CGFloat = 24
-    /// Header row (46), three dividers (3), footer (30).
-    private static let cardChromeHeight: CGFloat = 79
+    /// Header block (46 for the title row, plus 18 for the source line under it — a `.caption`
+    /// at ~14pt and the 2pt `VStack` spacing, rounded up so this errs towards over-reserving),
+    /// three dividers (3), footer (30).
+    private static let cardChromeHeight: CGFloat = 97
     /// The action row and its padding (12 above, 12 below, a ~22pt button between: ~46pt
     /// measured, budgeted at 60). Pinned below the scroll region, never inside it: an Upload or
     /// Cancel button that can be scrolled out of reach is the one thing a height budget must not
@@ -91,10 +99,11 @@ struct UploadOverlayView: View {
     private static let findingsChromeHeight: CGFloat = 112
     private static let findingLineHeight: CGFloat = 16
     /// The floor on the scroll region, for a panel too short to hold even the option rows. At the
-    /// panel's own 380pt minimum the budget leaves 177 with no banner and 121 with one, so this
-    /// is not binding today — but only by 1pt in the banner case, which is worth knowing before
-    /// anyone moves these numbers. It is a floor, so reaching it means the card grows past the
-    /// panel again; it exists so the arithmetic cannot produce a negative height.
+    /// panel's own 380pt minimum the budget leaves 159 with no banner and 103 with one, so the
+    /// banner case *is* binding now (it was clear by 1pt before the header grew a source line):
+    /// the card there is ~17pt taller than the budget, which comes out of the 24pt bottom margin
+    /// rather than off the bottom of the window. It is a floor, so reaching it always means the
+    /// card grows past the budget; it exists so the arithmetic cannot produce a negative height.
     private static let minScrollHeight: CGFloat = 120
 
     /// The overlay's whole state, in the order it can be entered.
@@ -131,6 +140,12 @@ struct UploadOverlayView: View {
         let text = model.document?.working ?? ""
         let settings = model.settings
         _source = State(initialValue: text)
+        // `changeCount` is a counter, not a read of the pasteboard's contents, so this costs
+        // nothing and prompts for nothing. ⌘⇧U has already re-snapshotted a stale, unedited
+        // document by the time this runs (`AppDelegate.summonUpload`), so "not the clipboard"
+        // here means the buffer really is the panel's own — edited, or loaded from history.
+        _sourceIsClipboard = State(initialValue:
+            model.document?.matchesPasteboard(changeCount: NSPasteboard.general.changeCount) ?? false)
         // Seeded here rather than in `onAppear` so the very first frame is already the right
         // state — in particular, a user with no server configured never sees a flash of controls
         // they cannot use, which is the whole point of checking "configured?" before anything
@@ -235,19 +250,44 @@ struct UploadOverlayView: View {
     }
 
     private var header: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "arrow.up.doc").foregroundStyle(.secondary)
-            Text("Upload to Zipline").font(.title3)
-            Spacer(minLength: 8)
-            if let host = destinationHost {
-                Text(host)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 8) {
+                Image(systemName: "arrow.up.doc").foregroundStyle(.secondary)
+                Text("Upload to Zipline").font(.title3)
+                Spacer(minLength: 8)
+                if let host = destinationHost {
+                    Text(host)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
             }
+            // The card's statement of its own input, in the chrome rather than the scroll region
+            // so it cannot be scrolled out of sight. A secret verdict is a claim about a specific
+            // buffer, and until this line existed the buffer was never named: a stale one scanned
+            // clean looked exactly like the text the user had just copied. Source *and* size,
+            // because either alone can look right while the other is wrong.
+            Text(sourceDescription)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .accessibilityLabel("Uploading \(sourceDescription)")
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .padding(12)
+    }
+
+    /// "the clipboard · 12 KB" / "the panel buffer · 12 KB". Reads `source`, which never changes
+    /// after `init`, so this cannot drift from the bytes the Upload button will send.
+    ///
+    /// "the panel buffer" rather than "the editor" because it covers every non-clipboard case:
+    /// text typed or transformed here, a history item re-opened, and a buffer deliberately kept
+    /// when the clipboard holds something Pastefix itself wrote (the last upload's short URL).
+    private var sourceDescription: String {
+        let origin = sourceIsClipboard ? "the clipboard" : "the panel buffer"
+        guard !source.isEmpty else { return "\(origin) — empty" }
+        return "\(origin) · \(HistoryFormatting.byteLabel(source.utf8.count))"
     }
 
     @ViewBuilder private func content(scrollHeight: CGFloat) -> some View {
@@ -523,7 +563,9 @@ struct UploadOverlayView: View {
             Text(keyHint)
                 .lineLimit(1)
             Spacer(minLength: 8)
-            Text(HistoryFormatting.byteLabel(source.utf8.count))
+            // The byte count used to live here on its own. It now sits in the header next to the
+            // source it describes, because a size with no source named is half an answer — and
+            // two copies of the same number in one small card read as two different facts.
         }
         .font(.caption).foregroundStyle(.secondary)
         .padding(.horizontal, 12).padding(.vertical, 8)
@@ -654,11 +696,15 @@ struct UploadOverlayView: View {
     /// The arithmetic, re-derived from the constants — the numbers a previous version of this
     /// comment carried were wrong, so do not trust a remembered figure over this:
     ///
-    ///     card     = cardChromeHeight(79) + scrollHeight + actionBlockHeight(60) + banner(0|56)
+    ///     card     = cardChromeHeight(97) + scrollHeight + actionBlockHeight(60) + banner(0|56)
     ///     on panel = cardTopPadding(40) + card + cardBottomMargin(24)
-    ///     fits when scrollHeight <= panelHeight - 203 - banner
+    ///     fits when scrollHeight <= panelHeight - 221 - banner
     ///
-    /// At `PanelMetrics.minContentHeight` (380) that is 177 with no banner and 121 with one. The
+    /// At `PanelMetrics.minContentHeight` (380) that is 159 with no banner and 103 with one —
+    /// both 18 tighter than before the header grew a source line. The banner case now lands under
+    /// `minScrollHeight` (120), so at the panel's own minimum height *with* a failure banner the
+    /// card grows ~17pt past this budget; that comes out of `cardBottomMargin`'s 24pt, so the
+    /// action row is still on screen. Anything that eats more of that margin is not safe. The
     /// budget is written to consume the panel *exactly*, so there is no spare cushion to absorb
     /// an un-budgeted block: the only real slack anywhere here is `actionBlockHeight`'s 60pt over
     /// a ~46pt action row, about 14pt. That is why the banner is a term in this expression rather

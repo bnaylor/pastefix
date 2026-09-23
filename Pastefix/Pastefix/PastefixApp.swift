@@ -269,12 +269,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         model.historyOverlayRequested = true
     }
 
-    /// ⌘⇧U: show the panel (starting a session from the current clipboard if none) with the
-    /// upload overlay open. Same shape as `summonHistory`: an existing session is kept, because
-    /// the thing the user means to upload is the buffer they have been editing, not whatever is
-    /// on the clipboard now.
+    /// ⌘⇧U: show the panel with the upload overlay open.
+    ///
+    /// Not the same shape as `summonHistory`, and the difference is the whole point. This hotkey
+    /// decides which bytes get scanned for secrets and then sent off the machine, so "keep
+    /// whatever session happens to be open" is wrong in the common case: a session lives for as
+    /// long as the panel is up, so copying a file of API keys and pressing ⌘⇧U would scan the
+    /// *previous* buffer and report "No secrets found" about text nobody examined.
+    ///
+    /// Three cases:
+    /// - No document → snapshot the clipboard, exactly as `summon()` does.
+    /// - A document that is unedited and older than the clipboard → re-snapshot. Pressing a
+    ///   global hotkey after a copy means the thing that was just copied.
+    /// - A document the user has edited → keep it, however stale. Their work is never discarded
+    ///   to chase the clipboard.
+    ///
+    /// Either way the overlay names its own input (source and size), because a gate whose input
+    /// the user cannot see is not one they can check. `summon()` itself is untouched, so ⌘⇧C and
+    /// ⌘⇧V behave exactly as before.
     func summonUpload() {
-        if model.document == nil { summon() } else { lastSummonAt = Date(); panel?.show() }
+        // `changeCount` only — never a read of the contents, which is what would cost a macOS
+        // pasteboard-access prompt.
+        let changeCount = NSPasteboard.general.changeCount
+        // A clipboard Pastefix wrote itself is not the user copying something new. The case that
+        // matters: an upload succeeds, the short URL goes on the clipboard, and a second ⌘⇧U in
+        // the same session would otherwise re-snapshot and offer to upload that link.
+        let userCopiedSomethingNew = !ClipboardBridge.clipboardIsSelfWritten(changeCount: changeCount)
+        if let document = model.document,
+           !(userCopiedSomethingNew && document.isStale(comparedToPasteboardChangeCount: changeCount)) {
+            lastSummonAt = Date()
+            panel?.show()
+        } else {
+            summon()
+        }
         model.uploadOverlayRequested = true
     }
 

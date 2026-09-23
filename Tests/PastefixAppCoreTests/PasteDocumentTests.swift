@@ -104,6 +104,67 @@ import PastefixCore
         #expect(!doc("small").secretScanSkipped)
     }
 
+    // MARK: Staleness — what ⌘⇧U asks before it scans and uploads a buffer
+
+    private func clipboardDoc(_ text: String, changeCount: Int) -> PasteDocument {
+        PasteDocument(origin: ClipboardSnapshot(plainText: text, richRTFD: nil, changeCount: changeCount))
+    }
+
+    @Test func untouchedBufferFromTheCurrentClipboardIsNeitherStaleNorForeign() {
+        let d = clipboardDoc("copied", changeCount: 7)
+        #expect(d.isUnedited)
+        #expect(!d.isStale(comparedToPasteboardChangeCount: 7))
+        #expect(d.matchesPasteboard(changeCount: 7))
+    }
+
+    @Test func untouchedBufferOlderThanTheClipboardIsStale() {
+        // The reported bug: pbcopy a file of API keys with the panel already open, press ⌘⇧U,
+        // and the overlay scanned the *previous* buffer and said "No secrets found".
+        let d = clipboardDoc("the previous thing", changeCount: 7)
+        #expect(d.isStale(comparedToPasteboardChangeCount: 8))
+        #expect(!d.matchesPasteboard(changeCount: 8))
+    }
+
+    @Test func editedBufferIsNeverStale() {
+        // Typed into: keep it whatever the clipboard has done since. Losing the user's work is
+        // worse than uploading something they can see named as the panel's own buffer.
+        var typed = clipboardDoc("copied", changeCount: 7)
+        typed.setWorking("copied, then typed into")
+        #expect(!typed.isUnedited)
+        #expect(!typed.isStale(comparedToPasteboardChangeCount: 8))
+        #expect(!typed.matchesPasteboard(changeCount: 7))
+
+        var transformed = clipboardDoc("copied", changeCount: 7)
+        transformed.pushState("transformed")
+        #expect(!transformed.isStale(comparedToPasteboardChangeCount: 8))
+    }
+
+    @Test func undoneTransformStillCountsAsEdited() {
+        // Back at the origin text, but the redo is work the user did and a re-snapshot would
+        // drop it — so `isUnedited` looks at the history, not just at `working`.
+        var d = clipboardDoc("copied", changeCount: 7)
+        d.pushState("transformed")
+        d.undo()
+        #expect(d.working == "copied")
+        #expect(!d.isUnedited)
+        #expect(!d.isStale(comparedToPasteboardChangeCount: 8))
+    }
+
+    @Test func originWithNoChangeCountIsNeverStaleAndIsNeverTheClipboard() {
+        // A history item re-opened into the panel: it was never a copy of the clipboard, so
+        // "the clipboard moved on" says nothing about it, and the user picked it deliberately.
+        let d = doc("from history")
+        #expect(!d.isStale(comparedToPasteboardChangeCount: 99))
+        #expect(!d.matchesPasteboard(changeCount: 99))
+    }
+
+    @Test func refreshRearmsTheStalenessQuestion() {
+        var d = clipboardDoc("old", changeCount: 7)
+        d.refresh(origin: ClipboardSnapshot(plainText: "new", richRTFD: nil, changeCount: 8))
+        #expect(!d.isStale(comparedToPasteboardChangeCount: 8))
+        #expect(d.matchesPasteboard(changeCount: 8))
+    }
+
     @Test func outputModeDefaultsSurvivesPushResetsOnRefresh() {
         var d = PasteDocument(origin: ClipboardSnapshot(plainText: "a", richRTFD: nil))
         #expect(d.outputMode == .plain)
