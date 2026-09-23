@@ -62,8 +62,11 @@ private struct FailingArming: OutputModeTransformer {
         let t = FakeTransformer(id: "id", name: "Id", requiresRichInput: false) { $0.text }
         let (updated, outcome) = await TransformCoordinator.apply(t, to: d)
         #expect(outcome == .unchanged)
-        #expect(updated.secretMatches.count == 1)
-        #expect(updated.detectedKinds.contains(.secret))
+        #expect(updated.isDetecting)
+        var settled = updated
+        settled.applyDetection(DetectionResult.compute(settled.working), revision: settled.detectionRevision)
+        #expect(settled.secretMatches.count == 1)
+        #expect(settled.detectedKinds.contains(.secret))
         #expect(updated.canUndo == false)
         #expect(updated.canRedo == false)
     }
