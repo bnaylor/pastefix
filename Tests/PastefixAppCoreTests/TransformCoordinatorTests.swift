@@ -178,7 +178,8 @@ private struct FailingArming: OutputModeTransformer {
         t.maxInputBytes = 65_536
         let (updated, outcome) = await TransformCoordinator.apply(t, to: doc(String(repeating: "a", count: 65_537)))
         #expect(outcome == .failed("Markdown → Rich Text is limited to 64 KB of text."))
-        #expect(!ran.value && updated.canUndo == false)
+        #expect(!ran.value)
+        #expect(updated.canUndo == false)
     }
 
     @Test func exactlyAtCapRuns() async {

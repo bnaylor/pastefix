@@ -14,6 +14,16 @@ private final class Log: @unchecked Sendable {
 @MainActor
 private func settle(_ seconds: Double = 0.6) async { try? await Task.sleep(for: .seconds(seconds)) }
 
+/// Polls `condition` every ~10 ms until it holds or `ceiling` passes, instead of a fixed sleep —
+/// so a test resolves as soon as its outcome is decided rather than waiting out a worst case.
+@MainActor
+private func waitUntil(_ condition: @MainActor () -> Bool, ceiling: Duration = .seconds(5)) async {
+    let deadline = ContinuousClock.now + ceiling
+    while !condition() && ContinuousClock.now < deadline {
+        try? await Task.sleep(for: .milliseconds(10))
+    }
+}
+
 private func slowScan(_ log: Log, sleep: TimeInterval = 0.15) -> @Sendable (String) -> DetectionResult {
     { text in log.add(text); Thread.sleep(forTimeInterval: sleep); return DetectionResult.compute(text) }
 }
@@ -22,18 +32,18 @@ private func slowScan(_ log: Log, sleep: TimeInterval = 0.15) -> @Sendable (Stri
 private final class CancelObservation: @unchecked Sendable {
     private let lock = NSLock()
     private var _cancelled = false
-    private var _elapsed: TimeInterval = 0
-    func recordCancelled(elapsed: TimeInterval) { lock.withLock { _cancelled = true; _elapsed = elapsed } }
+    private var _elapsed: Duration = .zero
+    func recordCancelled(elapsed: Duration) { lock.withLock { _cancelled = true; _elapsed = elapsed } }
     var cancelled: Bool { lock.withLock { _cancelled } }
-    var elapsed: TimeInterval { lock.withLock { _elapsed } }
+    var elapsed: Duration { lock.withLock { _elapsed } }
 }
 
-@Suite @MainActor struct DetectionSchedulerTests {
+@Suite(.serialized) @MainActor struct DetectionSchedulerTests {
     @Test func deliversWithTheOriginatingRequest() async {
         var delivered: [(DetectionScheduler.Request, DetectionResult)] = []
         let s = DetectionScheduler(compute: DetectionResult.compute) { delivered.append(($0, $1)) }
         s.request(.init(text: "https://example.com", revision: 3, generation: 7))
-        await settle(0.3)
+        await waitUntil { delivered.count == 1 }
         #expect(delivered.count == 1)
         #expect(delivered.first?.0.revision == 3)
         #expect(delivered.first?.0.generation == 7)
@@ -47,9 +57,11 @@ private final class CancelObservation: @unchecked Sendable {
         s.request(.init(text: "A", revision: 0, generation: 1))
         s.request(.init(text: "B", revision: 1, generation: 1))
         s.request(.init(text: "C", revision: 2, generation: 1))
-        await settle()
-        #expect(log.value == ["A", "C"], "B was displaced before it started; A was cancelled but could not be stopped")
+        await waitUntil { delivered == ["C"] }
         #expect(delivered == ["C"])
+        // No extra settle needed: once C is delivered, `running` and `waiting` are both nil, so
+        // nothing else can arrive, and B's absence from the log was decided at displacement time.
+        #expect(log.value == ["A", "C"], "B was displaced before it started; A was cancelled but could not be stopped")
     }
 
     @Test func aFinishedScanIsDeliveredWhenNothingDisplacedIt() async {
@@ -57,9 +69,9 @@ private final class CancelObservation: @unchecked Sendable {
         var delivered: [String] = []
         let s = DetectionScheduler(compute: slowScan(log, sleep: 0.05)) { req, _ in delivered.append(req.text) }
         s.request(.init(text: "A", revision: 0, generation: 1))
-        await settle(0.3)
+        await waitUntil { delivered == ["A"] }
         s.request(.init(text: "B", revision: 1, generation: 1))
-        await settle(0.3)
+        await waitUntil { delivered == ["A", "B"] }
         #expect(delivered == ["A", "B"])
     }
 
@@ -81,21 +93,23 @@ private final class CancelObservation: @unchecked Sendable {
         let s = DetectionScheduler(compute: slowScan(log, sleep: 0.05)) { req, _ in delivered.append(req.text) }
         s.request(.init(text: "A", revision: 0, generation: 1))
         s.cancelAll()
+        await settle(0.1)
         s.request(.init(text: "B", revision: 0, generation: 2))
-        await settle(0.4)
+        await waitUntil { delivered == ["B"] }
         #expect(delivered == ["B"])
     }
 
     @Test func cancellationReachesTheRunningScan() async {
         let observation = CancelObservation()
         let compute: @Sendable (String) -> DetectionResult = { text in
-            let start = Date()
-            let deadline = ContinuousClock.now + .seconds(1)
+            guard text == "A" else { return DetectionResult.compute(text) }
+            let start = ContinuousClock.now
+            let deadline = start + .seconds(1)
             while !Task.isCancelled && ContinuousClock.now < deadline {
                 Thread.sleep(forTimeInterval: 0.005)
             }
             if Task.isCancelled {
-                observation.recordCancelled(elapsed: Date().timeIntervalSince(start))
+                observation.recordCancelled(elapsed: start.duration(to: ContinuousClock.now))
             }
             return DetectionResult.compute(text)
         }
@@ -103,11 +117,12 @@ private final class CancelObservation: @unchecked Sendable {
         let s = DetectionScheduler(compute: compute) { req, _ in delivered.append(req.text) }
         s.request(.init(text: "A", revision: 0, generation: 1))
         s.request(.init(text: "B", revision: 1, generation: 1))
-        // B is never displaced, so its scan runs the full spin to its own 1 s deadline before
-        // finishing normally; only A's cancellation is expected to be fast.
-        await settle(1.3)
+        // Ordering is guaranteed by the scheduler: A's cancellation is recorded before A's
+        // `work.value` returns, which is before `start(B)` runs — B's own compute returns
+        // immediately, so this settles fast without a long fixed wait.
+        await waitUntil { observation.cancelled && delivered == ["B"] }
         #expect(observation.cancelled)
-        #expect(observation.elapsed < 0.5)
+        #expect(observation.elapsed < .seconds(0.5))
         #expect(delivered == ["B"])
     }
 }

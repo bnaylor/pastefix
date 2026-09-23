@@ -25,8 +25,9 @@ public enum TransformCoordinator {
             return (doc, .failed("\(transformer.name) is limited to \(ByteLimit.describe(transformer.maxInputBytes)) of text."))
         }
         do {
-            // Off the calling actor and abandoned at the transform's own deadline; a native body
-            // awaited inline here used to block the main actor for its full duration.
+            // A wall-clock bound per transform: the caller resumes at the transform's own
+            // deadline even when the body is uninterruptible, and cancelling the caller cancels
+            // the body too.
             let result = try await Deadline.run(seconds: transformer.timeout) { try await transformer.apply(input) }
             if let arming = transformer as? OutputModeTransformer { doc.outputMode = arming.outputMode }
             // The outcome is decided before the push, but the push happens either way: on equal
