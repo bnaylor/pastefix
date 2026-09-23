@@ -82,7 +82,7 @@ public struct DetectionResult: Sendable, Equatable {
 ### 2. `DetectionScheduler` (AppCore, `@MainActor final class`)
 
 ```swift
-public struct DetectionRequest: Sendable { public let text: String; public let revision: Int; public let generation: UInt64 }
+public struct DetectionRequest: Sendable { public let text: String; public let revision: Int; public let generation: Int }
 public init(compute: @escaping @Sendable (String) -> DetectionResult = DetectionResult.compute,
             deliver: @escaping @MainActor (DetectionRequest, DetectionResult) -> Void)
 public func request(_ req: DetectionRequest)
