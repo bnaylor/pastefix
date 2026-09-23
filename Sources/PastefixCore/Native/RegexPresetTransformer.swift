@@ -49,8 +49,9 @@ public struct RegexPresetTransformer: Transformer {
     /// deadline on work this one has already done.
     ///
     /// The deadline is observable *during* a match attempt as well as between matches, thanks to
-    /// `.reportProgress`, and that is the only mechanism that stops a runaway pattern: the task
-    /// group in `apply` cannot cut this function loose once it is running.
+    /// `.reportProgress`, and that in-block check is the only mechanism that stops this *function*:
+    /// `Deadline.run` frees the caller in `apply` at the deadline and cancels this task, but only
+    /// the in-block check above turns that cancellation into a stop.
     static func replace(_ text: String, preset: RegexPreset,
                         deadline: ContinuousClock.Instant?) throws -> (output: String, matches: Int) {
         let regex = try preset.compile()

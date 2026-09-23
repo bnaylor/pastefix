@@ -11,7 +11,7 @@ public enum ContentDetector {
     ///
     /// Callers that need the individual secret ranges as well should call `SecretDetector.scan`
     /// once and use `detect(_:secrets:)` instead: this wrapper's scan is not shared, so doing
-    /// both pays the (main-actor, up to 256 KB) scan twice per discrete event.
+    /// both pays the (up to 256 KB) scan twice per discrete event.
     public static func detect(_ text: String) -> Set<ContentKind> {
         detect(text, secrets: SecretDetector.scan(text))
     }

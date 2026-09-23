@@ -27,6 +27,7 @@ private struct Bare: Transformer {
             "builtin.redactsecrets": (262_144, 3),
             RegexPresetTransformer.transformerID(for: preset.id): (262_144, 3),
         ]
+        #expect(Set(all.map(\.id)).isSuperset(of: table.keys))
         for t in all {
             let expected = table[t.id] ?? (TransformLimits.defaultMaxInputBytes, TransformLimits.defaultTimeout)
             #expect(t.maxInputBytes == expected.bytes, "\(t.id) maxInputBytes")
