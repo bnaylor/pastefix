@@ -68,8 +68,9 @@ Verified against `diced/zipline` at v4.7.0, not from memory.
 - **Settings (Upload tab):** server URL, API token, and the defaults the
   overlay opens with (expiration, burn-on-read, extension).
 - **⌘⇧U:** a global, rebindable hotkey that opens the upload overlay. With the
-  panel closed it summons from the clipboard exactly as ⌘⇧V does; with the
-  panel open it takes the current document.
+  panel closed it summons from the clipboard. With the panel open it re-reads
+  the clipboard if the open buffer is untouched and older than it, and keeps the
+  buffer if the user has edited it — and the overlay names whichever it got.
 - **The upload overlay:** the single surface for the flow — expiration,
   burn-on-read, extension, the secret verdict, the upload, the result, and
   every error.
@@ -98,7 +99,8 @@ Verified against `diced/zipline` at v4.7.0, not from memory.
 | Scan cap | None — every upload is fully scanned, off the main actor | `SecretDetector.maxBytes` (256 KB) exists because scanning runs on *every summon and capture*. An upload is one deliberate action and can afford the full scan. The upload path calls `SecretDetector.scanIgnoringSizeCap(_:)`, added in Task 2 by splitting the size policy out of the existing `scan(_:)`; `scan(_:)` itself keeps the 256 KB guard unchanged for every main-actor caller. A separate, deliberately awkward name rather than a defaulted parameter, so the one call site that skips the cap reads as the exception it is, and so `scan(_:)` stays provably identical to what every other caller already relies on. |
 | Scan placement | Detached task, started as the overlay opens | The overlay's controls stay usable during the wait, and a long scan is visible instead of a frozen hotkey. |
 | Loading state | "Checking for secrets…" appears only after ~150 ms | No flicker on ordinary pastes, and no size-threshold constant to justify. |
-| Language control | Sets the file extension. The user's `ziplineDefaultExtension` setting wins whenever it has been set; `ContentDetector.detect` fills in only while the setting is still its `txt` default | v4 highlights by extension. Detection existed and was tried first as the seed, then reversed during review: `MarkdownDetector` returns true on a single `^#{1,6} \S` line, so letting the detector win meant every YAML file, Dockerfile, conf file and shebang-less script uploaded as `md`, silently overriding an explicit user choice. The detector is trigger-happy, not confident — fine for *promoting* a transform in the palette, wrong for *overriding* a setting the user deliberately typed. |
+| Language control | Sets the file extension. The user's `ziplineDefaultExtension` setting wins whenever it has been set; detection fills in only while the setting is still its `txt` default | v4 highlights by extension. Detection existed and was tried first as the seed, then reversed during review: `MarkdownDetector` returns true on a single `^#{1,6} \S` line, so letting the detector win meant every YAML file, Dockerfile, conf file and shebang-less script uploaded as `md`, silently overriding an explicit user choice. The detector is trigger-happy, not confident — fine for *promoting* a transform in the palette, wrong for *overriding* a setting the user deliberately typed. |
+| Which kinds seed the extension | `json` or `txt`. Markdown is not consulted | Narrowed after a manual pass: a 427 KB fortunes file (391 lines opening `- `, 125 opening `> `, no headings, no fences) satisfied `MarkdownDetector`'s two-weak-signal rule and uploaded as `.md`. The asymmetry decides it — `.md` against `.txt` barely changes how Zipline renders a paste, while a wrong `.md` on ordinary prose is visible and wrong; JSON is worth highlighting and is the one kind detected by parsing rather than sniffing. `MarkdownDetector` itself is untouched: it still drives the Detected badge and palette ordering, where a generous guess costs nothing. |
 | Token storage | Keychain generic password, service `net.scromp.Pastefix.zipline` | A token in `UserDefaults` JSON is world-readable to anything running as the user. |
 | Token entry commit | A `SecureField` plus an explicit **Set** button, not the field alone | Submit and blur/tab-switch commit the draft implicitly, but neither covers ⌘Q mid-edit — SwiftUI does not reliably run an open window's `onDisappear` on process termination, so a token typed and never submitted before quitting was silently dropped, not merely unsaved. The button makes the draft's uncommitted state visible instead of implicit, and is also just the normal shape for committing a credential. Not redundant with the implicit paths; it is the one path that covers the one exit they don't. |
 | Server URL storage | `SettingsStore` JSON with everything else | It is not a secret, and keeping it out of the Keychain keeps the Keychain wrapper to one value. |
@@ -193,17 +195,36 @@ JSON-backed shape as every other setting.
 
 ## Data flow
 
-1. ⌘⇧U fires. Panel closed → summon from the clipboard, then raise the
-   overlay; panel open → take the current document.
+1. ⌘⇧U fires, and the first question is *which bytes*. No document → snapshot
+   the clipboard, as ⌘⇧C does. A document that is **unedited** and whose origin
+   `changeCount` no longer matches `NSPasteboard.general.changeCount` → snapshot
+   the clipboard again: pressing a global hotkey after a copy means the thing
+   that was just copied. A document the user has **edited** → keep it, however
+   stale; their work is never discarded to chase the clipboard.
+   `PasteDocument.isStale(comparedToPasteboardChangeCount:)` is the one place
+   that answers this, and `summon()` itself is untouched, so ⌘⇧C and ⌘⇧V are
+   unchanged. Only `changeCount` is read, never the pasteboard's contents.
+
+   This was wrong in shipped code: any open session was reused, so copying a
+   file of API keys with the panel up and pressing ⌘⇧U scanned the *previous*
+   buffer and reported "No secrets found" about text nobody had examined, then
+   offered to upload it.
+   **Whichever branch is taken, the overlay names its own input.** Its header
+   carries the source and the size — "the clipboard · 417 KB" or "the panel
+   buffer · 417 KB" — decided at the same instant as the snapshot it will send.
+   A gate whose input the user cannot see is not one they can check, and this
+   is the half that makes the bug non-recurring: the re-snapshot alone just
+   moves the guess.
 2. **Configuration is checked before anything else.** No server URL or no
    token → the overlay opens in a configure state with a button into Settings,
    rather than letting you make choices and then failing.
 3. The overlay opens with expiration, burn-on-read, and extension live. The
    extension defaults to the `ziplineDefaultExtension` setting if the user has
    set one away from `txt`; only while that setting is still at its `txt`
-   default does `ContentDetector.detect` fill in instead (`.json` for JSON,
-   `.md` for Markdown, `.txt` otherwise) — see the "Language control" decision
-   above for why the precedence runs that direction.
+   default does detection fill in instead, via
+   `ZiplineUpload.defaultExtension(for:)` — `json` for JSON, `txt` for
+   everything else — see the "Language control" decision above for why the
+   precedence runs that direction and why Markdown is not in that list.
 4. The scan starts in a detached task in the same turn. Upload is disabled
    until it resolves. After ~150 ms an in-progress row appears.
 5. Verdict lands. Clean → a quiet confirmation row. Findings → the kinds named
