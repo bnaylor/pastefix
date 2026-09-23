@@ -7,9 +7,9 @@ import PastefixAppCore
 /// The token is the one piece of this tab's state that never reaches `SettingsStore`. It is
 /// typed into a `SecureField`, written straight to `KeychainTokenStore` the moment it commits,
 /// and the field is emptied again immediately afterwards — nothing here ever calls
-/// `tokenStore.token()` to put the secret back on screen. What the field shows instead is
-/// whether *something* is stored, via its own placeholder text ("Stored" / "None"), which only
-/// needs a `Bool` out of the Keychain, never the string itself. `SettingsStore`'s own
+/// `tokenStore.token()` to put the secret back on screen. Whether *something* is stored is shown
+/// as a caption beside the buttons, and needs only a `Bool` out of the Keychain, never the string
+/// itself — the field's own placeholder says what to type, not what is held. `SettingsStore`'s own
 /// `tokenIsNotInDefaults` test guards the other half of this promise — that no persisted
 /// setting is ever the token — and this view is why that guard has to hold.
 struct UploadSettingsView: View {
@@ -46,35 +46,65 @@ struct UploadSettingsView: View {
     var body: some View {
         Form {
             Section("Zipline Server") {
-                TextField("https://your.zipline.instance", text: $serverURLDraft)
-                    .focused($focus, equals: .serverURL)
-                    .onSubmit { commitServerURL() }
-                if let message = serverURLValidationMessage {
-                    Text(message).font(.caption).foregroundStyle(.orange)
+                // Label above, field full width. The example is the `prompt:` — a real
+                // placeholder, so it is greyed out, sits *in* the field, and disappears the
+                // moment there is a value. Passed as the label instead (as it was) it renders in
+                // the Form's leading gutter and stays there for ever, so a configured server read
+                // as "https://your.zipline.instance   https://real.host" side by side.
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Server URL").font(.caption).foregroundStyle(.secondary)
+                    TextField("Server URL",
+                              text: $serverURLDraft,
+                              prompt: Text(verbatim: "https://your.zipline.instance"))
+                        .labelsHidden()
+                        .textFieldStyle(.roundedBorder)
+                        .focused($focus, equals: .serverURL)
+                        .onSubmit { commitServerURL() }
+                    if let message = serverURLValidationMessage {
+                        Text(message).font(.caption).foregroundStyle(.orange)
+                    }
                 }
-                // Submit and blur/teardown commit implicitly (see `onChange(of: focus)` and
-                // `onDisappear` below), but neither covers ⌘Q: SwiftUI does not reliably run an
-                // open window's `onDisappear` on process termination, so a token typed and never
-                // submitted before quitting would be silently lost — not leaked, just gone, and
-                // gone silently is the wrong failure mode for something the user just typed. The
-                // button makes the draft's uncommitted state visible instead of implicit, which is
-                // also just the normal shape for committing a credential.
-                HStack {
-                    SecureField(tokenIsStored ? "Stored" : "None", text: $tokenDraft)
+                // One field with its buttons underneath, rather than a field with an inline Set
+                // and a Clear stranded on a separate row below a status line — two rows that
+                // looked like two unrelated controls. The status moves to the caption on the
+                // button row, where it is still visible and is no longer doing double duty as the
+                // field's placeholder.
+                //
+                // The placeholder says what to type, never what is stored: this view never reads
+                // a token back out of the Keychain (`refreshTokenStatus` keeps only the Bool), so
+                // there is nothing here that could echo the secret even by accident.
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("API Token").font(.caption).foregroundStyle(.secondary)
+                    SecureField("API Token",
+                                text: $tokenDraft,
+                                prompt: Text(tokenIsStored ? "Enter a new token to replace the stored one"
+                                                           : "Paste your Zipline API token"))
+                        .labelsHidden()
+                        .textFieldStyle(.roundedBorder)
                         .focused($focus, equals: .token)
                         .onSubmit { commitToken() }
-                    Button("Set") { commitToken() }
-                        .disabled(tokenDraft.isEmpty)
-                }
-                if let tokenError {
-                    Text(tokenError).font(.caption).foregroundStyle(.red)
-                }
-                HStack {
-                    Text(tokenIsStored ? "A token is stored in the Keychain." : "No token stored.")
-                        .font(.caption).foregroundStyle(.secondary)
-                    Spacer()
-                    Button("Clear Token") { clearToken() }
-                        .disabled(!tokenIsStored && tokenDraft.isEmpty)
+                    HStack(spacing: 8) {
+                        // Submit and blur/teardown commit implicitly (see `onChange(of: focus)`
+                        // and `onDisappear` below), but neither covers ⌘Q: SwiftUI does not
+                        // reliably run an open window's `onDisappear` on process termination, so
+                        // a token typed and never submitted before quitting would be silently
+                        // lost — not leaked, just gone, and gone silently is the wrong failure
+                        // mode for something the user just typed. The button makes the draft's
+                        // uncommitted state visible instead of implicit, which is also just the
+                        // normal shape for committing a credential.
+                        Button("Set Token") { commitToken() }
+                            .disabled(tokenDraft.isEmpty)
+                        Button("Clear Token") { clearToken() }
+                            .disabled(!tokenIsStored && tokenDraft.isEmpty)
+                        Spacer()
+                        // Two text buttons and a short caption, not four buttons: a 460pt
+                        // settings pane does not hold four (AGENTS.md, Plan 7).
+                        Text(tokenIsStored ? "Stored in the Keychain" : "No token stored")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    if let tokenError {
+                        Text(tokenError).font(.caption).foregroundStyle(.red)
+                    }
                 }
                 // App Transport Security decides which of these actually work over plain `http`,
                 // and it is not the same set the previous wording promised. Measured on
