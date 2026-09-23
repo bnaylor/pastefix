@@ -18,13 +18,26 @@ public struct ZiplineUpload: Sendable, Equatable {
     }
 
     /// Zipline v4 picks syntax highlighting from the file extension, so the
-    /// overlay's "language" control is an extension control. Reuses the
-    /// detector the panel already runs rather than introducing a language table.
-    public static func defaultExtension(for text: String) -> String {
-        let kinds = ContentDetector.detect(text)
-        if kinds.contains(.json) { return "json" }
-        if kinds.contains(.markdown) { return "md" }
-        return "txt"
+    /// overlay's "language" control is an extension control. Takes the kinds the
+    /// caller already has rather than text, so the one place that decides this is
+    /// also the place that runs on the hot path — the overlay holds
+    /// `PasteDocument.detectedKinds` and must not pay a second `ContentDetector`
+    /// pass (a capped secret scan included) to ask this question.
+    ///
+    /// **`json` or `txt`, and nothing else.** Markdown used to be in here and was
+    /// removed: `MarkdownDetector` answers yes on two weak signals, and a 427 KB
+    /// file of fortunes — 391 lines opening `- `, 125 opening `> `, not one
+    /// heading or fence — uploaded as `.md`. The asymmetry is the argument. `.md`
+    /// against `.txt` changes almost nothing about how Zipline renders a paste,
+    /// while a wrong `.md` on ordinary prose is visible and wrong; JSON is worth
+    /// highlighting and is the one kind detected by actually parsing the thing.
+    /// `MarkdownDetector` is deliberately left alone — it still drives the
+    /// Detected badge and palette ordering, where a generous guess costs nothing.
+    ///
+    /// nil kinds (no document) means "nothing detected", not "detect it for me".
+    public static func defaultExtension(for kinds: Set<ContentKind>?) -> String {
+        guard let kinds, kinds.contains(.json) else { return "txt" }
+        return "json"
     }
 }
 

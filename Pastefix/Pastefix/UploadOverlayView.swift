@@ -143,15 +143,20 @@ struct UploadOverlayView: View {
         // `SettingsStore` publish — rare, and a same-process `SecItemCopyMatching` is cheap. If
         // that ever stops being true, the check moves into a `task` that gates the scan.
         _phase = State(initialValue: Self.initialPhase(settings: settings, tokenStore: tokenStore))
-        // The user's setting wins whenever they have set one. The detector is consulted only
-        // when the setting is still its "txt" default — i.e. when the user has expressed no
-        // preference at all — because the detector is trigger-happy rather than confident:
-        // `MarkdownDetector` returns true on a single `^#{1,6} \S` line, so every YAML file,
-        // Dockerfile, conf file and shebang-less script looks like Markdown to it. Letting that
-        // override an extension the user deliberately chose was the wrong way round.
+        // The user's setting wins whenever they have set one; detection fills in only while the
+        // setting is still its "txt" default — i.e. when the user has expressed no preference at
+        // all. Letting a guess override an extension someone deliberately typed was the wrong way
+        // round. `ZiplineUpload.defaultExtension(for:)` is the only place that maps kinds to an
+        // extension; this view used to keep its own copy of that mapping, and the two drifted.
+        //
+        // The kinds themselves can be stale, and it is worth being exact about how: `PasteDocument`
+        // detects on discrete events — init, push, undo, redo, refresh — and `setWorking`
+        // deliberately does *not* redetect, so typing into the panel does not update them. Summon
+        // plain text, type JSON, press ⌘⇧U and this seeds `txt`, not `json`. Fine here: it is the
+        // seed for an editable control, consulted only when the user has no preference.
         let configured = settings.ziplineDefaultExtension.trimmingCharacters(in: .whitespacesAndNewlines)
         _fileExtension = State(initialValue: configured.isEmpty || configured == "txt"
-                               ? Self.detectedExtension(model.document?.detectedKinds)
+                               ? ZiplineUpload.defaultExtension(for: model.document?.detectedKinds)
                                : configured)
         // Round-tripped through `expiry(fromRaw:)` so a corrupted setting lands on the same
         // fallback the request builder would have used, instead of showing a picker with nothing
@@ -612,23 +617,6 @@ struct UploadOverlayView: View {
         case .transport(let detail):
             return "Couldn't reach the server: \(detail)"
         }
-    }
-
-    /// `ZiplineUpload.defaultExtension(for:)`'s priority, applied to the kinds `PasteDocument`
-    /// already holds. Calling that function instead would re-run the whole `ContentDetector`
-    /// (a capped secret scan included) on every `init`.
-    ///
-    /// Those kinds can be stale, and it is worth being exact about how: `PasteDocument` detects
-    /// on discrete events — init, push, undo, redo, refresh — and `setWorking` deliberately does
-    /// *not* redetect (`PasteDocument.swift:54`), so typing into the panel does not update them.
-    /// Summon plain text, type JSON, press ⌘⇧U and this seeds `txt`, not `json`. That is fine
-    /// here: this is only the seed for an editable control, and it is consulted at all only when
-    /// the user has expressed no preference of their own.
-    private static func detectedExtension(_ kinds: Set<ContentKind>?) -> String {
-        guard let kinds else { return "txt" }
-        if kinds.contains(.json) { return "json" }
-        if kinds.contains(.markdown) { return "md" }
-        return "txt"
     }
 
     private static func tag(for expiry: ZiplineExpiry) -> String {

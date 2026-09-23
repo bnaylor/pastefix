@@ -51,19 +51,47 @@ struct ZiplineHeadersTests {
 
 @Suite("Upload extension defaulting")
 struct UploadExtensionTests {
-    @Test("JSON content defaults to json")
-    func json() {
-        #expect(ZiplineUpload.defaultExtension(for: #"{"a": 1, "b": [2, 3]}"#) == "json")
+    /// The production path exactly: the overlay hands `defaultExtension` the kinds
+    /// `PasteDocument` already holds, and those come from `ContentDetector`. Going through the
+    /// detector here rather than writing kind sets by hand is the point — the previous version of
+    /// this suite tested a text-taking overload that nothing in the app called, so it could and
+    /// did disagree with the copy that actually ran.
+    private func ext(_ text: String) -> String {
+        ZiplineUpload.defaultExtension(for: ContentDetector.detect(text))
     }
 
-    @Test("Markdown content defaults to md")
-    func markdown() {
-        #expect(ZiplineUpload.defaultExtension(for: "# Title\n\n- one\n- two\n") == "md")
+    @Test("JSON content defaults to json")
+    func json() {
+        #expect(ext(#"{"a": 1, "b": [2, 3]}"#) == "json")
+    }
+
+    @Test("real Markdown still uploads as txt")
+    func markdownIsNotSpecialCased() {
+        let markdown = "# Title\n\n- one\n- two\n"
+        // Detected as Markdown for the badge's purposes...
+        #expect(ContentDetector.detect(markdown).contains(.markdown))
+        // ...and still not enough to name the file `.md`.
+        #expect(ext(markdown) == "txt")
+    }
+
+    @Test("prose that trips the Markdown detector uploads as txt")
+    func fortunesFile() {
+        // The shape of the file that caused this: dialogue dashes and quoted lines, no headings
+        // and no fences. `MarkdownDetector`'s two weak signals both fire on it.
+        let fortunes = String(repeating: "- a quip from someone\n> and the reply\n", count: 50)
+        #expect(ContentDetector.detect(fortunes).contains(.markdown))
+        #expect(ext(fortunes) == "txt")
     }
 
     @Test("anything else defaults to txt")
     func fallback() {
-        #expect(ZiplineUpload.defaultExtension(for: "just some prose, nothing special") == "txt")
+        #expect(ext("just some prose, nothing special") == "txt")
+    }
+
+    @Test("no detected kinds at all defaults to txt")
+    func noKinds() {
+        #expect(ZiplineUpload.defaultExtension(for: nil) == "txt")
+        #expect(ZiplineUpload.defaultExtension(for: []) == "txt")
     }
 }
 
