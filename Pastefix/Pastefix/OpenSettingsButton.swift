@@ -1,7 +1,8 @@
 import SwiftUI
 import AppKit
 
-/// A `SettingsLink` that also activates the app: from inside the non-activating panel a plain
+/// A Settings button that also activates the app (a `Button` driving the `openSettings` action):
+/// from inside the non-activating panel a plain
 /// `SettingsLink` opens Settings without making Pastefix active, so the window can appear
 /// unfocused (and, before PanelController yielded its level, behind the panel). An
 /// `LSUIElement` agent gets no automatic foreground promotion either (see `9ad051b`), so the

@@ -73,7 +73,7 @@ import Testing
 
     @Test func twoRecurringSignalsInAShortSnippetAreStillMarkdown() {
         // The density rule must not raise the bar for genuinely short, dense Markdown: two list
-        // lines and two quote lines in a four-line snippet both clear >= 2 matches and >= 10%.
+        // lines and two quote lines in a four-line snippet both reach 10% of the non-blank lines.
         #expect(MarkdownDetector.looksLikeMarkdown("- a\n- b\n> quoted\n> more"))
     }
 

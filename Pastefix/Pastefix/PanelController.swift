@@ -69,6 +69,11 @@ final class PanelController: NSObject, NSWindowDelegate {
         // reclaims), and never the menu bar item, menus, or popovers, which are transient
         // AppKit windows that can take key without the user "being in" a window.
         guard window !== panel, NSApp.windows.contains(window), window.isVisible else { return }
+        // Never yield to the panel's own children (a sheet, an alert, the pin popover): the
+        // panel would drop under other apps' windows while its own sheet is up, and a sheet
+        // ends with `orderOut`, not `close`, so no `willClose` would ever reclaim the level.
+        // Structural check first; the class-name filter below stays as belt-and-braces.
+        guard window.parent !== panel, window.sheetParent !== panel else { return }
         let className = NSStringFromClass(type(of: window))
         guard !className.contains("NSStatusBar"), !className.contains("MenuWindow"),
               !className.contains("NSPopover") else { return }

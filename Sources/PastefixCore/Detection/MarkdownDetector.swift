@@ -23,8 +23,8 @@ public enum MarkdownDetector {
 
     /// A heading or fence line is decisive on its own and returns `true` immediately, as before.
     /// Otherwise five *weak* signals (list, quote, table, link, inline emphasis/code) are each
-    /// only counted if they *recur*: a signal qualifies when the lines it matched are at least 10%
-    /// of the non-empty lines scanned, and `looksLikeMarkdown` returns `true` only when
+    /// counted only when they reach density: a signal qualifies when the lines it matched are at
+    /// least 10% of the non-blank lines scanned, and `looksLikeMarkdown` returns `true` only when
     /// at least two distinct signals qualify.
     ///
     /// The presence-only version of this rule ("two distinct weak signals matched anywhere in the
@@ -53,7 +53,7 @@ public enum MarkdownDetector {
         var listLines = 0, quoteLines = 0, tableLines = 0, linkLines = 0, inlineLines = 0
         for (i, lineSub) in head.split(separator: "\n", omittingEmptySubsequences: false).enumerated() {
             if i >= maxLines { break }
-            if lineSub.isEmpty { continue }
+            if lineSub.allSatisfy(\.isWhitespace) { continue }   // blank lines do not dilute density
             nonEmptyLines += 1
             let line = String(lineSub)
             let r = NSRange(location: 0, length: (line as NSString).length)
