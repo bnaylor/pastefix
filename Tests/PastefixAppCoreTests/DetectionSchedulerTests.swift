@@ -41,6 +41,26 @@ private func slowScan(_ log: Log, sleep: TimeInterval = 0.15) -> @Sendable (Stri
     }
 }
 
+/// `Thread.sleep(forTimeInterval:)` is `@available(*, noasync)`: calling it directly inside an
+/// async context is an error in Swift 6 language mode. Indirecting through a synchronous function
+/// sidesteps that check without changing what the call does — it still blocks its thread and
+/// ignores cancellation, which is exactly what a "stuck" compute needs.
+private func blockingSleep(_ seconds: TimeInterval) {
+    Thread.sleep(forTimeInterval: seconds)
+}
+
+/// A compute that never returns in time for "STUCK" (a full second, sync and uncancellable) and
+/// behaves normally for anything else.
+private func stuckOnceScan(_ log: Log) -> @Sendable (String) -> DetectionResult {
+    { text in
+        log.add(text)
+        log.enter()
+        defer { log.exit() }
+        if text == "STUCK" { blockingSleep(1.0) }
+        return DetectionResult.compute(text)
+    }
+}
+
 /// Records whether an injected scan observed cancellation and how long that took.
 private final class CancelObservation: @unchecked Sendable {
     private let lock = NSLock()
@@ -138,5 +158,24 @@ private final class CancelObservation: @unchecked Sendable {
         #expect(observation.cancelled)
         #expect(observation.elapsed < .seconds(0.5))
         #expect(delivered == ["B"])
+    }
+
+    /// A stuck `compute` (never returns, ignores cancellation) must not hold the slot forever: the
+    /// `scanDeadline` abandons it and hands the slot to whatever is waiting. `log.maxConcurrent`
+    /// may read 2 here — the abandoned body keeps running in the background and genuinely overlaps
+    /// B's scan, by design (see the type doc); the slot's guarantee is that B *starts*, not that
+    /// nothing else is still executing.
+    @Test func stuckScanReleasesTheSlotAtTheDeadline() async {
+        let log = Log()
+        var delivered: [String] = []
+        let s = DetectionScheduler(compute: stuckOnceScan(log), deadline: 0.2) { req, _ in delivered.append(req.text) }
+        s.request(.init(text: "STUCK", revision: 0, generation: 1))
+        let bRequestedAt = ContinuousClock.now
+        s.request(.init(text: "B", revision: 1, generation: 1))
+        await waitUntil { delivered == ["B"] }
+        #expect(delivered == ["B"])
+        // B was delivered long before the stuck body's own 1.0 s sleep would have finished.
+        #expect(ContinuousClock.now - bRequestedAt < .seconds(0.8))
+        #expect(log.value == ["STUCK", "B"])
     }
 }
