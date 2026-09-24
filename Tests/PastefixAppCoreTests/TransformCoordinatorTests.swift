@@ -189,15 +189,23 @@ private struct FailingArming: OutputModeTransformer {
         #expect(outcome == .applied)
     }
 
+    /// The property under test is "the caller got its timeout while the body was still running" —
+    /// a flag the body raises as its last statement, checked the instant `apply` returns — not a
+    /// wall-clock margin, which flakes under parallel test load for reasons unrelated to whether
+    /// the coordinator actually abandoned the body (see `DeadlineTests` for the same reasoning).
     @Test func slowTransformTimesOutAtItsOwnBudget() async {
+        let finished = Flag()
         var t = FakeTransformer(id: "x", name: "X", requiresRichInput: false) { i in
-            blockingSleep(0.75); return i.text
+            blockingSleep(0.75)
+            finished.raise()
+            return i.text
         }
         t.timeout = 0.2
-        let start = ContinuousClock.now
         let (_, outcome) = await TransformCoordinator.apply(t, to: doc("hi"))
         #expect(outcome == .failed("The transform timed out."))
-        #expect(ContinuousClock.now - start < .seconds(0.6))
+        #expect(!finished.value, "the caller returned while the body was still running")
+        let end = ContinuousClock.now + .seconds(2)
+        while !finished.value, ContinuousClock.now < end { try? await Task.sleep(for: .milliseconds(10)) }
     }
 
     @Test func cancelledCallerGetsCancelledOutcome() async {
