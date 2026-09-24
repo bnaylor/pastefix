@@ -174,7 +174,7 @@ atomically; it refuses while a Pastefix process is running.
 
 - **Sparkle update dialog on the Debug build.** The Debug bundle reports
   version "1.0", the appcast has "1.0.0", so a "new version available" sheet
-  can appear at launch and swallow every keystroke. Dismiss with a `click` on
+  can appear at launch and swallow every keystroke. Dismiss with `click $PID X Y` on
   "Remind Me Later" while the dialog is unobstructed (Esc the panel first);
   clicking through the panel hits the panel instead.
 - **Typing before the panel exists.** A 2 MB buffer takes ~6 s to show the
@@ -186,6 +186,7 @@ atomically; it refuses while a Pastefix process is running.
   from a clean panel and check the query field in a capture before Return.
 - **Stale incremental builds after protocol changes** can SIGSEGV tests or
   mis-dispatch in the app: build clean when a protocol gained requirements.
+- **Fixtures land in the real history.** The Debug app shares the user's history store, so every `pb text` and every summoned fixture is recorded and persists after quit. The Zipline measurement pass left a secret-shaped fixture and two others behind; they were found by `idx.py purge --dry-run` the next day. Purge at the end of every pass, with the app quit.
 - **Two instances.** If a release Pastefix is running, both answer the
   hotkeys. Quit it first (and tell the user you did).
 - **`click` coordinates from a capture rect that has drifted.** Re-read the
