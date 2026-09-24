@@ -922,7 +922,7 @@ struct UploadOverlayView: View {
     ///
     /// The arithmetic, re-derived from the constants — do not trust a remembered figure over this:
     ///
-    ///     card     = cardChromeHeight(97) + scrollHeight + verdictHeight(0|28|112)
+    ///     card     = cardChromeHeight(97) + scrollHeight + verdictHeight(0|28|70|112)
     ///                  + actionBlockHeight(60) + banner(0|56)
     ///     on panel = topPadding(12…40) + card + cardBottomMargin(24)
     ///     fits when scrollHeight <= panelHeight - 181 - topPadding - verdict - banner
@@ -936,13 +936,24 @@ struct UploadOverlayView: View {
     ///                           the card ends at 381: 1pt past the budget, having spent the margin
     ///
     /// Only that last case is over budget, and by 1pt — the adaptive top padding is what pays for
-    /// it, which is the whole reason it is adaptive. It is also over budget in reserve rather than
-    /// in visible gap: an Accessibility-automation pass at the 380pt minimum measured the action
-    /// row's bottom at 298 of 384 of content and the card's lowest text at 332, i.e. the real
-    /// layout runs ~40pt more compact than these numbers claim (60 reserved for a ~46pt action
-    /// row, the banner budgeted at its three-line worst case whatever the message, the chrome
-    /// rounded up). The budget stays pessimistic on purpose — it is the number that cannot be
-    /// optimistic — and the measurement is why the floored case is safe rather than hoped-for.
+    /// it, which is the whole reason it is adaptive.
+    ///
+    /// **What was measured, and what has not been.** The Accessibility-automation pass this file
+    /// used to cite — action row's bottom at 298 of 384 of content, card's lowest text at 332,
+    /// i.e. ~40pt more compact than the budget claims — was taken against the *previous* layout,
+    /// before `411a4c7` moved the verdict and the radio group out of the scroll region and added
+    /// `findingsChromeHeight` (112) to the pinned budget. The pinned height changed in precisely
+    /// the case that gets floored (findings + banner at the 380pt minimum), so that case has not
+    /// been measured since, and neither has the over-cap refusal row (`refusalRowHeight`, 70)
+    /// added after it. Everything above is re-derived arithmetic, not a measurement of what ships.
+    ///
+    /// The budget stays pessimistic on purpose — it is the number that cannot be optimistic — but
+    /// pessimism is not evidence, and the claim that used to stand here ("the measurement is why
+    /// the floored case is safe rather than hoped-for") no longer has a measurement behind it. The
+    /// AX pass this owes: at `PanelMetrics.minContentHeight` (380), in a `.failed` phase with
+    /// findings, and again with `scanState == .refusedTooLarge`, confirm the verdict block and
+    /// both action-row buttons are fully on screen. Until that lands, this case is unverified —
+    /// do not re-derive the arithmetic and call it measured.
     ///
     /// The `ScrollView` takes a *definite* height from this, so it will not compress to take up
     /// the slack on its own; if this number is too big, the card simply grows past the panel.
