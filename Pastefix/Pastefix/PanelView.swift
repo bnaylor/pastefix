@@ -123,9 +123,11 @@ struct PanelView: View {
                                 // Disabled under the upload overlay, and only that one. The
                                 // overlay uploads a snapshot of the buffer taken when it opened,
                                 // so an edit landing behind the dim would make the uploaded text
-                                // differ from the text on screen. The overlay also takes focus,
-                                // which is the first line of defence; this is the one that does
-                                // not depend on focus behaving.
+                                // differ from the text on screen. The overlay's own focus call is
+                                // the first line of defence and a measured one — an AX pass typed
+                                // into both its phases and the buffer did not change — so this is
+                                // not a workaround for focus misbehaving. It is kept anyway:
+                                // belt and braces on the one path that sends data off the machine.
                                 .disabled(model.isApplying || isUploadOpen)
                                 .focused($editorFocused)
                         }

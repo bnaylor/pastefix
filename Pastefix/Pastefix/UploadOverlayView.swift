@@ -53,11 +53,17 @@ struct UploadOverlayView: View {
     /// `onAppear` can fire more than once for one view instance, and a second `startScan` would
     /// orphan the first task — which then lands its own result on top of the newer one.
     @State private var scanStarted = false
-    /// Which part of the overlay holds first responder. It has to hold it *somewhere*: the
-    /// `TextEditor` behind the backdrop is not disabled, so an overlay that never takes focus
-    /// leaves keystrokes editing the document underneath it — and this overlay uploads a snapshot
-    /// taken when it opened, so those keystrokes would make the uploaded text differ from the
-    /// text on screen. The siblings take focus into their search field (`CommandPaletteView:36`,
+    /// Which part of the overlay holds first responder. It has to hold it *somewhere*: this
+    /// overlay uploads a snapshot taken when it opened, so a keystroke that reached the buffer
+    /// behind the backdrop would make the uploaded text differ from the text on screen, and one
+    /// that reached the extension field would silently rewrite the filename.
+    ///
+    /// The card takes it, and does hold it: an Accessibility-automation pass at the panel's
+    /// minimum height typed into both the ready and the failed phase and found the buffer still
+    /// exactly 307 characters, the extension field still "txt", and AX reporting focus on the
+    /// hosting view rather than the text area. (`PanelView` also disables the editor under this
+    /// overlay — belt and braces on a path that sends data off the machine, kept deliberately.)
+    /// The siblings take focus into their search field (`CommandPaletteView:36`,
     /// `HistoryOverlayView:94`); this one has no search field, so the card itself is the target.
     @FocusState private var focus: Field?
     @State private var scanTask: Task<Void, Never>?
@@ -71,9 +77,17 @@ struct UploadOverlayView: View {
         case fileExtension
     }
 
+    /// Whitespace above the card, and the **first thing given up under height pressure**: it is
+    /// the only term in the whole budget with nothing inside it. See
+    /// `cardTopPadding(forPanelHeight:)`, which walks it down to `minCardTopPadding` before
+    /// anything with content in it is squeezed.
     private static let cardTopPadding: CGFloat = 40
+    /// How close to the panel's top edge the card is allowed to get. Not zero: a card flush
+    /// against the edge reads as a sheet that failed to lay out rather than a floating card.
+    private static let minCardTopPadding: CGFloat = 12
     /// Kept clear below the card so it never sits flush against the panel's bottom edge — and,
-    /// more to the point, so the height budget below stops short of it.
+    /// more to the point, so the height budget below stops short of it. Given up second, after
+    /// the top padding: also whitespace, but whitespace at the edge the buttons are nearest.
     private static let cardBottomMargin: CGFloat = 24
     /// Header block (46 for the title row, plus 18 for the source line under it — a `.caption` is
     /// 10pt on macOS, so ~13pt of line box plus the 2pt `VStack` spacing, reserved at 18 so this
@@ -94,23 +108,34 @@ struct UploadOverlayView: View {
     /// card, which nobody can see; under-reserving pushes Retry and Cancel past the window's
     /// bottom edge, which is exactly what this constant exists to stop.
     private static let bannerBlockHeight: CGFloat = 56
-    /// The three option rows, the divider under them, their spacings, and the scroll region's own
-    /// 12pt padding top and bottom.
-    private static let optionsHeight: CGFloat = 133
-    /// One "Checking for secrets…" / "No secrets found" line.
-    private static let scanRowHeight: CGFloat = 20
-    /// Everything in the findings block that is not a finding line: the "N possible secrets"
-    /// label, the disposition radio group and its caption.
+    /// The three option rows, their spacings, and the scroll region's own 12pt padding top and
+    /// bottom. No divider term any more: the one that used to sit between the options and the
+    /// secret block moved above the per-kind lines, and is only present when there are any
+    /// (`findingKindsGap`). These rows are what the region gives up first, because they are the
+    /// only thing in the card that can be changed again at any time.
+    private static let optionsHeight: CGFloat = 122
+    /// One "Checking for secrets…" / "No secrets found" line, plus the 8pt spacing below it — the
+    /// pinned verdict's whole height in those two states.
+    private static let scanRowHeight: CGFloat = 28
+    /// The pinned verdict when findings exist: the "N possible secrets" label, the disposition
+    /// radio group, its caption, their spacings, and the 8pt gap to the banner/action row below.
+    /// Independent of how many kinds were found — that part lives in the scroll region — which is
+    /// the property that makes this safe to pin at all.
     private static let findingsChromeHeight: CGFloat = 112
+    /// One per-kind line in the scroll region, and the "Found:" caption above them.
     private static let findingLineHeight: CGFloat = 16
-    /// The floor on the scroll region, for a panel too short to hold even the option rows. At the
-    /// panel's own 380pt minimum the budget leaves 159 with no banner and 103 with one, so the
-    /// banner case *is* binding now (it was clear by 1pt before the header grew a source line):
-    /// the card there is ~17pt taller than the budget wanted, which is absorbed by the reserve in
-    /// the other terms — bottom edge at 373 of 380, and further off the panel edge than that when
-    /// measured. It is a floor, so reaching it always means the card grows past the budget; it
-    /// exists so the arithmetic cannot produce a negative height.
-    private static let minScrollHeight: CGFloat = 120
+    /// The divider and spacings between the per-kind lines and the option rows under them.
+    private static let findingKindsGap: CGFloat = 11
+    /// The floor on the scroll region: about one option row plus enough height to be scrollable.
+    ///
+    /// Reaching it means the card is taller than the budget wanted, and at the panel's 380pt
+    /// minimum with findings *and* a failure banner it is reached (19pt available against this 44).
+    /// That is the deliberate outcome: the option rows become something to scroll to rather than
+    /// something to read at a glance, and the verdict, the choice and the buttons are untouched.
+    /// It must stay big enough to scroll — a region of zero height cannot be scrolled, and the
+    /// expiry control is precisely what a `1001 bad options[deletes-at]` failure needs the user to
+    /// reach. It exists at all so the arithmetic cannot produce a negative height.
+    private static let minScrollHeight: CGFloat = 44
 
     /// The overlay's whole state, in the order it can be entered.
     ///
@@ -203,15 +228,14 @@ struct UploadOverlayView: View {
                     // maxWidth + horizontal padding rather than a fixed width: on a panel narrower
                     // than the card, the card shrinks instead of overflowing off both edges.
                     .padding(.horizontal, 24)
-                    .padding(.top, Self.cardTopPadding)
+                    .padding(.top, cardTopPadding(forPanelHeight: geometry.size.height))
             }
         }
         .onAppear {
-            // Takes first responder away from the `TextEditor` behind the backdrop. Without this
-            // the editor keeps it, typing edits the document while the overlay is up, and the
-            // upload sends the snapshot from before those keystrokes — text that is not what is
-            // on screen. The card rather than the extension field, so a stray keypress does not
-            // silently rewrite the filename either.
+            // Takes first responder onto the card, off whatever had it when the overlay opened.
+            // Measured to work (see `focus`), and it is what makes Return and Esc reach this
+            // overlay's own handlers. The card rather than the extension field, so a stray
+            // keypress does not silently rewrite the filename.
             focus = .card
             // Nothing is scanned in the configure state: there is nowhere to send the result, and
             // a scan started there would be work done for a question nobody asked.
@@ -360,11 +384,17 @@ struct UploadOverlayView: View {
             // and what the panel has left, so the region scrolls only when it actually has to.
             ScrollView {
                 VStack(alignment: .leading, spacing: 10) {
+                    // The per-kind detail goes *first*, so that what scrolls out of the bottom of
+                    // a squeezed region is the expiry, the burn toggle and the extension — three
+                    // cosmetic defaults, changeable at any time — rather than anything about the
+                    // secrets. See `composingState`'s note on what is pinned and why.
+                    if case .found(let matches) = scanState {
+                        findingKinds(matches)
+                        Divider()
+                    }
                     expirationRow
                     burnRow
                     extensionRow
-                    Divider()
-                    secretRow
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(12)
@@ -386,6 +416,27 @@ struct UploadOverlayView: View {
             .frame(height: scrollHeight)
             Divider()
             VStack(alignment: .leading, spacing: 8) {
+                // **The invariant this block exists to hold: whatever else height pressure takes
+                // away, the secret verdict and the redact-or-send choice stay on screen.** They
+                // are the reason this overlay exists, and Upload and Cancel below are a decision
+                // *about* them — so they get the same guarantee those two already had, by living
+                // outside the budgeted scroll region rather than at the end of it.
+                //
+                // Measured failure this replaces: at the panel's 380pt minimum in a *failed*
+                // phase, the error banner shrinks the region enough to push the entire findings
+                // list below the fold, leaving Expires, Burn and File type visible. The surface
+                // whose whole job is letting someone check what is about to leave their machine
+                // hid exactly that, and kept three re-configurable defaults instead.
+                //
+                // Only the per-kind lines still scroll (they are unbounded — one line per kind —
+                // so pinning them could push the buttons off a short panel, which is the thing
+                // no budget may ever do).
+                verdict
+                    // Inert while the bytes are on the wire, for the same reason the option rows
+                    // are: changing the disposition of an upload already sent would only mislead
+                    // about what was sent. Scoped to this, never to `actionRow` — Cancel has to
+                    // stay pressable for the whole 60s client timeout.
+                    .disabled(phase == .uploading)
                 if let message = bannerMessage {
                     errorBanner(message)
                 }
@@ -459,7 +510,9 @@ struct UploadOverlayView: View {
         }
     }
 
-    @ViewBuilder private var secretRow: some View {
+    /// The pinned verdict: the scan's answer, and the choice that answer demands. Never inside
+    /// the scroll region — see `composingState`.
+    @ViewBuilder private var verdict: some View {
         switch scanState {
         case .scanning:
             if showScanProgress {
@@ -490,18 +543,15 @@ struct UploadOverlayView: View {
         }
     }
 
+    /// The verdict and the choice, and nothing that can grow without bound: one count line, the
+    /// radio group, one caption. Height is independent of how many kinds were found, which is what
+    /// makes it safe to pin — `findingKinds` carries the part that is not.
     private func findings(_ matches: [SecretMatch]) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             Label("\(matches.count) possible secret\(matches.count == 1 ? "" : "s") in this text",
                   systemImage: "exclamationmark.shield")
                 .font(.callout)
                 .foregroundStyle(.orange)
-            ForEach(Self.summaries(of: matches), id: \.self) { line in
-                Text(line)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .frame(height: Self.findingLineHeight, alignment: .leading)
-            }
             // Redact is preselected and Return uploads, so the safe outcome is the one that
             // happens if the user reads none of this. Sending as-is has to be chosen.
             Picker("Before uploading", selection: $disposition) {
@@ -509,11 +559,32 @@ struct UploadOverlayView: View {
                 Text("Send as is").tag(SecretDisposition.sendAsIs)
             }
             .pickerStyle(.radioGroup)
+            // "The secrets found", not "the secrets above": the per-kind list is in the scroll
+            // region now and may be scrolled out of sight, so a caption pointing at it would be
+            // pointing at nothing.
             Text(disposition == .redact
                  ? "Only the uploaded copy is changed; the text in the panel is untouched."
-                 : "The secrets above will be uploaded exactly as they appear.")
+                 : "The secrets found will be uploaded exactly as they appear.")
                 .font(.caption)
                 .foregroundStyle(disposition == .redact ? Color.secondary : Color.orange)
+        }
+    }
+
+    /// The per-kind breakdown, which lives in the scroll region because it has one line per kind
+    /// and so no bounded height. The pinned verdict above gives the total, so this can be scrolled
+    /// away without leaving the user unable to see *that* something was found.
+    private func findingKinds(_ matches: [SecretMatch]) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text("Found:")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .frame(height: Self.findingLineHeight, alignment: .leading)
+            ForEach(Self.summaries(of: matches), id: \.self) { line in
+                Text(line)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(height: Self.findingLineHeight, alignment: .leading)
+            }
         }
     }
 
@@ -716,37 +787,73 @@ struct UploadOverlayView: View {
     /// The height the scrolling region gets: the smaller of what its content needs and what the
     /// panel has left after everything that is not the scroll region.
     ///
-    /// The arithmetic, re-derived from the constants — the numbers a previous version of this
-    /// comment carried were wrong, so do not trust a remembered figure over this:
+    /// **Priority, not just arithmetic.** Everything except this region is pinned, and the order
+    /// in which the card gives things up is deliberate: top whitespace first
+    /// (`cardTopPadding(forPanelHeight:)`), the bottom margin second, then the option rows — which
+    /// scroll rather than vanish. The verdict, the redact-or-send choice and the action row are
+    /// never squeezed. A banner-shrunken region used to push the whole findings list below the
+    /// fold while keeping three cosmetic defaults pinned, which is exactly backwards for a surface
+    /// whose job is letting someone check what is about to leave their machine.
     ///
-    ///     card     = cardChromeHeight(97) + scrollHeight + actionBlockHeight(60) + banner(0|56)
-    ///     on panel = cardTopPadding(40) + card + cardBottomMargin(24)
-    ///     fits when scrollHeight <= panelHeight - 221 - banner
+    /// The arithmetic, re-derived from the constants — do not trust a remembered figure over this:
     ///
-    /// At `PanelMetrics.minContentHeight` (380) that is 159 with no banner and 103 with one —
-    /// both 18 tighter than before the header grew a source line. The banner case now lands under
-    /// `minScrollHeight` (120), so at the panel's own minimum height *with* a failure banner the
-    /// card is ~17pt taller than this budget wanted: 40 + 97 + 120 + 60 + 56 puts its bottom edge
-    /// at 373 of 380, eating 17 of `cardBottomMargin`'s 24. That 17 comes out of reserve, not out
-    /// of visible gap — every term here rounds up (60 for a ~46pt action row, the banner at its
-    /// three-line worst case whatever the message), so the measured clearance at that size is
-    /// ~25pt rather than the 7pt the arithmetic promises. Nothing is clipped either way; the
-    /// budgeted 7pt is the number to watch, because it is the one that cannot be optimistic. The
-    /// budget is written to consume the panel *exactly*, so there is no spare cushion to absorb
-    /// an un-budgeted block: the only real slack anywhere here is `actionBlockHeight`'s 60pt over
-    /// a ~46pt action row, about 14pt. That is why the banner is a term in this expression rather
-    /// than something allowed to "push the card a little taller" — it was exempt once, and at
-    /// minimum height a one-line banner overflowed by ~10pt and a three-line one by ~42pt,
-    /// pushing Retry and Cancel below the window's bottom edge where they cannot be clicked.
+    ///     card     = cardChromeHeight(97) + scrollHeight + verdictHeight(0|28|112)
+    ///                  + actionBlockHeight(60) + banner(0|56)
+    ///     on panel = topPadding(12…40) + card + cardBottomMargin(24)
+    ///     fits when scrollHeight <= panelHeight - 181 - topPadding - verdict - banner
+    ///
+    /// At `PanelMetrics.minContentHeight` (380), with the top padding walked down where needed:
+    ///
+    ///     clean, no banner    → padding 40, 131 available, 122 wanted → no scroll
+    ///     findings, no banner → padding 40, 47 available, 181 wanted (2 kinds) → options scroll;
+    ///                           card bottom at 356, the 24pt margin exactly honoured
+    ///     findings + banner   → padding 12, 19 available → floored at `minScrollHeight` (44), so
+    ///                           the card ends at 381: 1pt past the budget, having spent the margin
+    ///
+    /// Only that last case is over budget, and by 1pt — the adaptive top padding is what pays for
+    /// it, which is the whole reason it is adaptive. It is also over budget in reserve rather than
+    /// in visible gap: an Accessibility-automation pass at the 380pt minimum measured the action
+    /// row's bottom at 298 of 384 of content and the card's lowest text at 332, i.e. the real
+    /// layout runs ~40pt more compact than these numbers claim (60 reserved for a ~46pt action
+    /// row, the banner budgeted at its three-line worst case whatever the message, the chrome
+    /// rounded up). The budget stays pessimistic on purpose — it is the number that cannot be
+    /// optimistic — and the measurement is why the floored case is safe rather than hoped-for.
     ///
     /// The `ScrollView` takes a *definite* height from this, so it will not compress to take up
     /// the slack on its own; if this number is too big, the card simply grows past the panel.
     private func scrollHeight(forPanelHeight panelHeight: CGFloat) -> CGFloat {
         let available = max(Self.minScrollHeight,
-                            panelHeight - Self.cardTopPadding - Self.cardBottomMargin
-                                - Self.cardChromeHeight - Self.actionBlockHeight
-                                - bannerHeight)
-        return min(Self.optionsHeight + secretBlockHeight, available)
+                            panelHeight - cardTopPadding(forPanelHeight: panelHeight)
+                                - Self.cardBottomMargin - Self.cardChromeHeight
+                                - verdictHeight - Self.actionBlockHeight - bannerHeight)
+        return min(Self.optionsHeight + findingKindsHeight, available)
+    }
+
+    /// Whitespace above the card, surrendered before anything with content in it. Full
+    /// `cardTopPadding` whenever the pinned blocks plus a floor-height region fit under it,
+    /// otherwise as little as `minCardTopPadding`.
+    ///
+    /// Written as its own function so `body` and `scrollHeight(forPanelHeight:)` cannot disagree
+    /// about it: they are the two readers, and a card positioned by one number and measured by
+    /// another is how a budget starts lying.
+    private func cardTopPadding(forPanelHeight panelHeight: CGFloat) -> CGFloat {
+        let pinned = Self.cardChromeHeight + Self.minScrollHeight + verdictHeight
+            + Self.actionBlockHeight + bannerHeight + Self.cardBottomMargin
+        return min(Self.cardTopPadding, max(Self.minCardTopPadding, panelHeight - pinned))
+    }
+
+    /// What the pinned verdict block takes out of the budget: nothing while the scan is still
+    /// quiet, one row for a progress or all-clear line, and the bounded findings block when there
+    /// is something to decide about. Tracks exactly what `verdict` renders, so the budget and the
+    /// screen cannot disagree.
+    private var verdictHeight: CGFloat {
+        switch scanState {
+        // Nothing is drawn under the 150ms delay, so nothing is budgeted for it — the card grows
+        // by a row when the progress line appears, which is the same movement the row itself is.
+        case .scanning: return showScanProgress ? Self.scanRowHeight : 0
+        case .clean: return Self.scanRowHeight
+        case .found: return Self.findingsChromeHeight
+        }
     }
 
     /// The banner is drawn only in a `.failed` phase, and `bannerMessage` is also nil when the
@@ -756,20 +863,15 @@ struct UploadOverlayView: View {
         bannerMessage == nil ? 0 : Self.bannerBlockHeight
     }
 
-    /// What the secret block adds to the scroll region's content. An estimate, and only has to be
-    /// roughly right in the safe direction: too large leaves a few points of slack at the bottom
-    /// of the region, too small makes it scroll slightly sooner than it needed to. Neither hides
-    /// a control, because the controls that matter are pinned outside it.
-    private var secretBlockHeight: CGFloat {
-        switch scanState {
-        // Nothing is drawn under the delay, so nothing is budgeted for it — the card grows by a
-        // row when the progress line appears, which is the same movement the row itself is.
-        case .scanning: return showScanProgress ? Self.scanRowHeight : 0
-        case .clean: return Self.scanRowHeight
-        case .found(let matches):
-            return Self.findingsChromeHeight
-                + CGFloat(Self.summaries(of: matches).count) * Self.findingLineHeight
-        }
+    /// What the per-kind lines add to the scroll region's content. An estimate, and only has to be
+    /// roughly right in the safe direction: too large leaves a few points of slack at the bottom of
+    /// the region, too small makes it scroll slightly sooner than it needed to. Neither hides
+    /// anything, because everything that must not be hidden is pinned outside the region.
+    private var findingKindsHeight: CGFloat {
+        guard case .found(let matches) = scanState else { return 0 }
+        // +1 line for the "Found:" caption above them.
+        return CGFloat(Self.summaries(of: matches).count + 1) * Self.findingLineHeight
+            + Self.findingKindsGap
     }
 
     // MARK: Actions (every one reads live state)
