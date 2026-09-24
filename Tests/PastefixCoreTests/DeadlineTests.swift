@@ -39,9 +39,9 @@ private func blockingSleep(_ seconds: TimeInterval) {
         // Thread.sleep is not a cancellation point: this body cannot be stopped, only abandoned.
         let start = ContinuousClock.now
         await #expect(throws: TransformError.timeout) {
-            try await Deadline.run(seconds: 0.2) { () -> Int in blockingSleep(1.0); return 1 }
+            try await Deadline.run(seconds: 0.2) { () -> Int in blockingSleep(0.5); return 1 }
         }
-        #expect(ContinuousClock.now - start < .seconds(0.8))
+        #expect(ContinuousClock.now - start < .seconds(0.4))
     }
 
     @Test func deadlineCancelsACooperativeBody() async {
@@ -76,10 +76,10 @@ private func blockingSleep(_ seconds: TimeInterval) {
     @Test func alreadyCancelledCallerThrowsWithoutRunningLong() async {
         let outer = Task { () -> Int in
             withUnsafeCurrentTask { $0?.cancel() }
-            return try await Deadline.run(seconds: 10) { () -> Int in blockingSleep(1.0); return 1 }
+            return try await Deadline.run(seconds: 10) { () -> Int in blockingSleep(0.5); return 1 }
         }
         let start = ContinuousClock.now
         await #expect(throws: CancellationError.self) { try await outer.value }
-        #expect(ContinuousClock.now - start < .seconds(0.8))
+        #expect(ContinuousClock.now - start < .seconds(0.4))
     }
 }

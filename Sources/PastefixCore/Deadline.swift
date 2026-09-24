@@ -24,8 +24,8 @@ public enum Deadline {
         let sleeper = Task.detached(priority: priority) {
             try? await Task.sleep(for: .seconds(seconds), clock: .continuous)
             guard !Task.isCancelled else { return }
-            work.cancel()
             gate.finish(.failure(TransformError.timeout))
+            work.cancel()
         }
         defer { sleeper.cancel() }
         return try await withTaskCancellationHandler {
@@ -33,14 +33,19 @@ public enum Deadline {
                 gate.arm(continuation)
             }
         } onCancel: {
-            work.cancel()
             gate.finish(.failure(CancellationError()))
+            work.cancel()
         }
     }
 
     /// Resumes a continuation exactly once, whichever of body / sleeper / cancellation gets
     /// there first, and remembers an outcome that arrives before the continuation is armed
-    /// (a caller cancelled before `withCheckedThrowingContinuation` ran).
+    /// (a caller cancelled before `withCheckedThrowingContinuation` ran). Once the gate is
+    /// closed the body's eventual result is discarded by definition, so both the sleeper and
+    /// the cancellation handler finish the gate before cancelling the body: cancelling first
+    /// opened a window in which a cooperative body could finish and win the race, handing the
+    /// caller a `CancellationError` on a plain timeout or a partial result (e.g. `URLCleaner`
+    /// over a `URLFinder` that stopped early) reported as applied.
     private final class Gate<T: Sendable>: @unchecked Sendable {
         private let lock = NSLock()
         private var continuation: CheckedContinuation<T, any Error>?
