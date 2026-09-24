@@ -17,7 +17,7 @@ public struct DetectionResult: Sendable, Equatable {
     }
 
     /// The one place the secret scan and content detection are paired, so the scan runs once for
-    /// both consumers. Never call on the main actor for session text (Plan 13).
+    /// both consumers. Never call on the main actor for session text (Plan 14).
     public static func compute(_ text: String) -> DetectionResult {
         let secrets = SecretDetector.scan(text)
         return DetectionResult(kinds: ContentDetector.detect(text, secrets: secrets),
