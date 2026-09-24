@@ -1,5 +1,7 @@
 # Pastefix v2 Large-Buffer Safety (Plan 14) — Implementation Plan
 
+> ## ✅ STATUS: COMPLETE — merged to main via PR #53 (`7bd250c`, 2026-09-24)
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 >
 > **Swift specifics:** tests → `swift-testing-pro`; concurrency (Tasks 1, 4, 5, 6) → `swift-concurrency-pro`. **TDD is required** for every package task. **One implementer at a time on the branch.** The GUI pass is the controller's, with the user's permission.
