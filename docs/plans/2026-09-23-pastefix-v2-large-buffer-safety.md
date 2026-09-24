@@ -4,6 +4,8 @@
 >
 > **Swift specifics:** tests → `swift-testing-pro`; concurrency (Tasks 1, 4, 5, 6) → `swift-concurrency-pro`. **TDD is required** for every package task. **One implementer at a time on the branch.** The GUI pass is the controller's, with the user's permission.
 
+**Post-review deltas:** the spec's Amendments are authoritative where this plan's task text differs (rich transforms capped on RTFD bytes; script `timeout = runnerTimeout + 1`; two over-cap messages, text and rich; `refresh` carries `detectionRevision`; hard scheduler slot under a scan deadline; palette ranks against a kinds snapshot).
+
 **Goal:** Detection and the secret scan run off the main actor and land by revision/generation; every transform declares an input cap and a timeout that the coordinator enforces through one shared deadline helper; dismissing the session cancels in-flight work.
 
 **Architecture:** `PastefixCore` gains `Deadline.run` (abandon-at-deadline race that always cancels its body), `ByteLimit.describe`, `TransformLimits` defaults, two new `Transformer` requirements with defaults, a 256 KB cap plus cancellation check in `URLFinder`, and per-transformer overrides. `PastefixAppCore` gains `DetectionResult`/`DetectionState` on `PasteDocument` (no scanning in the struct any more), a `DetectionScheduler` single-slot lane, and a `TransformCoordinator` that checks the cap and runs `apply` under `Deadline.run`. The app wires the scheduler and cancels the apply task wherever the session changes.
@@ -14,10 +16,10 @@
 
 ## Global Constraints
 
-- **Caps/timeouts:** `TransformLimits.defaultMaxInputBytes = 1_048_576`, `TransformLimits.defaultTimeout: TimeInterval = 3`. Overrides: `MarkdownToRich.maxInputBytes = 65_536`; `URLCleaner`/`MarkdownLink.maxInputBytes = URLFinder.maxBytes` (`262_144`); `MarkdownLink.timeout = fetchTimeout + 2` (6 s default); `RedactSecrets.maxInputBytes = SecretDetector.maxBytes`; `RegexPresetTransformer.maxInputBytes = Self.maxBytes`, `timeout = Self.timeout`; `ShellTransformer`/`JSTransformer` expose their existing `timeout` (make it `public let`).
-- **Messages:** over cap → `"\(name) is limited to \(ByteLimit.describe(maxInputBytes)) of text."`; `ByteLimit.describe`: `65_536 → "64 KB"`, `262_144 → "256 KB"`, `1_048_576 → "1 MB"`, otherwise `"\(n) bytes"`. Timeout → existing `"The transform timed out."`. Caller cancelled → `"The transform was cancelled."`.
+- **Caps/timeouts:** `TransformLimits.defaultMaxInputBytes = 1_048_576`, `TransformLimits.defaultTimeout: TimeInterval = 3`. Overrides: `MarkdownToRich.maxInputBytes = 65_536`; `URLCleaner`/`MarkdownLink.maxInputBytes = URLFinder.maxBytes` (`262_144`); `MarkdownLink.timeout = fetchTimeout + 2` (6 s default); `RedactSecrets.maxInputBytes = SecretDetector.maxBytes`; `RegexPresetTransformer.maxInputBytes = Self.maxBytes`, `timeout = Self.timeout`; `ShellTransformer`/`JSTransformer` timeout is `runnerTimeout + 1` (post-review — see spec Amendment 7), a margin over the runner's own watchdog rather than the runner's raw configured value.
+- **Messages:** over cap is two messages, not one, per spec Amendment 6 — a rich transform (`requiresRichInput`) is measured on `richRTFD` bytes and refuses with `"\(name) is limited to \(ByteLimit.describe(maxInputBytes)) of rich text."`; every other transform is measured on `text.utf8.count` and refuses with `"…of text."`. `ByteLimit.describe`: `65_536 → "64 KB"`, `262_144 → "256 KB"`, `1_048_576 → "1 MB"`, `4_194_304 → "4 MB"`, otherwise `"\(n) bytes"`. Timeout → existing `"The transform timed out."`. Caller cancelled → `"The transform was cancelled."`.
 - **Deadline.run contract:** returns the body's value; throws `TransformError.timeout` when `seconds` elapse first; throws `CancellationError` when the caller is cancelled first; in both cases the body task is cancelled and its eventual result discarded; a body that ignores cancellation never blocks the caller. Body runs on `Task.detached(priority:)`, default `.userInitiated`.
-- **Detection state:** `PasteDocument.init` → `.pending`, `detectionRevision == 0`; `pushState` (including equal text), `undo`, `redo` → `.pending` and `detectionRevision += 1`; `setWorking` touches neither. `applyDetection(_:revision:)` applies only when `revision == detectionRevision && detection == .pending`, returns `Bool`. While pending: `detectedKinds == []`, `secretMatches == []`, `secretScanSkipped == false`, `isDetecting == true`.
+- **Detection state:** `PasteDocument.init` → `.pending`, `detectionRevision == 0`; `pushState` (including equal text), `undo`, `redo` → `.pending` and `detectionRevision += 1`; `setWorking` touches neither. `refresh` carries the previous revision forward: `.pending` at `detectionRevision + 1` from the pre-refresh value, not a reset to 0 (post-review — see spec Amendment 8), so a scan result computed for the pre-refresh document at some revision can never be mistaken for one computed post-refresh at the same revision. `applyDetection(_:revision:)` applies only when `revision == detectionRevision && detection == .pending`, returns `Bool`. While pending: `detectedKinds == []`, `secretMatches == []`, `secretScanSkipped == false`, `isDetecting == true`.
 - **Scheduler:** at most one scan running (detached, `.userInitiated`); a request during a run becomes the single waiting request (replacing any earlier waiting one) and cancels the running task; a finished scan is delivered only if it was not cancelled and nothing is waiting; `cancelAll()` delivers nothing afterwards. `deliver` runs on the main actor with the originating request.
 - **URLFinder:** `maxBytes = 262_144`; over cap returns `[]`; enumeration stops when `Task.isCancelled`.
 - **Branch:** `feat/large-buffer-safety` (already exists, spec committed). Conventional commits + `Co-Authored-By: Claude <noreply@anthropic.com>`. PR closes #28 and #29. `main` is protected.
@@ -380,7 +382,7 @@ enum URLFinder {
     }
 ```
 
-`ContentDetector.swift` doc: replace the `maxBytes` comment with: `/// Buffers larger than this are not inspected. Detection now runs off the main actor (Plan 13), so this bounds work, not summon latency. Note the URL rule has its own tighter bound: `.url` is never reported above `URLFinder.maxBytes` (256 KB) even though the other rules run to 1 MB.`
+`ContentDetector.swift` doc: replace the `maxBytes` comment with: `/// Buffers larger than this are not inspected. Detection now runs off the main actor (Plan 14), so this bounds work, not summon latency. Note the URL rule has its own tighter bound: `.url` is never reported above `URLFinder.maxBytes` (256 KB) even though the other rules run to 1 MB.`
 
 `RegexPresetTransformer.apply`:
 
@@ -492,7 +494,7 @@ public struct DetectionResult: Sendable, Equatable {
     public init(kinds: Set<ContentKind>, secretMatches: [SecretMatch], secretScanSkipped: Bool) { … }
 
     /// The one place the secret scan and content detection are paired, so the scan runs once for
-    /// both consumers. Never call on the main actor for session text (Plan 13).
+    /// both consumers. Never call on the main actor for session text (Plan 14).
     public static func compute(_ text: String) -> DetectionResult {
         let secrets = SecretDetector.scan(text)
         return DetectionResult(kinds: ContentDetector.detect(text, secrets: secrets),
@@ -860,10 +862,10 @@ Call sites:
 - [ ] AGENTS status table: add `| 13 — Large-buffer safety | DetectionScheduler, Deadline.run, maxInputBytes/timeout | 🚧 in progress — branch feat/large-buffer-safety — [spec](…), [plan](…) |`.
 - [ ] AGENTS file map: `DetectionResult.swift`, `DetectionScheduler.swift`, `Deadline.swift`, `ByteLimit.swift` one-liners.
 - [ ] AGENTS Patterns: (a) "Session text is scanned off the main actor. `PasteDocument` never scans; `DetectionScheduler` runs `DetectionResult.compute` and results land by revision + generation. Never call `SecretDetector`/`ContentDetector` on the main actor for session text." (b) "Every transform declares `maxInputBytes` and `timeout`; the coordinator enforces both. A new transform whose cost is superlinear or that calls an uninterruptible API lowers its cap; one that can loop checks `Task.isCancelled`." (c) "`Deadline.run` is the only sanctioned deadline race; it abandons and cancels, it does not stop. Hand-rolled task-group races are not a bound."
-- [ ] AGENTS "Things that have bitten us — Plan 13": inline `await transformer.apply` on the main actor's task ran synchronous bodies on the main actor; `JSRunner`-style races that resume the caller and leave the work running; `Cancel` that only discarded the result.
+- [ ] AGENTS "Things that have bitten us — Plan 14": inline `await transformer.apply` on the main actor's task ran synchronous bodies on the main actor; `JSRunner`-style races that resume the caller and leave the work running; `Cancel` that only discarded the result.
 - [ ] Spec amendment: defaults live in `TransformLimits` (not `Transformer.defaultMaxInputBytes`).
 - [ ] Foundation spec and content-transforms spec: one-line amendment notes pointing at this spec for detection timing and transform bounds.
-- [ ] Commit `docs: Plan 13 status, patterns, spec amendments`.
+- [ ] Commit `docs: Plan 14 status, patterns, spec amendments`.
 
 ---
 

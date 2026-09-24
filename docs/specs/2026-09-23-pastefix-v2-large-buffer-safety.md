@@ -69,6 +69,45 @@ changed and why, for anyone comparing against an earlier read of this spec.
     a transform to a different row without a key press. `selectedID` now tracks the highlighted
     transform's id; navigation, a query change, and a `results` re-partition all keep it (or fall
     back to the clamped index) in sync, and ↵ applies by id first.
+12. **The scheduler's slot is bounded by a scan deadline (PR #53 round 2).** Amendment 4 made the
+    slot hard, but a `compute` that never returns at all — stuck, not merely slow — would still
+    hold it for the process lifetime and disable detection permanently. `DetectionScheduler` gains
+    `scanDeadline: TimeInterval` (default 10 s; the measured worst case for a 1 MB buffer is under
+    2 s, so ten seconds elapsing means stuck, not loaded), injectable via
+    `init(compute:deadline:deliver:)`. The scan itself runs on its own detached `work` task,
+    created unconditionally before any deadline wait begins, so an ordinary displacement (which
+    still cancels `work` directly) is unaffected; only a scan that outlives `scanDeadline` is
+    abandoned — its slot freed and its eventual result discarded, same as any other undelivered
+    scan — and the abandonment is logged once via `os.Logger` (subsystem `net.scromp.Pastefix`,
+    category `detection`) naming the deadline and the buffer's byte count.
+13. **The palette ranks against the kinds it opened with, not identity (PR #53 round 2).**
+    Amendment 11's identity tracking cannot fix the case where nothing has been arrowed yet:
+    `selection == 0` points at whatever occupies row 0, and a detection result landing after the
+    panel renders can re-partition `results` and swap row 0's occupant out from under an unmoved
+    cursor, so ↵ applies a transform the user never saw. `CommandPaletteView` now freezes
+    `detectedKinds` into `kindsSnapshot` in the card's `.onAppear` and ranks `results` — and the
+    transformer list feeding it, via the new `AppModel.enabledTransformers(for:)` — against that
+    frozen snapshot for the palette's whole session; `selectedID` and its identity-following
+    `onChange` are removed as unnecessary once the list itself cannot move. `PanelView` inserts the
+    palette only `if isPaletteOpen`, so `@State` (including the snapshot) resets on every open. The
+    accepted trade-off: a palette opened before detection lands shows the unpromoted order until
+    reopened.
+14. **The rich cap is a measured value, not an estimate (PR #53 round 2).** Amendment 6 set
+    `RichToPlain`/`RichToMarkdown`'s cap at 4 MB of `richRTFD` without measuring the import.
+    `NSAttributedString(data:options:documentAttributes:)` was measured against text-heavy RTF
+    (many alternating bold/regular 20-character runs — the worst case for import cost, not for
+    byte count, since one big image is dominated by data it doesn't re-parse per run) at 1, 2 and
+    4 MB: on an Apple M4 Pro, 1 MB → 0.02 s, 2 MB → 0.05 s, 4 MB → 0.09 s (best-of-5, `-O` build),
+    all far under the 1.5 s half-budget (half of the 3 s timeout, chosen because the import
+    observes no cancellation so the cap is the only bound). 4 MB — the largest of the three
+    candidates — was already the shipped cap; it now has a measurement behind it.
+15. **Finding 5 (abandoned script runs pinning pool threads) is deliberately not addressed here,
+    tracked as #56.** `ShellTransformer`/`JSTransformer` already get a timeout margin over their
+    runner (Amendment 7, `runnerTimeout + 1`), which bounds how long the *coordinator* waits, but
+    an abandoned shell/JS process itself is only bounded by the runner's own watchdog
+    (`runnerTimeout + 0.5 s`) — the process is killed, not merely disowned, so this does not pin a
+    pool thread indefinitely, but it is a separate mechanism from `Deadline.run`'s abandon-and-log
+    pattern (Amendment 12) and was out of scope for this review round.
 
 Closes #28 (detection cost on the main actor) and #29 (native transforms have no input bound or
 cancellation).
@@ -147,24 +186,35 @@ public struct DetectionResult: Sendable, Equatable {
 ```swift
 public struct DetectionRequest: Sendable { public let text: String; public let revision: Int; public let generation: Int }
 public init(compute: @escaping @Sendable (String) -> DetectionResult = DetectionResult.compute,
+            deadline: TimeInterval = 10,
             deliver: @escaping @MainActor (DetectionRequest, DetectionResult) -> Void)
 public func request(_ req: DetectionRequest)
 public func cancelAll()
 ```
 
-- One scan runs at a time on `Task.detached(priority: .userInitiated)`. A request arriving while
-  one runs becomes the single **waiting** request, replacing any earlier waiting one, and the
-  running detached task is cancelled (`URLFinder` observes cancellation; the other rules are
-  fast). Same single-slot shape as `TIFFConversionSlot`, for the same reason: serialising
-  without a slot would let rapid undo/redo stack 1 MB scans.
+- One scan runs at a time. Its `compute` call runs on its own detached `work` task, created
+  unconditionally as soon as the scan starts — before any deadline wait begins — so an ordinary
+  displacement always runs `compute` at least once. A request arriving while one runs becomes the
+  single **waiting** request, replacing any earlier waiting one, and cancels the running scan's
+  `work` task directly (`URLFinder` observes cancellation; the other rules are fast). Same
+  single-slot shape as `TIFFConversionSlot`, for the same reason: serialising without a slot would
+  let rapid undo/redo stack 1 MB scans.
 - When a scan finishes, its result is delivered only if no waiting request has displaced it;
   otherwise it is discarded and the waiting request starts. `cancelAll()` clears the waiting
-  request and cancels the running scan's task, but does **not** release the slot (Amendment 4):
-  the cancelled scan keeps it until it actually finishes in the background, undelivered. A
-  `request` arriving while that cancelled scan is still winding down becomes `waiting`, the same
-  path an ordinary displacement takes, and starts only once the slot frees. The slot is what
-  bounds concurrency here — almost nothing observes cancellation (only `URLFinder`, and it's
-  skipped above 256 KB), so a "cancelled" scan usually just runs to completion anyway.
+  request and cancels the running scan's `work` task, but does **not** release the slot
+  (Amendment 4): the cancelled scan keeps it until it actually finishes in the background,
+  undelivered. A `request` arriving while that cancelled scan is still winding down becomes
+  `waiting`, the same path an ordinary displacement takes, and starts only once the slot frees.
+  The slot is what bounds concurrency here — almost nothing observes cancellation (only
+  `URLFinder`, and it's skipped above 256 KB), so a "cancelled" scan usually just runs to
+  completion anyway.
+- The slot is also bounded by `scanDeadline` (Amendment 12), independent of cancellation: a
+  wrapper task waits for `work` through `Deadline.run(seconds: scanDeadline) { await work.value }`,
+  and if `scanDeadline` elapses before `work` returns, the wait is abandoned — the slot freed,
+  the result (whenever it eventually arrives) discarded — and the abandonment is logged once. This
+  is what stops a `compute` that never returns at all from disabling detection for the process
+  lifetime; `work` itself keeps running in the background exactly as an ordinary cancelled-but-
+  unstoppable scan would.
 - `deliver` runs on the main actor with the originating request, so the receiver can compare
   generation and revision.
 
@@ -215,7 +265,7 @@ public protocol Transformer {
 |---|---|---|
 | default (all natives not listed) | 1 MB | 3 s |
 | `MarkdownToRich` | 64 KB (exposed as `MarkdownToRich.maxInputBytes`, static — `AppModel.save()` re-checks it) | 3 s |
-| `RichToPlain`, `RichToMarkdown` | 4 MB of `richRTFD` bytes, not text (Amendment 6) | 3 s |
+| `RichToPlain`, `RichToMarkdown` | 4 MB of `richRTFD` bytes, not text (Amendment 6); measured, not estimated (Amendment 14) | 3 s |
 | `URLCleaner`, `MarkdownLink` | `URLFinder.maxBytes` (256 KB) | URLCleaner 3 s; MarkdownLink `fetchTimeout + 2` (6 s by default, the one batch of fetches plus margin) |
 | `RedactSecrets` | `SecretDetector.maxBytes` | 3 s |
 | `RegexPresetTransformer` | `Self.maxBytes` (256 KB) | its existing `timeout` (3 s) |
@@ -282,28 +332,43 @@ them.
 Core:
 - `URLFinderTests`: over-cap input returns `[]`; at-cap input still finds URLs; a cancelled task
   stops enumeration early (observable via a large URL-dense input and elapsed time).
-- `DeadlineTests`: fast body returns its value; stubborn body (busy loop ignoring cancellation
-  for 2 s) with a 0.2 s deadline throws `.timeout` within 0.6 s; cooperative body stops when
-  the deadline fires (flag observed); cancelling the caller throws `CancellationError` and
-  cancels the body; a body that throws propagates its error.
+- `DeadlineTests`: fast body returns its value; a body that throws propagates its error;
+  cooperative body stops when the deadline fires (flag observed); cancelling the caller throws
+  `CancellationError` and cancels the body. `stubbornBodyDoesNotBlockTheCaller` and
+  `alreadyCancelledCallerThrowsWithoutRunningLong` (PR #53 round 2) assert a lock-guarded flag
+  the body sets — last statement for "abandoned while still running", first statement for "never
+  began" — instead of a wall-clock margin: "the caller got its answer while the body was still
+  running" and "the body never began" are exact regardless of machine load, where a `< 0.6 s`
+  bound flakes under parallel test load for reasons unrelated to correctness.
 - `TransformerCapsTests`: table asserting `maxInputBytes`/`timeout` for every built-in
   transformer via the registry, plus defaults for a stub conformer.
 - `RegexPresetTests`: existing deadline tests still pass under `Deadline.run`.
 
 AppCore:
 - `PasteDocumentTests`: init is pending with revision 0; push/undo/redo bump the revision and
-  reset to pending; `applyDetection` with a stale revision returns false and leaves state
-  pending; computed accessors are empty while pending; `DetectionResult.compute` equals the
+  reset to pending; `refresh` carries the previous revision forward rather than resetting to 0
+  (Amendment 8); `applyDetection` with a stale revision returns false and leaves state pending;
+  computed accessors are empty while pending; `DetectionResult.compute` equals the
   pre-Plan-14 behaviour for URL, JSON and secret fixtures.
 - `DetectionSchedulerTests` (injected slow `compute`): one scan at a time; a request during a
   run replaces the waiting one; the displaced run's result is not delivered; `cancelAll`
   delivers nothing; delivery carries the originating request.
+  `stuckScanReleasesTheSlotAtTheDeadline` (PR #53 round 2, Amendment 12): a `compute` that never
+  returns for one text and behaves normally otherwise, with `deadline: 0.2`; a request displacing
+  it is delivered well before the stuck body's own sleep would finish, and the abandoned body is
+  left running in the background (a legitimate `maxConcurrent == 2` moment, by design).
 - `TransformCoordinatorTests`: over-cap returns `.failed` with the formatted limit and never
-  calls `apply`; a transformer whose `apply` sleeps past its `timeout` returns
-  "The transform timed out."; a cancelled outer task returns `.failed("The transform was cancelled.")`;
-  the returned document is pending with a bumped revision.
+  calls `apply` (two message shapes per Amendment 6: "…of text." or "…of rich text.", depending
+  on `requiresRichInput`); a transformer whose `apply` sleeps past its `timeout` returns
+  "The transform timed out." (`slowTransformTimesOutAtItsOwnBudget`, PR #53 round 2: asserted via
+  the same flag pattern as `DeadlineTests`, not a wall-clock margin); a cancelled outer task
+  returns `.failed("The transform was cancelled.")`; the returned document is pending with a
+  bumped revision.
 
 App (GUI pass, with permission at the time, clipboard saved and restored):
+- `CommandPaletteView` (PR #53 round 2, Amendment 13): the palette's ranking is a `kindsSnapshot`
+  frozen in `.onAppear`, verified by inspection/build rather than a GUI pass — there is no
+  unit-testable surface for a SwiftUI view's `@State` lifecycle here.
 - Summon with a 1 MB URL-dense buffer: panel visible immediately; "Detected: URL" absent
   (over the URL cap) but JSON/Markdown kinds appear for a 900 KB JSON buffer within a second.
 - Markdown → Rich Text on a 2 MB buffer: red banner "Markdown → Rich Text is limited to 64 KB of text."
