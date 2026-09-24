@@ -4,48 +4,51 @@ import Foundation
 
 @Suite("Zipline v4 header mapping")
 struct ZiplineHeadersTests {
+    /// `try` rather than `try!`: `ZiplineUpload.init` refuses an extension it cannot frame
+    /// (`ZiplineFileExtension`), and every `ext:` used below is a canonical one, so a throw here
+    /// would be a real failure rather than a fixture inconvenience.
     private func upload(expiry: ZiplineExpiry = .never,
                         burn: Bool = false,
-                        ext: String = "txt") -> ZiplineUpload {
-        ZiplineUpload(text: "hello", fileExtension: ext, expiry: expiry, burnOnRead: burn)
+                        ext: String = "txt") throws -> ZiplineUpload {
+        try ZiplineUpload(text: "hello", fileExtension: ext, expiry: expiry, burnOnRead: burn)
     }
 
     @Test("never emits the literal, not an absent header")
-    func neverIsExplicit() {
+    func neverIsExplicit() throws {
         // A server with its own default expiration would apply it if the header
         // were simply omitted. "Never" has to say so.
-        #expect(ZiplineV4Headers.headers(for: upload(expiry: .never))["x-zipline-deletes-at"] == "never")
+        #expect(ZiplineV4Headers.headers(for: try upload(expiry: .never))["x-zipline-deletes-at"] == "never")
     }
 
     @Test("relative expiry passes through verbatim")
-    func relativeExpiry() {
-        #expect(ZiplineV4Headers.headers(for: upload(expiry: .relative("7d")))["x-zipline-deletes-at"] == "7d")
+    func relativeExpiry() throws {
+        #expect(ZiplineV4Headers.headers(for: try upload(expiry: .relative("7d")))["x-zipline-deletes-at"] == "7d")
     }
 
     @Test("absolute expiry is date= plus ISO8601")
-    func absoluteExpiry() {
+    func absoluteExpiry() throws {
         let when = Date(timeIntervalSince1970: 1_800_000_000)
-        let value = ZiplineV4Headers.headers(for: upload(expiry: .absolute(when)))["x-zipline-deletes-at"]
+        let value = ZiplineV4Headers.headers(for: try upload(expiry: .absolute(when)))["x-zipline-deletes-at"]
         #expect(value == "date=2027-01-15T08:00:00Z")
     }
 
     @Test("burn-on-read is max-views 1, and is absent when off")
-    func burnOnRead() {
-        #expect(ZiplineV4Headers.headers(for: upload(burn: true))["x-zipline-max-views"] == "1")
-        #expect(ZiplineV4Headers.headers(for: upload(burn: false))["x-zipline-max-views"] == nil)
+    func burnOnRead() throws {
+        #expect(ZiplineV4Headers.headers(for: try upload(burn: true))["x-zipline-max-views"] == "1")
+        #expect(ZiplineV4Headers.headers(for: try upload(burn: false))["x-zipline-max-views"] == nil)
     }
 
     @Test("extension is sent without a leading dot")
-    func fileExtension() {
-        #expect(ZiplineV4Headers.headers(for: upload(ext: "swift"))["x-zipline-file-extension"] == "swift")
-        #expect(ZiplineV4Headers.headers(for: upload(ext: ".swift"))["x-zipline-file-extension"] == "swift")
+    func fileExtension() throws {
+        #expect(ZiplineV4Headers.headers(for: try upload(ext: "swift"))["x-zipline-file-extension"] == "swift")
+        #expect(ZiplineV4Headers.headers(for: try upload(ext: ".swift"))["x-zipline-file-extension"] == "swift")
     }
 
     @Test("the filename header is never sent")
-    func noFilenameHeader() {
+    func noFilenameHeader() throws {
         // v4 runs decodeURIComponent on x-zipline-filename. We avoid the whole
         // encoding question by letting the server name the file.
-        #expect(ZiplineV4Headers.headers(for: upload())["x-zipline-filename"] == nil)
+        #expect(ZiplineV4Headers.headers(for: try upload())["x-zipline-filename"] == nil)
     }
 }
 
@@ -77,7 +80,11 @@ struct UploadExtensionTests {
     @Test("prose that trips the Markdown detector uploads as txt")
     func fortunesFile() {
         // The shape of the file that caused this: dialogue dashes and quoted lines, no headings
-        // and no fences. `MarkdownDetector`'s two weak signals both fire on it.
+        // and no fences. Note this synthetic version is *dense* — every line is a list item or a
+        // quote — so it still clears #50's 10% weak-signal floor and `.markdown` is still
+        // detected here. The real 427 KB file was ~4% and ~1% and no longer is, which is why this
+        // test keeps its own dense input: what it exists to pin down is that a `.markdown` kind,
+        // however it arises, does not name the upload `.md`.
         let fortunes = String(repeating: "- a quip from someone\n> and the reply\n", count: 50)
         #expect(ContentDetector.detect(fortunes).contains(.markdown))
         #expect(ext(fortunes) == "txt")

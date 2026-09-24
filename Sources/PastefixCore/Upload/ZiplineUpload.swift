@@ -3,16 +3,37 @@ import Foundation
 /// One text upload, as the caller describes it. Deliberately free of any
 /// Zipline header spelling: `ZiplineV4Headers` owns that, so a future v5 is a
 /// sibling mapper rather than a rewrite of everything that builds a request.
+///
+/// **This type is the choke point for the file extension**, because the extension is the
+/// only free-text field on this path whose value reaches protocol framing: it is
+/// interpolated into the multipart part's `Content-Disposition` filename *and* sent as the
+/// `x-zipline-file-extension` header value. `init` therefore refuses anything
+/// `ZiplineFileExtension.canonical(_:)` will not accept, and `fileExtension` is a `let`, so
+/// no code path can hold a `ZiplineUpload` whose extension is unsendable — the two framing
+/// sites (`ZiplineV4Headers.headers(for:)` and `URLSessionZiplineClient.multipartBody`)
+/// consequently do not re-check or re-normalise it, and must not start.
+///
+/// The check lives here rather than in the client because the client owns only one of those
+/// two sites: `ZiplineV4Headers` is public API with its own tests, and validating inside
+/// `upload(_:to:token:)` would leave it free to emit a header value with a CR LF in it.
 public struct ZiplineUpload: Sendable, Equatable {
     public var text: String
-    /// Without a leading dot; the mapper strips one if it is there anyway.
-    public var fileExtension: String
+    /// Canonical by construction: lowercase, no leading dot, `[a-z0-9._+-]{1,16}`. A `let`,
+    /// and validated only in `init`, which is what makes that a property of the type rather
+    /// than a habit of its callers.
+    public let fileExtension: String
     public var expiry: ZiplineExpiry
     public var burnOnRead: Bool
 
-    public init(text: String, fileExtension: String, expiry: ZiplineExpiry, burnOnRead: Bool) {
+    /// Throws `ZiplineUploadError.invalidFileExtension` for an extension that cannot be
+    /// framed. Nothing is sent and nothing is substituted: a value the user typed is either
+    /// what goes on the wire or it is reported back to them (see `ZiplineFileExtension`).
+    public init(text: String, fileExtension: String, expiry: ZiplineExpiry, burnOnRead: Bool) throws {
+        guard let ext = ZiplineFileExtension.canonical(fileExtension) else {
+            throw ZiplineUploadError.invalidFileExtension
+        }
         self.text = text
-        self.fileExtension = fileExtension
+        self.fileExtension = ext
         self.expiry = expiry
         self.burnOnRead = burnOnRead
     }
@@ -84,6 +105,67 @@ public struct ZiplineUpload: Sendable, Equatable {
     }
 }
 
+/// What a Zipline file extension is allowed to be, and the one function that decides it.
+///
+/// The extension is not cosmetic: `URLSessionZiplineClient` interpolates it into
+/// `Content-Disposition: form-data; name="file"; filename="paste.<ext>"` and
+/// `ZiplineV4Headers` sends it as an HTTP header value. Both are *framing*, not payload —
+/// a `"` ends the quoted filename early, a CR LF in either position injects a new header
+/// into the multipart block or the request's own header block, and `/`, `;` or a space
+/// corrupt the part in quieter ways. It was the only free-text field on this path with no
+/// constraint at all beyond a whitespace trim and a leading-dot strip.
+///
+/// **Refused, never sanitised.** A silent substitution here would upload a file named
+/// something other than what the field said, on the one surface in this app whose whole job
+/// is letting someone check what is about to leave their machine — the same argument that
+/// makes an unscanned buffer "refused" rather than "clean" (Critical Invariant 13). The
+/// overlay and the Upload settings tab both show `requirement` inline for a rejected value,
+/// and the overlay's Upload button stays disabled while one is in the field.
+///
+/// Canonicalising *is* allowed, and is deliberately limited to three things that cannot
+/// change which file the server produces: a whitespace trim, leading dots (`.swift` and
+/// `swift` name the same type — Zipline wants it without the dot), and lowercasing (a Zipline
+/// extension is matched case-insensitively for highlighting, and `TXT` vs `txt` is not a
+/// distinction worth refusing over).
+public enum ZiplineFileExtension {
+    /// Long enough for the real compound cases (`tar.gz`, `sqlite3`, `dockerfile`); short
+    /// enough that a paste into the field is a refusal rather than a 400-character filename.
+    public static let maxLength = 16
+
+    /// Shown inline by both call sites. States the rule rather than echoing the rejected
+    /// value back: the rejected value is exactly the thing that might carry a CR LF.
+    public static let requirement =
+        "Use letters, digits, dot, dash, plus or underscore — at most \(maxLength) characters."
+
+    /// The canonical form, or nil when `raw` is not a usable extension.
+    ///
+    /// Empty is nil, not `txt`: "no preference" is a question for the UI layer that owns the
+    /// field (it seeds `txt` into a blank one), and answering it here would turn every
+    /// rejected value into a silent `paste.txt`.
+    public static func canonical(_ raw: String) -> String? {
+        var ext = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        while ext.hasPrefix(".") { ext.removeFirst() }
+        // Lowercased before the character check, not after, so the check is the thing that
+        // decides — a case-folding that produced a disallowed scalar could not slip past it.
+        ext = ext.lowercased()
+        guard !ext.isEmpty, ext.count <= maxLength, ext.allSatisfy(isAllowed) else { return nil }
+        return ext
+    }
+
+    /// ASCII only, by asking for the ASCII value first: `allSatisfy` over a Swift `Character`
+    /// would otherwise let a grapheme cluster whose first scalar is `a` through, and a
+    /// non-ASCII byte in a header value is its own problem.
+    private static func isAllowed(_ character: Character) -> Bool {
+        guard let ascii = character.asciiValue else { return false }
+        switch ascii {
+        case UInt8(ascii: "a")...UInt8(ascii: "z"), UInt8(ascii: "0")...UInt8(ascii: "9"):
+            return true
+        default:
+            return character == "." || character == "_" || character == "+" || character == "-"
+        }
+    }
+}
+
 public enum ZiplineExpiry: Sendable, Equatable {
     case never
     /// A human string v4's `humanTime` accepts: "1h", "1d", "7d".
@@ -111,6 +193,11 @@ public enum UploadPayload {
 }
 
 public enum ZiplineUploadError: Error, Equatable {
+    /// Refused by `ZiplineUpload.init` before anything was sent: the "File type" field held
+    /// something that cannot go into a `Content-Disposition` filename or an HTTP header value.
+    /// Carries no payload on purpose — the rejected string is untrusted framing bytes, and
+    /// `ZiplineFileExtension.requirement` is what a user needs to read instead.
+    case invalidFileExtension
     case unauthorized
     /// Zipline's ApiError 1001 — the user picked an option the server refuses
     /// (most often an expiry beyond its `maxExpiration`), so it is fixable in

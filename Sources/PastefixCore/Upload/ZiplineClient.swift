@@ -43,9 +43,7 @@ public struct URLSessionZiplineClient: ZiplineUploading {
         for (name, value) in ZiplineV4Headers.headers(for: request) {
             req.setValue(value, forHTTPHeaderField: name)
         }
-        req.httpBody = Self.multipartBody(text: request.text,
-                                          fileExtension: request.fileExtension,
-                                          boundary: boundary)
+        req.httpBody = Self.multipartBody(for: request, boundary: boundary)
 
         let config = URLSessionConfiguration.ephemeral
         config.timeoutIntervalForRequest = timeout
@@ -95,13 +93,19 @@ public struct URLSessionZiplineClient: ZiplineUploading {
 
     /// `multipart/form-data` requires a filename on the part; it is a form
     /// field, not `x-zipline-filename`, which is deliberately never sent.
-    static func multipartBody(text: String, fileExtension: String, boundary: String) -> Data {
-        let ext = fileExtension.hasPrefix(".") ? String(fileExtension.dropFirst()) : fileExtension
+    ///
+    /// Takes the whole `ZiplineUpload` rather than a `text`/`fileExtension` pair so that the
+    /// only way to get a filename into this `Content-Disposition` line is through a value
+    /// whose extension `ZiplineUpload.init` has already accepted — including from a test.
+    /// Nothing is stripped or escaped here on purpose: this is the *use* site, and
+    /// `ZiplineFileExtension` is the single choke point (a `"` would end the quoted filename,
+    /// a CR LF would inject a header into this block).
+    static func multipartBody(for upload: ZiplineUpload, boundary: String) -> Data {
         var body = Data()
         body.append("--\(boundary)\r\n".data(using: .utf8)!)
-        body.append("Content-Disposition: form-data; name=\"file\"; filename=\"paste.\(ext)\"\r\n".data(using: .utf8)!)
+        body.append("Content-Disposition: form-data; name=\"file\"; filename=\"paste.\(upload.fileExtension)\"\r\n".data(using: .utf8)!)
         body.append("Content-Type: text/plain; charset=utf-8\r\n\r\n".data(using: .utf8)!)
-        body.append(Data(text.utf8))
+        body.append(Data(upload.text.utf8))
         body.append("\r\n--\(boundary)--\r\n".data(using: .utf8)!)
         return body
     }

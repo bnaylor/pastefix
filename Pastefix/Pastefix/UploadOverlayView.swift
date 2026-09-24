@@ -559,7 +559,13 @@ struct UploadOverlayView: View {
                     .focused($focus, equals: .fileExtension)
                     .accessibilityLabel("File extension")
             }
-            if let message = inlineMessage(forHeaderContaining: "file-extension") {
+            // Our own refusal first, and it wins the slot: while it is showing, Upload is
+            // disabled, so there cannot be a *newer* server refusal to read — and a stale one
+            // from a previous attempt must not be what the user sees next to the value that is
+            // blocking them now.
+            if let message = extensionRejection {
+                inlineError(message)
+            } else if let message = inlineMessage(forHeaderContaining: "file-extension") {
                 inlineError(message)
             }
         }
@@ -768,6 +774,9 @@ struct UploadOverlayView: View {
         // not. Swapping it for the document's scan would reintroduce the false all-clear this
         // feature exists to prevent — it would not be a simplification.
         guard scanState != .scanning, !source.isEmpty else { return false }
+        // A "File type" this client refuses to frame disables Upload rather than being quietly
+        // replaced with `txt` — see `canonicalExtension`.
+        guard canonicalExtension != nil else { return false }
         switch phase {
         case .composing, .failed: return true
         case .configure, .uploading, .done: return false
@@ -812,6 +821,11 @@ struct UploadOverlayView: View {
 
     private static func message(for error: ZiplineUploadError) -> String {
         switch error {
+        case .invalidFileExtension:
+            // Normally unreachable: Upload is disabled and the same sentence is already showing
+            // against the field (`extensionRejection`). Worded to point at the control anyway,
+            // because the banner is where this would surface if the two ever disagreed.
+            return "Can't use that file type. \(ZiplineFileExtension.requirement)"
         case .unauthorized:
             // Named precisely. "Upload failed" would send the user to look at their server, when
             // the thing to change is the token in Settings.
@@ -1015,10 +1029,24 @@ struct UploadOverlayView: View {
         // The single place that decides which bytes leave: it returns a new string and cannot
         // reach the user's document or clipboard.
         let payload = UploadPayload.text(source, matches: matches, disposition: disposition)
-        let request = ZiplineUpload(text: payload,
-                                    fileExtension: normalizedExtension,
-                                    expiry: SettingsStore.expiry(fromRaw: expiryTag),
-                                    burnOnRead: burnOnRead)
+        // `canonicalExtension` is what goes in, not the raw field: it is the one place that turns
+        // a blank field into `txt`, and `ZiplineUpload.init` deliberately does not (an empty
+        // extension is refused there, so that no *other* rejected value can become `paste.txt`
+        // by way of a default). `isReadyToUpload` has already checked the same rule, so neither
+        // the `guard` nor the `catch` below is reachable from the UI — they are the belt to that
+        // braces, so that if the two ever disagree the result is a visible refusal rather than a
+        // request built from a value the type was supposed to reject.
+        let request: ZiplineUpload
+        do {
+            guard let ext = canonicalExtension else { throw ZiplineUploadError.invalidFileExtension }
+            request = try ZiplineUpload(text: payload,
+                                        fileExtension: ext,
+                                        expiry: SettingsStore.expiry(fromRaw: expiryTag),
+                                        burnOnRead: burnOnRead)
+        } catch {
+            phase = .failed(.invalidFileExtension)
+            return
+        }
         phase = .uploading
         uploadTask = Task { @MainActor in
             do {
@@ -1069,12 +1097,24 @@ struct UploadOverlayView: View {
         fileExtension = seed
     }
 
-    /// The extension as the request should carry it: no leading dot, no surrounding space, and
-    /// never empty — `paste.` is not a filename the server can highlight, and "txt" is what an
-    /// unrecognised buffer would have been given anyway.
-    private var normalizedExtension: String {
-        var ext = fileExtension.trimmingCharacters(in: .whitespacesAndNewlines)
-        while ext.hasPrefix(".") { ext.removeFirst() }
-        return ext.isEmpty ? "txt" : ext
+    /// The extension as the request will carry it, or nil when the field holds something that
+    /// cannot be framed (`ZiplineFileExtension` says which, and why it is refused rather than
+    /// sanitised). Upload is disabled while this is nil and `extensionRejection` is shown against
+    /// the field, so a bad value is never silently turned into `paste.txt`.
+    ///
+    /// A *blank* field is not a rejection: it means "no preference", and `txt` is what an
+    /// unrecognised buffer would have been given anyway (`paste.` is not a filename the server
+    /// can highlight). A field holding only dots is a typed value and is refused — the user gets
+    /// told rather than getting a file named after something they did not type.
+    private var canonicalExtension: String? {
+        let typed = fileExtension.trimmingCharacters(in: .whitespacesAndNewlines)
+        return ZiplineFileExtension.canonical(typed.isEmpty ? "txt" : typed)
+    }
+
+    /// The inline message for a "File type" value this client will not send, or nil when the
+    /// field is fine. Local and immediate — it needs no round trip, unlike the server's own
+    /// `bad options[file-extension]` refusal, which lands in the same slot.
+    private var extensionRejection: String? {
+        canonicalExtension == nil ? ZiplineFileExtension.requirement : nil
     }
 }

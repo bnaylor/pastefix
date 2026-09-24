@@ -1,6 +1,7 @@
 import SwiftUI
 import Security
 import PastefixAppCore
+import PastefixCore
 
 /// The Upload tab: the Zipline server address, the API token, and the defaults ⌘⇧U opens with.
 ///
@@ -139,12 +140,22 @@ struct UploadSettingsView: View {
                     .frame(maxWidth: 280)
                 }
                 Toggle("Burn after reading", isOn: $settings.ziplineDefaultBurnOnRead)
-                HStack {
-                    Text("File extension")
-                    Spacer()
-                    TextField("txt", text: $settings.ziplineDefaultExtension)
-                        .textFieldStyle(.roundedBorder)
-                        .frame(width: 100)
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        Text("File extension")
+                        Spacer()
+                        TextField("txt", text: $settings.ziplineDefaultExtension)
+                            .textFieldStyle(.roundedBorder)
+                            .frame(width: 100)
+                    }
+                    // Said here as well as in the overlay, because this is where the value is
+                    // *stored*: a rejected default would otherwise sit in Settings looking
+                    // accepted and only refuse at ⌘⇧U, one surface away from the field that
+                    // caused it. Neither place substitutes a working value silently — see
+                    // `ZiplineFileExtension`.
+                    if let message = extensionValidationMessage {
+                        Text(message).font(.caption).foregroundStyle(.orange)
+                    }
                 }
                 Text("What ⌘⇧U opens with. Any of these can still be changed in the overlay itself before uploading.")
                     .font(.caption).foregroundStyle(.secondary)
@@ -166,6 +177,16 @@ struct UploadSettingsView: View {
             commitServerURL()
             commitToken()
         }
+    }
+
+    /// Empty is not invalid — it is "no preference", which is what the `txt` placeholder says and
+    /// what `ZiplineUpload.extensionSeed` reads it as. Anything else has to be a value the upload
+    /// path will actually send (`ZiplineFileExtension`), because this setting is seeded straight
+    /// into the overlay's field.
+    private var extensionValidationMessage: String? {
+        let trimmed = settings.ziplineDefaultExtension.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, ZiplineFileExtension.canonical(trimmed) == nil else { return nil }
+        return ZiplineFileExtension.requirement
     }
 
     private var serverURLValidationMessage: String? {

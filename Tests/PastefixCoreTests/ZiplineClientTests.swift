@@ -73,8 +73,12 @@ private final class StubProtocol: URLProtocol, @unchecked Sendable {
 @Suite("Zipline client", .serialized)
 struct ZiplineClientTests {
     private let server = URL(string: "https://zip.example.test")!
-    private let upload = ZiplineUpload(text: "hello world", fileExtension: "txt",
-                                       expiry: .relative("1d"), burnOnRead: true)
+    /// `try!` at a stored property, deliberately: "txt" is canonical, so `ZiplineUpload.init`
+    /// cannot refuse it (`ZiplineFileExtension`), and a fixture that went optional to please a
+    /// throwing initialiser would add an unwrap to every test below for no gain. The refusal
+    /// path has its own suite — `ZiplineFileExtensionTests`.
+    private let upload = try! ZiplineUpload(text: "hello world", fileExtension: "txt",
+                                            expiry: .relative("1d"), burnOnRead: true)
 
     private func client() -> URLSessionZiplineClient {
         StubProtocol.reset()
@@ -127,6 +131,21 @@ struct ZiplineClientTests {
         #expect(body.contains(#"filename="paste.txt""#))
         #expect(body.contains("hello world"))
         #expect(body.hasSuffix("--\(boundary)--\r\n"))
+    }
+
+    @Test("a file extension that would break the framing never reaches the wire")
+    func unframeableExtensionMakesNoRequest() throws {
+        StubProtocol.reset()
+        // `upload(_:to:token:)` cannot be called without a `ZiplineUpload`, and `ZiplineUpload`
+        // cannot exist holding this — so the refusal at construction *is* the refusal of the
+        // request. Asserted rather than assumed: nothing was sent, with a quote and a CR LF in the
+        // one value (`ZiplineFileExtensionTests` covers the rule itself).
+        #expect(throws: ZiplineUploadError.invalidFileExtension) {
+            try ZiplineUpload(text: "hello world",
+                              fileExtension: "txt\"\r\nx-zipline-max-views: 99",
+                              expiry: .never, burnOnRead: false)
+        }
+        #expect(StubProtocol.requests.isEmpty)
     }
 
     @Test("401 is unauthorized, not a generic server error")

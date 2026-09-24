@@ -32,10 +32,13 @@ public enum ZiplineV4Headers {
             headers["x-zipline-deletes-at"] = "date=" + makeISO8601Formatter().string(from: date)
         }
         if upload.burnOnRead { headers["x-zipline-max-views"] = "1" }
-        let ext = upload.fileExtension.hasPrefix(".")
-            ? String(upload.fileExtension.dropFirst())
-            : upload.fileExtension
-        if !ext.isEmpty { headers["x-zipline-file-extension"] = ext }
+        // Sent verbatim, and deliberately neither re-normalised nor re-checked here: a
+        // `ZiplineUpload` cannot exist holding an extension that is not already canonical
+        // (`ZiplineFileExtension`), which is the one place that decides it. A header *value*
+        // is framing — a CR LF in one splits the request's header block — so this must stay a
+        // single choke point rather than two guards that can drift apart. Non-empty by the
+        // same construction, so there is no "omit it" case left to write.
+        headers["x-zipline-file-extension"] = upload.fileExtension
         return headers
     }
 }
