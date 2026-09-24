@@ -50,6 +50,15 @@ struct UploadOverlayView: View {
     @State private var expiryTag: String
     @State private var burnOnRead: Bool
     @State private var fileExtension: String
+    /// Whether the user has typed in the "File type" field by hand.
+    ///
+    /// The one thing a late detection result must not do is overwrite a choice someone made, so
+    /// this is the flag that stops it. It is written *only* by `extensionField`'s setter, which is
+    /// the only path a keystroke can reach `fileExtension` by — the seed assigns the `@State`
+    /// directly and deliberately leaves this alone. Anything that watched
+    /// `onChange(of: fileExtension)` instead could not tell the two apart and would latch on the
+    /// seed's own write.
+    @State private var extensionEdited = false
     /// `onAppear` can fire more than once for one view instance, and a second `startScan` would
     /// orphan the first task — which then lands its own result on top of the newer one.
     @State private var scanStarted = false
@@ -200,10 +209,17 @@ struct UploadOverlayView: View {
         // deliberately does *not* redetect, so typing into the panel does not update them. Summon
         // plain text, type JSON, press ⌘⇧U and this seeds `txt`, not `json`. Fine here: it is the
         // seed for an editable control, consulted only when the user has no preference.
-        let configured = settings.ziplineDefaultExtension.trimmingCharacters(in: .whitespacesAndNewlines)
-        _fileExtension = State(initialValue: configured.isEmpty || configured == "txt"
-                               ? ZiplineUpload.defaultExtension(for: model.document?.detectedKinds)
-                               : configured)
+        // `detectedKinds` is empty here in the common case and that is not a bug to work around
+        // here: detection runs off the main actor (`DetectionScheduler`) and ⌘⇧U re-snapshots the
+        // clipboard immediately before this view is built, so the scan for these very bytes is
+        // still `.pending`. This seeds what is knowable now — the user's setting, or `txt` — and
+        // `seedExtensionFromDetection` asks the same question again when the result lands. Before
+        // detection moved off the main actor this call alone was enough, and after the move it
+        // silently made every JSON upload a `.txt` one.
+        _fileExtension = State(initialValue: ZiplineUpload.extensionSeed(
+            setting: settings.ziplineDefaultExtension,
+            detectedKinds: model.document?.detectedKinds,
+            userHasEditedField: false) ?? "txt")
         // Round-tripped through `expiry(fromRaw:)` so a corrupted setting lands on the same
         // fallback the request builder would have used, instead of showing a picker with nothing
         // selected.
@@ -242,6 +258,18 @@ struct UploadOverlayView: View {
             guard !scanStarted, phase == .composing else { return }
             scanStarted = true
             startScan()
+        }
+        // Detection lands asynchronously, usually a moment after this overlay is already on
+        // screen, so the extension is seeded here as well as in `init`. `detectedKinds` is `[]`
+        // while `PasteDocument.detection` is `.pending` and carries the real answer once it is
+        // `.complete`, which makes this the completion signal: the only transition it can report
+        // is pending-or-empty → detected. A `.complete` result with no kinds leaves it `[]`, so
+        // this never fires for it — correct, because `txt` is already in the field.
+        //
+        // Deliberately not `model.isDetecting`: that Bool reads `false` both for "the scan landed"
+        // and for "there is no document", and the value this needs is the kinds themselves.
+        .onChange(of: model.document?.detectedKinds) { _, kinds in
+            seedExtensionFromDetection(kinds)
         }
         .onDisappear {
             // Cancelling the wrapper stops the *result* from landing. It does not stop the scan:
@@ -498,7 +526,7 @@ struct UploadOverlayView: View {
                 Spacer()
                 // Zipline v4 picks syntax highlighting from the extension, so this is the
                 // "language" control even though it is spelled as a filename suffix.
-                TextField("txt", text: $fileExtension)
+                TextField("txt", text: extensionField)
                     .textFieldStyle(.roundedBorder)
                     .frame(width: 100)
                     .focused($focus, equals: .fileExtension)
@@ -693,6 +721,16 @@ struct UploadOverlayView: View {
     /// user send a buffer whose findings arrive a moment later, which is the same false all-clear
     /// as not scanning at all, just harder to notice.
     private var isReadyToUpload: Bool {
+        // `scanState`, and never `model.document.secretMatches`. They are not the same verdict:
+        // the document's scan is `SecretDetector.scan`, which refuses anything over 256 KB and
+        // returns `[]`, so on the largest pastes — the ones most likely to be a dumped config or
+        // a log — an empty `secretMatches` means "nobody looked", not "nothing there". `scanState`
+        // comes from this overlay's own `scanIgnoringSizeCap` run (see `startScan`), which is the
+        // whole reason that entry point exists. `AppModel.isDetecting`'s doc comment tells a gate
+        // to wait for the document's scan before trusting an empty `secretMatches`; that is
+        // correct advice for a gate that reads `secretMatches`, and this one deliberately does
+        // not. Swapping it for the document's scan would reintroduce the false all-clear this
+        // feature exists to prevent — it would not be a simplification.
         guard scanState != .scanning, !source.isEmpty else { return false }
         switch phase {
         case .composing, .failed: return true
@@ -965,6 +1003,34 @@ struct UploadOverlayView: View {
                 phase = .failed(.transport(error.localizedDescription))
             }
         }
+    }
+
+    /// The "File type" field's binding, and the only place a *user* edit arrives.
+    ///
+    /// A plain `$fileExtension` would make a hand-typed value indistinguishable from a seeded one,
+    /// which is exactly the distinction `extensionEdited` has to carry. The equality guard is
+    /// there because a `TextField` may write its current value back on commit or on a focus change
+    /// without the text having changed; a write that changes nothing is not a choice.
+    private var extensionField: Binding<String> {
+        Binding(get: { fileExtension },
+                set: { newValue in
+                    guard newValue != fileExtension else { return }
+                    fileExtension = newValue
+                    extensionEdited = true
+                })
+    }
+
+    /// Fills the extension in from a detection result that landed after the overlay opened.
+    ///
+    /// Same rule as `init`, same function, and the precedence is `ZiplineUpload.extensionSeed`'s
+    /// to state: a hand-typed value wins over everything, then the user's setting, then this. Only
+    /// *when* the detector's answer is available changed when detection moved off the main actor.
+    private func seedExtensionFromDetection(_ kinds: Set<ContentKind>?) {
+        guard let seed = ZiplineUpload.extensionSeed(setting: model.settings.ziplineDefaultExtension,
+                                                     detectedKinds: kinds,
+                                                     userHasEditedField: extensionEdited),
+              seed != fileExtension else { return }
+        fileExtension = seed
     }
 
     /// The extension as the request should carry it: no leading dot, no surrounding space, and

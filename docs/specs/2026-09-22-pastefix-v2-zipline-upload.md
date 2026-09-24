@@ -225,6 +225,16 @@ JSON-backed shape as every other setting.
    `ZiplineUpload.defaultExtension(for:)` — `json` for JSON, `txt` for
    everything else — see the "Language control" decision above for why the
    precedence runs that direction and why Markdown is not in that list.
+
+   The precedence is asked through `ZiplineUpload.extensionSeed(setting:detectedKinds:userHasEditedField:)`,
+   and it is asked **twice**: once as the overlay is built, and again when
+   detection completes. Plan 14 moved detection off the main actor, so
+   `PasteDocument.detectedKinds` is empty at the instant the overlay is
+   constructed — ⌘⇧U re-snapshots the clipboard immediately before the overlay
+   appears, which restarts the scan — and asking only at `init` therefore made
+   every JSON upload a `.txt` one. Nothing about the precedence changed, only
+   when the detector's answer exists. A value the user has typed into the field
+   is never overwritten by a result that lands afterwards.
 4. The scan starts in a detached task in the same turn. Upload is disabled
    until it resolves. After ~150 ms an in-progress row appears.
 5. Verdict lands. Clean → a quiet confirmation row. Findings → the kinds named

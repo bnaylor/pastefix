@@ -94,3 +94,114 @@ struct ZiplineSettingsTests {
         }
     }
 }
+
+/// The upload overlay's "File type" field is seeded from `ZiplineUpload.extensionSeed`, and the
+/// interesting part is *when*: detection runs off the main actor (Plan 14), so
+/// `PasteDocument.detectedKinds` is empty at the instant the overlay is constructed and carries
+/// the answer only once `applyDetection` has landed. The overlay itself is app-target and has no
+/// test coverage by design, so the rule it calls is tested here against a real `PasteDocument`
+/// moving through both states.
+@MainActor
+@Suite("Upload extension seeding across a pending detection")
+struct UploadExtensionSeedTests {
+    /// Exactly what `AppModel.summon` builds and what `DetectionScheduler` later delivers.
+    private func pendingThenComplete(_ text: String) -> (pending: PasteDocument, complete: PasteDocument) {
+        let pending = PasteDocument(origin: ClipboardSnapshot(plainText: text, richRTFD: nil, changeCount: 7))
+        var complete = pending
+        complete.applyDetection(DetectionResult.compute(text), revision: complete.detectionRevision)
+        return (pending, complete)
+    }
+
+    /// The whole regression, in one test. Before the fix the overlay asked this question once, at
+    /// `init`, where the answer is necessarily `txt`.
+    @Test("a JSON buffer seeds json once detection lands, not at init")
+    func jsonSeedArrivesWithTheDetectionResult() {
+        let (pending, complete) = pendingThenComplete(#"{"a": 1, "b": [2, 3]}"#)
+        // The state the overlay is actually constructed in: pending, so no kinds yet.
+        #expect(pending.isDetecting && pending.detectedKinds.isEmpty)
+        #expect(ZiplineUpload.extensionSeed(setting: "txt",
+                                            detectedKinds: pending.detectedKinds,
+                                            userHasEditedField: false) == "txt")
+        // ...and the state a moment later, which is what the overlay now also observes.
+        #expect(complete.detectedKinds.contains(.json))
+        #expect(ZiplineUpload.extensionSeed(setting: "txt",
+                                            detectedKinds: complete.detectedKinds,
+                                            userHasEditedField: false) == "json")
+    }
+
+    @Test("a hand-typed extension is never overwritten by a late result")
+    func userEditWinsOverEverything() {
+        let (_, complete) = pendingThenComplete(#"{"a": 1}"#)
+        // nil means "leave the field alone", and it has to hold whatever the setting says too:
+        // the user is the last word, not the tiebreak.
+        for setting in ["txt", "yaml", "", "   "] {
+            #expect(ZiplineUpload.extensionSeed(setting: setting,
+                                                detectedKinds: complete.detectedKinds,
+                                                userHasEditedField: true) == nil)
+        }
+    }
+
+    /// The precedence that was arrived at after a reversal: a set setting beats the detector.
+    /// Only *when* the detector's answer is available changed with Plan 14.
+    @Test("a configured setting still beats the detector, before and after detection")
+    func settingBeatsDetector() {
+        let (pending, complete) = pendingThenComplete(#"{"a": 1}"#)
+        #expect(ZiplineUpload.extensionSeed(setting: "yaml",
+                                            detectedKinds: pending.detectedKinds,
+                                            userHasEditedField: false) == "yaml")
+        #expect(ZiplineUpload.extensionSeed(setting: "yaml",
+                                            detectedKinds: complete.detectedKinds,
+                                            userHasEditedField: false) == "yaml")
+    }
+
+    @Test("the setting the store ships with is the one that lets the detector fill in")
+    func defaultSettingIsTheDetectorsOpening() {
+        let suite = "net.scromp.Pastefix.tests.\(UUID().uuidString)"
+        let s = SettingsStore(defaults: UserDefaults(suiteName: suite)!)
+        // Not hardcoded "txt": if the shipped default ever changes, the detector silently stops
+        // filling anything in and this is the test that says so.
+        let (_, complete) = pendingThenComplete(#"{"a": 1}"#)
+        #expect(ZiplineUpload.extensionSeed(setting: s.ziplineDefaultExtension,
+                                            detectedKinds: complete.detectedKinds,
+                                            userHasEditedField: false) == "json")
+    }
+
+    @Test("an empty or whitespace setting counts as no preference")
+    func blankSettingIsNoPreference() {
+        let (_, complete) = pendingThenComplete(#"{"a": 1}"#)
+        #expect(ZiplineUpload.extensionSeed(setting: "",
+                                            detectedKinds: complete.detectedKinds,
+                                            userHasEditedField: false) == "json")
+        #expect(ZiplineUpload.extensionSeed(setting: "  \n ",
+                                            detectedKinds: complete.detectedKinds,
+                                            userHasEditedField: false) == "json")
+    }
+
+    /// The overlay re-asks on every detection result, so a seed that moved the field on a second
+    /// call would make the control twitch under the user.
+    @Test("re-asking after the answer has landed changes nothing")
+    func idempotent() {
+        let (_, complete) = pendingThenComplete(#"{"a": 1}"#)
+        for setting in ["txt", "yaml"] {
+            let first = ZiplineUpload.extensionSeed(setting: setting,
+                                                    detectedKinds: complete.detectedKinds,
+                                                    userHasEditedField: false)
+            let second = ZiplineUpload.extensionSeed(setting: setting,
+                                                     detectedKinds: complete.detectedKinds,
+                                                     userHasEditedField: false)
+            #expect(first == second)
+        }
+    }
+
+    /// A completed detection with nothing in it is a *result*, not a pending state — and the seed
+    /// for it is the same `txt` the field already holds, so the late observation is a no-op rather
+    /// than a change the user sees.
+    @Test("prose completes with no kinds and seeds txt")
+    func proseSeedsTxt() {
+        let (_, complete) = pendingThenComplete("just some prose, nothing special")
+        #expect(!complete.isDetecting && complete.detectedKinds.isEmpty)
+        #expect(ZiplineUpload.extensionSeed(setting: "txt",
+                                            detectedKinds: complete.detectedKinds,
+                                            userHasEditedField: false) == "txt")
+    }
+}

@@ -39,6 +39,42 @@ public struct ZiplineUpload: Sendable, Equatable {
         guard let kinds, kinds.contains(.json) else { return "txt" }
         return "json"
     }
+
+    /// What the upload overlay's "File type" field should hold, or nil for "leave it exactly as
+    /// it is".
+    ///
+    /// One function because the question is asked twice, and the two answers have to agree.
+    /// Detection is off the main actor (`DetectionScheduler`), so `PasteDocument.detectedKinds`
+    /// is `[]` at the instant the overlay is constructed — ⌘⇧U re-snapshots the clipboard
+    /// immediately before the overlay appears, which restarts detection — and the real kinds
+    /// arrive a moment later. Seeding only in `init` therefore defaulted *every* JSON upload to
+    /// `txt`. The overlay asks again when detection completes, with the same rule and the kinds
+    /// filled in.
+    ///
+    /// The precedence is deliberate and is the one thing not to invert:
+    ///
+    /// 1. **A hand-typed value always wins.** `userHasEditedField` is the only nil case, and it
+    ///    is what stops a detection result landing a second after someone typed `yml` from
+    ///    overwriting it. A control the user has touched is theirs.
+    /// 2. **Then the user's `ziplineDefaultExtension` setting**, whenever they have set one —
+    ///    i.e. anything but empty or the `txt` default. This lost to the detector once and was
+    ///    reversed: `MarkdownDetector` fires on a single `^#{1,6} \S` line, so YAML files,
+    ///    Dockerfiles and conf files were uploaded as `md` over an explicit choice. (`md` is no
+    ///    longer in `defaultExtension` either — see its comment — but the ordering is the part
+    ///    that has to hold regardless of what the detector can currently answer.)
+    /// 3. **Then the detector**, which fills in only when the user has expressed no preference
+    ///    at all.
+    ///
+    /// Idempotent by construction: when the setting wins, every later call returns that same
+    /// setting, so a completed detection re-asking the question cannot move the field.
+    public static func extensionSeed(setting: String,
+                                     detectedKinds: Set<ContentKind>?,
+                                     userHasEditedField: Bool) -> String? {
+        guard !userHasEditedField else { return nil }
+        let configured = setting.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !configured.isEmpty, configured != "txt" { return configured }
+        return defaultExtension(for: detectedKinds)
+    }
 }
 
 public enum ZiplineExpiry: Sendable, Equatable {
