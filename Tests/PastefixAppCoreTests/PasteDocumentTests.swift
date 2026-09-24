@@ -139,6 +139,16 @@ import PastefixCore
         #expect(!transformed.isStale(comparedToPasteboardChangeCount: 8))
     }
 
+    @Test func armedOutputModeCountsAsEdited() {
+        // `MarkdownToRich` leaves the text alone and changes how Save writes it, so `pushState`
+        // no-ops and the history stays length 1. A re-snapshot would silently disarm it.
+        var d = clipboardDoc("# hi", changeCount: 7)
+        d.outputMode = .renderedMarkdown
+        #expect(!d.isUnedited)
+        #expect(!d.isStale(comparedToPasteboardChangeCount: 8))
+        #expect(!d.matchesPasteboard(changeCount: 7))
+    }
+
     @Test func undoneTransformStillCountsAsEdited() {
         // Back at the origin text, but the redo is work the user did and a re-snapshot would
         // drop it — so `isUnedited` looks at the history, not just at `working`.

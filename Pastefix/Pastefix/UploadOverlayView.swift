@@ -36,6 +36,11 @@ struct UploadOverlayView: View {
     @State private var sourceIsClipboard: Bool
     @State private var phase: Phase
     @State private var scanState: ScanState = .scanning
+    /// `source` with its findings redacted, measured in bytes — nil until the scan lands, and nil
+    /// for ever when it found nothing. Measured in the scan's own detached task because that is
+    /// where the matches and the string are already in hand and no main-actor work is being held
+    /// up; see `payloadByteCount` for why the header needs it.
+    @State private var redactedByteCount: Int?
     /// Only true once the scan has been running long enough to be worth mentioning; see
     /// `startScan`.
     @State private var showScanProgress = false
@@ -70,9 +75,9 @@ struct UploadOverlayView: View {
     /// Kept clear below the card so it never sits flush against the panel's bottom edge — and,
     /// more to the point, so the height budget below stops short of it.
     private static let cardBottomMargin: CGFloat = 24
-    /// Header block (46 for the title row, plus 18 for the source line under it — a `.caption`
-    /// at ~14pt and the 2pt `VStack` spacing, rounded up so this errs towards over-reserving),
-    /// three dividers (3), footer (30).
+    /// Header block (46 for the title row, plus 18 for the source line under it — a `.caption` is
+    /// 10pt on macOS, so ~13pt of line box plus the 2pt `VStack` spacing, reserved at 18 so this
+    /// errs towards over-reserving like every other term here), three dividers (3), footer (30).
     private static let cardChromeHeight: CGFloat = 97
     /// The action row and its padding (12 above, 12 below, a ~22pt button between: ~46pt
     /// measured, budgeted at 60). Pinned below the scroll region, never inside it: an Upload or
@@ -101,9 +106,10 @@ struct UploadOverlayView: View {
     /// The floor on the scroll region, for a panel too short to hold even the option rows. At the
     /// panel's own 380pt minimum the budget leaves 159 with no banner and 103 with one, so the
     /// banner case *is* binding now (it was clear by 1pt before the header grew a source line):
-    /// the card there is ~17pt taller than the budget, which comes out of the 24pt bottom margin
-    /// rather than off the bottom of the window. It is a floor, so reaching it always means the
-    /// card grows past the budget; it exists so the arithmetic cannot produce a negative height.
+    /// the card there is ~17pt taller than the budget wanted, which is absorbed by the reserve in
+    /// the other terms — bottom edge at 373 of 380, and further off the panel edge than that when
+    /// measured. It is a floor, so reaching it always means the card grows past the budget; it
+    /// exists so the arithmetic cannot produce a negative height.
     private static let minScrollHeight: CGFloat = 120
 
     /// The overlay's whole state, in the order it can be entered.
@@ -278,8 +284,11 @@ struct UploadOverlayView: View {
         .padding(12)
     }
 
-    /// "the clipboard · 12 KB" / "the panel buffer · 12 KB". Reads `source`, which never changes
-    /// after `init`, so this cannot drift from the bytes the Upload button will send.
+    /// "the clipboard · 12 KB" / "the panel buffer · 12 KB". The source half reads `source`, which
+    /// never changes after `init`; the size half is `payloadByteCount`, which is the redacted
+    /// length when redaction is the choice. The line claims to describe what Upload will send, so
+    /// the number has to be the number that goes on the wire — a source size shown against a
+    /// redacted upload is a small lie in the one place whose entire job is being checkable.
     ///
     /// "the panel buffer" rather than "the editor" because it covers every non-clipboard case:
     /// text typed or transformed here, a history item re-opened, and a buffer deliberately kept
@@ -287,7 +296,21 @@ struct UploadOverlayView: View {
     private var sourceDescription: String {
         let origin = sourceIsClipboard ? "the clipboard" : "the panel buffer"
         guard !source.isEmpty else { return "\(origin) — empty" }
-        return "\(origin) · \(HistoryFormatting.byteLabel(source.utf8.count))"
+        return "\(origin) · \(HistoryFormatting.byteLabel(payloadByteCount))"
+    }
+
+    /// The size of the bytes `upload()` will actually send.
+    ///
+    /// Redaction changes the length in either direction ("[REDACTED aws-access-key]" is longer
+    /// than some keys and shorter than others), so this is the redacted length whenever redaction
+    /// is the live choice. It is never recomputed here: the scan task measured it once, off the
+    /// main actor, at the same time and on the same string as the matches — re-redacting per
+    /// render would put a 400 KB string rewrite behind every keystroke in the extension field.
+    private var payloadByteCount: Int {
+        if case .found = scanState, disposition == .redact, let redactedByteCount {
+            return redactedByteCount
+        }
+        return source.utf8.count
     }
 
     @ViewBuilder private func content(scrollHeight: CGFloat) -> some View {
@@ -703,8 +726,12 @@ struct UploadOverlayView: View {
     /// At `PanelMetrics.minContentHeight` (380) that is 159 with no banner and 103 with one —
     /// both 18 tighter than before the header grew a source line. The banner case now lands under
     /// `minScrollHeight` (120), so at the panel's own minimum height *with* a failure banner the
-    /// card grows ~17pt past this budget; that comes out of `cardBottomMargin`'s 24pt, so the
-    /// action row is still on screen. Anything that eats more of that margin is not safe. The
+    /// card is ~17pt taller than this budget wanted: 40 + 97 + 120 + 60 + 56 puts its bottom edge
+    /// at 373 of 380, eating 17 of `cardBottomMargin`'s 24. That 17 comes out of reserve, not out
+    /// of visible gap — every term here rounds up (60 for a ~46pt action row, the banner at its
+    /// three-line worst case whatever the message), so the measured clearance at that size is
+    /// ~25pt rather than the 7pt the arithmetic promises. Nothing is clipped either way; the
+    /// budgeted 7pt is the number to watch, because it is the one that cannot be optimistic. The
     /// budget is written to consume the panel *exactly*, so there is no spare cushion to absorb
     /// an un-budgeted block: the only real slack anywhere here is `actionBlockHeight`'s 60pt over
     /// a ~46pt action row, about 14pt. That is why the banner is a term in this expression rather
@@ -770,12 +797,21 @@ struct UploadOverlayView: View {
             //
             // There is no cancellation point inside it, so the indeterminate spinner above is the
             // whole progress story: nothing here can report a fraction or stop early.
-            let matches = await Task.detached(priority: .userInitiated) {
-                SecretDetector.scanIgnoringSizeCap(text)
+            let (matches, redactedBytes) = await Task.detached(priority: .userInitiated) {
+                let matches = SecretDetector.scanIgnoringSizeCap(text)
+                // Redacted here rather than in the header: the ranges index `text` and nothing
+                // else, this thread already holds both, and the result is one `Int` — so the
+                // header can state the true upload size without either re-scanning or keeping a
+                // second copy of a large buffer alive.
+                let redactedBytes = matches.isEmpty
+                    ? nil
+                    : SecretRedactor.redact(text, matches: matches).utf8.count
+                return (matches, redactedBytes)
             }.value
             guard !Task.isCancelled else { return }
             scanProgressTask?.cancel()
             showScanProgress = false
+            redactedByteCount = redactedBytes
             scanState = matches.isEmpty ? .clean : .found(matches)
         }
     }

@@ -3,6 +3,17 @@ import PastefixAppCore
 
 enum ClipboardBridge {
     static func snapshot(from pasteboard: NSPasteboard = .general) -> ClipboardSnapshot {
+        // Count **first**, contents second, and the order is the whole safety argument. A copy
+        // landing between the two reads is recorded as count C against contents from C+1: the
+        // snapshot then looks *older* than it is, so ⌘⇧U re-snapshots — a wasted read of the
+        // clipboard, and nothing else. Read the count last and the same race stores C+1 against
+        // the *old* contents, which is a stale buffer claiming to be the current clipboard: the
+        // false all-clear finding A exists to stop, and a header that lies about its source,
+        // produced by the one function both of those now rest on.
+        //
+        // Two adjacent main-actor statements, so nobody hits this by hand; ordered correctly
+        // because the cost of being wrong is not symmetric.
+        let changeCount = pasteboard.changeCount
         let plain = pasteboard.string(forType: .string)
         let richTypes: [NSPasteboard.PasteboardType] = [.rtf, .rtfd, .html]
         let rich: NSAttributedString?
@@ -12,11 +23,9 @@ enum ClipboardBridge {
         } else {
             rich = nil
         }
-        // Read last, and stored with the snapshot: it is what later tells a summon whether the
-        // buffer it is holding is older than the clipboard. Reading it after the contents means a
-        // copy that lands mid-snapshot shows up as a change rather than being recorded as the
-        // count we already satisfied.
-        return ClipboardSnapshot(plainText: plain, rich: rich, changeCount: pasteboard.changeCount)
+        // Stored with the snapshot: it is what later tells a summon whether the buffer it is
+        // holding is older than the clipboard.
+        return ClipboardSnapshot(plainText: plain, rich: rich, changeCount: changeCount)
     }
 
     static func writePlain(_ text: String, to pasteboard: NSPasteboard = .general) {
@@ -47,9 +56,10 @@ enum ClipboardBridge {
     /// make is not a copy that redirects the next upload.
     ///
     /// Only the latest write is kept, which is all the comparison needs: a chain of our own
-    /// writes (upload, then Copy Again) leaves the last one matching. Main-actor state by
-    /// convention — every writer here is a UI action — in the same shape as `SnippetPaster`'s
-    /// pending generation.
+    /// writes (upload, then Copy Again) leaves the last one matching. Main-actor state, enforced
+    /// rather than assumed: the app target builds with `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor`,
+    /// so this enum is main-actor isolated without saying so, the same as `SnippetPaster`'s
+    /// pending generation (which says so explicitly).
     private(set) static var lastSelfWriteChangeCount: Int?
 
     /// Whether the general pasteboard's current contents are something Pastefix itself put there.

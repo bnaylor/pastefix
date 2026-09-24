@@ -37,15 +37,20 @@ public struct PasteDocument: Sendable {
     public var canRedo: Bool { cursor < history.count - 1 }
 
     /// True when nothing has happened to this document since it was captured: no transform
-    /// pushed, nothing typed, nothing to redo.
+    /// pushed, nothing typed, nothing to redo, and no output mode armed.
     ///
-    /// Deliberately stricter than `working == origin.plainText`. A document sitting at cursor 0
-    /// with an applied-then-undone transform still holds that transform in `history` as a redo,
-    /// and that is work the user did — this returns false for it. The only caller is the
-    /// "may I replace this document?" question below, where a false negative costs a re-snapshot
-    /// that does not happen and a false positive costs the user their work.
+    /// Deliberately stricter than `working == origin.plainText`, and every extra clause is a way
+    /// a user action can leave the text alone:
+    /// - An applied-then-undone transform sits at cursor 0 with the same text, but still holds
+    ///   that transform in `history` as a redo.
+    /// - An armed output mode (`MarkdownToRich`) changes how Save writes the buffer and not the
+    ///   buffer itself, so `pushState` no-ops and `history.count` stays 1. Without this clause a
+    ///   re-snapshot would silently disarm it.
+    ///
+    /// Both callers below ask "may I replace this document?", where a false negative costs a
+    /// re-snapshot that does not happen and a false positive costs the user something they did.
     public var isUnedited: Bool {
-        history.count == 1 && cursor == 0 && history[0] == (origin.plainText ?? "")
+        history.count == 1 && cursor == 0 && history[0] == (origin.plainText ?? "") && outputMode == .plain
     }
 
     /// Whether this document should be thrown away and re-captured from a pasteboard now holding
