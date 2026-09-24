@@ -1,4 +1,5 @@
 import Testing
+import Security
 @testable import PastefixAppCore
 
 // Only the contract and the in-memory fake are exercised here. `KeychainTokenStore` writes to
@@ -32,6 +33,27 @@ struct ZiplineTokenStoreTests {
         try store.setToken("tok_abc")
         try store.clearToken()
         #expect(try store.token() == nil)
+    }
+
+    @Test("a keychain failure renders its own status, not a generic sentence")
+    func keychainDetailNamesTheStatus() {
+        // The distinction the upload overlay's third configure sentence rests on: "couldn't read
+        // the token" has to be able to say *why*, and two different failures must not render the
+        // same. `errSecAuthFailed` is the one an ad-hoc Debug rebuild produces (the item's ACL is
+        // bound to the signature that created it); `errSecInteractionNotAllowed` is a locked
+        // keychain.
+        let authFailed = TokenStoreError.keychain(errSecAuthFailed).keychainDetail
+        let locked = TokenStoreError.keychain(errSecInteractionNotAllowed).keychainDetail
+        #expect(!authFailed.isEmpty)
+        #expect(!locked.isEmpty)
+        #expect(authFailed != locked)
+    }
+
+    @Test("an unknown status still produces something showable")
+    func keychainDetailFallsBackToTheNumber() {
+        // `SecCopyErrorMessageString` returns nil for a status it does not know; the fallback has
+        // to name the number rather than leave the message with an empty parenthesis in it.
+        #expect(TokenStoreError.keychain(-99_999).keychainDetail.contains("-99999"))
     }
 
     @Test("an empty string is stored as no token")

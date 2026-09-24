@@ -13,11 +13,58 @@ public protocol ZiplineTokenStore: Sendable {
 /// printed, or surfaced in an error message anywhere in this pipeline.
 public enum TokenStoreError: Error, Equatable {
     case keychain(OSStatus)
+
+    /// The Security framework's own sentence for this status, for a UI that has to tell the
+    /// user *which* wall it hit. Lives on the error rather than in a view because two surfaces
+    /// ask — the Upload settings tab and the upload overlay's configure state — and a keychain
+    /// failure that reads two different ways in two places is worse than either wording.
+    ///
+    /// Safe to show: the payload is an `OSStatus`, never the token.
+    public var keychainDetail: String {
+        switch self {
+        case .keychain(let status):
+            return SecCopyErrorMessageString(status, nil) as String? ?? "status \(status)"
+        }
+    }
 }
 
 /// Generic-password item under a fixed service. The token is the one piece of Pastefix's
 /// configuration that must not sit in `UserDefaults` JSON, which is readable by anything
 /// running as this user.
+///
+/// **This is the legacy (file-based) login keychain, and it carries no `kSecAttrAccessible`.**
+/// That attribute was set here and was doing nothing: it is honoured only by the
+/// data-protection keychain (`kSecUseDataProtectionKeychain: true`), so on this keychain it
+/// stated an intent the stored item does not carry. Stating an intent the item does not have is
+/// worse than not stating it, because the next reader believes it.
+///
+/// Adopting the data-protection keychain — which would make `WhenUnlocked` real — was measured
+/// rather than assumed, and it is not available to this app:
+///
+/// - Ad-hoc signed (a plain Debug build): `SecItemAdd` with `kSecUseDataProtectionKeychain`
+///   returns `errSecMissingEntitlement` (-34018).
+/// - Signed `Developer ID Application: … (RMKGLPG4K4)` with this app's real entitlements
+///   (`com.apple.security.cs.allow-jit` alone), hardened runtime on — the shipping
+///   configuration: the same -34018. A team-ID signature is not sufficient.
+/// - Adding `keychain-access-groups` to get past it makes the process **SIGKILL at launch**
+///   (exit 137), because on macOS that entitlement has to be authorised by an embedded
+///   provisioning profile. Embedding one would change the release pipeline and the entitlements
+///   file that invariant 11 pins, to buy an accessibility class for a keychain item that is
+///   already protected by the login keychain's own lock state.
+///
+/// So the attribute is dropped rather than made real, and what the item *actually* carries is
+/// recorded here instead: a legacy keychain item gets an ACL bound to the signing identity of
+/// the app that created it. Consequences worth knowing before reading a bug report:
+///
+/// - A **Developer ID release** build reads it silently, across versions: the signing identity
+///   is stable, so the ACL keeps matching.
+/// - An **ad-hoc Debug rebuild** changes the cdhash every build, so the ACL no longer matches
+///   the caller: `token()` can prompt for permission, or fail with `errSecAuthFailed`. Re-signing
+///   the Debug build (`docs/gui-automation.md`, the same step the Accessibility grant needs)
+///   makes it stable again.
+///
+/// That second case is a *read failure*, not "no token", and the surfaces that ask must say so —
+/// see `TokenStoreError.keychainDetail` and the upload overlay's configure state.
 public struct KeychainTokenStore: ZiplineTokenStore {
     public static let service = "net.scromp.Pastefix.zipline"
     private let account = "api-token"
@@ -56,7 +103,6 @@ public struct KeychainTokenStore: ZiplineTokenStore {
         guard status == errSecItemNotFound else { throw TokenStoreError.keychain(status) }
         var insert = baseQuery
         insert[kSecValueData as String] = data
-        insert[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlocked
         let added = SecItemAdd(insert as CFDictionary, nil)
         guard added == errSecSuccess else { throw TokenStoreError.keychain(added) }
     }

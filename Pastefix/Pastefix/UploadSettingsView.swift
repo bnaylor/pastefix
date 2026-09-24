@@ -1,5 +1,4 @@
 import SwiftUI
-import Security
 import PastefixAppCore
 import PastefixCore
 
@@ -231,8 +230,17 @@ struct UploadSettingsView: View {
 
     /// Reduces a Keychain read to the one bit this view is allowed to keep: whether a token
     /// exists. The string itself goes out of scope at the end of this line.
+    ///
+    /// A read that *fails* is not "No token stored". Folding the two together told the user to
+    /// add a token that may well already be there — so a failure sets the error line, which is
+    /// the only place that can say which of the two it was. It never *clears* `tokenError`: the
+    /// set or clear that called this owns that, and this read runs after it.
     private func refreshTokenStatus() {
-        tokenIsStored = ((try? tokenStore.token()) ?? nil) != nil
+        do {
+            tokenIsStored = try tokenStore.token() != nil
+        } catch {
+            tokenError = Self.message(for: error)
+        }
     }
 
     /// `TokenStoreError` carries only an `OSStatus` — never the token — so every message this
@@ -241,10 +249,6 @@ struct UploadSettingsView: View {
         guard let tokenStoreError = error as? TokenStoreError else {
             return "Couldn't reach the Keychain."
         }
-        switch tokenStoreError {
-        case .keychain(let status):
-            let detail = SecCopyErrorMessageString(status, nil) as String? ?? "status \(status)"
-            return "Couldn't reach the Keychain (\(detail))."
-        }
+        return "Couldn't reach the Keychain (\(tokenStoreError.keychainDetail))."
     }
 }

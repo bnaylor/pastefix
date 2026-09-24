@@ -902,18 +902,51 @@ struct UploadOverlayView: View {
     private static let noTokenMessage =
         "No Zipline API token is stored. Add one in Settings to upload."
 
+    /// The third sentence. A keychain read can fail for reasons that are not "no token" — a
+    /// locked keychain, a denied ACL, `errSecAuthFailed` after an ad-hoc Debug rebuild changed
+    /// the signature the item's ACL is bound to (see `KeychainTokenStore`) — and these used to
+    /// collapse into `noTokenMessage`. Same door, wrong wall: the user re-enters a token that is
+    /// already stored, and `setToken` then fails for the same underlying reason with a different
+    /// message. This says which it was; the Security framework's own text carries the specifics,
+    /// and the payload is an `OSStatus`, never the token.
+    private static func unreadableTokenMessage(_ detail: String) -> String {
+        "Pastefix couldn't read the Zipline API token from the Keychain (\(detail)). "
+            + "A token may still be stored — open Settings to check or set it again."
+    }
+
+    /// The three answers a token read can give, kept apart because they are three different
+    /// things to tell the user. `.found` never carries an empty string: `KeychainTokenStore`
+    /// already treats a stored empty value as no token, and this repeats the rule for any other
+    /// conformer.
+    private enum TokenLookup {
+        case found(String)
+        case absent
+        case unreadable(String)
+    }
+
+    private static func lookUpToken(_ tokenStore: any ZiplineTokenStore) -> TokenLookup {
+        do {
+            guard let token = try tokenStore.token(), !token.isEmpty else { return .absent }
+            return .found(token)
+        } catch let error as TokenStoreError {
+            return .unreadable(unreadableTokenMessage(error.keychainDetail))
+        } catch {
+            // No other conformer throws anything else today; reported rather than swallowed, so
+            // a new store that does is visible instead of silently reading as "no token".
+            return .unreadable(unreadableTokenMessage(error.localizedDescription))
+        }
+    }
+
     private static func initialPhase(settings: SettingsStore, tokenStore: any ZiplineTokenStore) -> Phase {
         guard ZiplineServerURL.parse(settings.ziplineServerURL) != nil else {
             return .configure(noServerMessage)
         }
-        // A keychain read can fail for reasons that are not "no token" — a locked keychain, a
-        // denied ACL. There is no token to upload with either way and the door out is the same
-        // one, so the two collapse into a single message rather than an error state the user
-        // could not act on differently. Nothing about the token is logged, here or anywhere.
-        guard let token = (try? tokenStore.token()) ?? nil, !token.isEmpty else {
-            return .configure(noTokenMessage)
+        // Nothing about the token is logged, here or anywhere.
+        switch lookUpToken(tokenStore) {
+        case .found: return .composing
+        case .absent: return .configure(noTokenMessage)
+        case .unreadable(let message): return .configure(message)
         }
-        return .composing
     }
 
     /// The height the scrolling region gets: the smaller of what its content needs and what the
@@ -1085,8 +1118,16 @@ struct UploadOverlayView: View {
             phase = .configure(Self.noServerMessage)
             return
         }
-        guard let token = (try? tokenStore.token()) ?? nil, !token.isEmpty else {
+        let token: String
+        switch Self.lookUpToken(tokenStore) {
+        case .found(let stored): token = stored
+        case .absent:
             phase = .configure(Self.noTokenMessage)
+            return
+        case .unreadable(let message):
+            // The same three-way answer as `initialPhase`, for the same reason: a keychain that
+            // has become unreadable since the overlay opened is not a token that was removed.
+            phase = .configure(message)
             return
         }
         // `.found` is the only state that carries matches; `.clean` uploads the source untouched,
