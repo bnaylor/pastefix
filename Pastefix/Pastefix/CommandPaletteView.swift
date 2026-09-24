@@ -9,6 +9,12 @@ struct CommandPaletteView: View {
 
     @State private var query = ""
     @State private var selection = 0
+    /// The transformer id the user actually highlighted, tracked alongside `selection`.
+    /// Detection can land mid-navigation and re-partition `results` (applicable-first ordering
+    /// depends on `detectedKinds`), which moves a transform to a different row out from under a
+    /// bare index. Keying on identity instead means ↵ always applies the transform the user saw
+    /// highlighted, not whatever the re-sorted list now puts at that row.
+    @State private var selectedID: String?
     @FocusState private var fieldFocused: Bool
 
     private var results: [SearchResult] {
@@ -47,7 +53,7 @@ struct CommandPaletteView: View {
                     .font(.title3)
                     .focused($fieldFocused)
                     .onSubmit { applyCurrentSelection() }
-                    .onChange(of: query) { _, _ in selection = 0 }
+                    .onChange(of: query) { _, _ in selection = 0; selectedID = nil }
             }
             .padding(12)
             Divider()
@@ -96,6 +102,16 @@ struct CommandPaletteView: View {
         // Cancel's `.cancelAction` already closes the palette first; this is a harmless
         // duplicate that keeps Esc working even if that button is ever disabled or removed.
         .onKeyPress(.escape) { onClose(); return .handled }
+        // When detection lands, `results` can re-partition without any key press. If the
+        // highlighted transform is still present, follow it to its new row; otherwise fall back
+        // to the old clamping behaviour.
+        .onChange(of: results.map(\.transformer.id)) { _, newIDs in
+            if let selectedID, let index = newIDs.firstIndex(of: selectedID) {
+                selection = index
+            } else {
+                selection = clampedSelection(in: results)
+            }
+        }
     }
 
     private func row(_ result: SearchResult, isSelected: Bool) -> some View {
@@ -145,7 +161,13 @@ struct CommandPaletteView: View {
     /// call time. Return applied the first result after arrowing until this was fixed.
     private func applyCurrentSelection() {
         let items = results
-        apply(items, clampedSelection(in: items))
+        // Apply by identity when we have one and it's still in the list — the highlighted row may
+        // have moved since the last key press (see `selectedID`'s doc comment).
+        if let selectedID, let index = items.firstIndex(where: { $0.transformer.id == selectedID }) {
+            apply(items, index)
+        } else {
+            apply(items, clampedSelection(in: items))
+        }
     }
 
     private func move(_ delta: Int, count: Int) {
@@ -153,7 +175,10 @@ struct CommandPaletteView: View {
         // Step from the index the list is actually showing, which is `selection` clamped
         // to the current result count — otherwise a stale larger `selection` skips rows.
         let current = min(selection, count - 1)
-        selection = ((current + delta) % count + count) % count
+        let newIndex = ((current + delta) % count + count) % count
+        selection = newIndex
+        let items = results
+        if items.indices.contains(newIndex) { selectedID = items[newIndex].transformer.id }
     }
 
     private func apply(_ items: [SearchResult], _ index: Int) {

@@ -186,7 +186,10 @@ final class AppModel: ObservableObject {
                 return
             }
             self.document = updated
-            self.requestDetection()
+            // The failure path returns `current` unchanged (same revision), so only request a
+            // scan when the buffer actually moved — re-requesting on every refused click would
+            // cancel and restart an in-flight summon scan for no reason.
+            if updated.detectionRevision != current.detectionRevision { self.requestDetection() }
             // The caret is `PanelView`'s to carry across the new buffer; the badge's cycle
             // restarts here because the match list belongs to the buffer that just went away.
             self.resetSecretSelection()
@@ -248,6 +251,14 @@ final class AppModel: ObservableObject {
     func save() {
         guard let doc = document else { endSession(); return }
         if doc.outputMode == .renderedMarkdown {
+            // MarkdownToRich's own cap only bounds arming (the transform ran against a buffer at
+            // or under it), but the buffer can grow afterwards — further edits, or a preset that
+            // amplifies text — and this render runs synchronously on the main actor, same as the
+            // rest of Save.
+            guard doc.working.utf8.count <= MarkdownToRich.maxInputBytes else {
+                errorMessage = "Markdown → Rich Text is limited to \(ByteLimit.describe(MarkdownToRich.maxInputBytes)) of text. Click the badge to save as plain text instead."
+                return
+            }
             do {
                 let rich = try RichOutputRenderer.render(markdown: doc.working)
                 ClipboardBridge.writeRich(text: doc.working, html: rich.html, rtf: rich.rtf)
