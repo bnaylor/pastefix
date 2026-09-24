@@ -23,11 +23,22 @@ public protocol ZiplineUploading: Sendable {
 /// untrusted certificate still fails the request. Implementing one here is exactly how a
 /// trust bypass would get added, and that must not happen.
 public struct URLSessionZiplineClient: ZiplineUploading {
+    /// The **idle** bound (`timeoutIntervalForRequest`, and the request's own
+    /// `timeoutInterval`): how long nothing may happen before the request is abandoned.
+    /// URLSession restarts it whenever bytes move, so it is independent of the body's size.
     public let timeout: TimeInterval
+    /// The **whole-transfer** bound (`timeoutIntervalForResource`), which does not restart on
+    /// progress and therefore has to be large enough to send the largest body the upload path
+    /// admits. It is not the same question as `timeout` and no longer shares its value — see
+    /// `UploadLimits`, which ties this to `UploadLimits.maxPayloadBytes`.
+    public let resourceTimeout: TimeInterval
     private let protocolClasses: [AnyClass]?
 
-    public init(timeout: TimeInterval = 60, protocolClasses: [AnyClass]? = nil) {
+    public init(timeout: TimeInterval = UploadLimits.idleTimeout,
+                resourceTimeout: TimeInterval = UploadLimits.resourceTimeout,
+                protocolClasses: [AnyClass]? = nil) {
         self.timeout = timeout
+        self.resourceTimeout = resourceTimeout
         self.protocolClasses = protocolClasses
     }
 
@@ -46,8 +57,11 @@ public struct URLSessionZiplineClient: ZiplineUploading {
         req.httpBody = Self.multipartBody(for: request, boundary: boundary)
 
         let config = URLSessionConfiguration.ephemeral
+        // Idle, then whole-transfer. Setting both from one value (as this did) meant a body the
+        // path was happy to admit could be cancelled mid-send on a slow uplink and reported as
+        // `.transport`, with Retry — which fails identically — as the only offered remedy.
         config.timeoutIntervalForRequest = timeout
-        config.timeoutIntervalForResource = timeout
+        config.timeoutIntervalForResource = resourceTimeout
         if let protocolClasses { config.protocolClasses = protocolClasses }
         let session = URLSession(configuration: config)
         defer { session.invalidateAndCancel() }

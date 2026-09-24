@@ -141,6 +141,12 @@ struct UploadOverlayView: View {
     /// Independent of how many kinds were found — that part lives in the scroll region — which is
     /// the property that makes this safe to pin at all.
     private static let findingsChromeHeight: CGFloat = 112
+    /// The over-cap refusal: a two-line `.callout` label (~16pt a line) over a two-line
+    /// `.caption` (~13pt), plus the 4pt spacing between them and the 8pt gap to the action row
+    /// below. Budgeted at both lines of each, like `bannerBlockHeight`, so the estimate can only
+    /// over-reserve — this row is pinned, and the one thing it must never do is push the action
+    /// row off a short panel.
+    private static let refusalRowHeight: CGFloat = 70
     /// One per-kind line in the scroll region, and the "Found:" caption above them.
     private static let findingLineHeight: CGFloat = 16
     /// The divider and spacings between the per-kind lines and the option rows under them.
@@ -176,6 +182,13 @@ struct UploadOverlayView: View {
         case scanning
         case clean
         case found([SecretMatch])
+        /// Over `UploadLimits.maxPayloadBytes`: nothing was scanned and nothing can be sent.
+        /// Carries the actual size so the verdict can name it against the limit.
+        ///
+        /// A distinct state, emphatically not `.clean`: a cap on a safety feature that produced a
+        /// clean verdict on bytes nobody looked at is the exact false all-clear this whole feature
+        /// exists to prevent (PR #42, and Critical Invariant 13).
+        case refusedTooLarge(bytes: Int)
     }
 
     init(model: AppModel,
@@ -459,12 +472,14 @@ struct UploadOverlayView: View {
                 // what you sent is the point of showing them at all.
                 //
                 // On the content, not on the `ScrollView`: `.disabled` takes out the scroll
-                // *gesture* too, and on a short panel during a 60 s upload that leaves the user
+                // *gesture* too, and on a short panel during a long upload that leaves the user
                 // unable to scroll back to the findings list to re-read what they just sent.
                 // Inert is the goal; unreadable is not.
                 //
                 // Scoped to the scroll region and not the action row below either: Cancel has to
-                // stay pressable for the whole upload, which with a 60 s client timeout can be a
+                // stay pressable for the whole upload, which is bounded by the client's *resource*
+                // timeout (`UploadLimits.resourceTimeout`, 600 s) and not by its 60 s idle one —
+                // a slow uplink moving bytes steadily never trips the idle bound, so this can be a
                 // long time to be stuck.
                 .disabled(phase == .uploading)
             }
@@ -490,7 +505,8 @@ struct UploadOverlayView: View {
                     // Inert while the bytes are on the wire, for the same reason the option rows
                     // are: changing the disposition of an upload already sent would only mislead
                     // about what was sent. Scoped to this, never to `actionRow` — Cancel has to
-                    // stay pressable for the whole 60s client timeout.
+                    // stay pressable for however long the transfer runs (see the action row's
+                    // note: up to `UploadLimits.resourceTimeout`, not 60 s).
                     .disabled(phase == .uploading)
                 if let message = bannerMessage {
                     errorBanner(message)
@@ -610,6 +626,21 @@ struct UploadOverlayView: View {
             }
         case .found(let matches):
             findings(matches)
+        case .refusedTooLarge(let bytes):
+            // Both numbers, always: "too large" without the actual size and the limit is a
+            // refusal the user cannot act on. The second line says what was *not* done, because
+            // the absence of a findings list here must not read as an all-clear.
+            VStack(alignment: .leading, spacing: 4) {
+                Label("Too large to upload — \(HistoryFormatting.byteLabel(bytes)), and the limit is \(ByteLimit.describe(UploadLimits.maxPayloadBytes)).",
+                      systemImage: "exclamationmark.octagon")
+                    .font(.callout)
+                    .foregroundStyle(.orange)
+                    .lineLimit(2)
+                Text("It was not scanned for secrets and nothing was sent. Upload a smaller selection.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
         }
     }
 
@@ -773,7 +804,13 @@ struct UploadOverlayView: View {
         // correct advice for a gate that reads `secretMatches`, and this one deliberately does
         // not. Swapping it for the document's scan would reintroduce the false all-clear this
         // feature exists to prevent — it would not be a simplification.
-        guard scanState != .scanning, !source.isEmpty else { return false }
+        // `.refusedTooLarge` is as final as `.scanning` is provisional: the buffer was never
+        // examined, so there is no version of Upload that is safe to offer for it.
+        switch scanState {
+        case .scanning, .refusedTooLarge: return false
+        case .clean, .found: break
+        }
+        guard !source.isEmpty else { return false }
         // A "File type" this client refuses to frame disables Upload rather than being quietly
         // replaced with `txt` — see `canonicalExtension`.
         guard canonicalExtension != nil else { return false }
@@ -941,6 +978,7 @@ struct UploadOverlayView: View {
         case .scanning: return showScanProgress ? Self.scanRowHeight : 0
         case .clean: return Self.scanRowHeight
         case .found: return Self.findingsChromeHeight
+        case .refusedTooLarge: return Self.refusalRowHeight
         }
     }
 
@@ -966,6 +1004,17 @@ struct UploadOverlayView: View {
 
     private func startScan() {
         let text = source
+        // The ceiling, checked before any of the work rather than inside it. Everything below
+        // this line is unbounded in the input's size and uncancellable once started: the scan is
+        // a straight-line run on a detached thread, `SecretRedactor` builds a second full copy,
+        // and the client builds a third as the multipart body. `UploadLimits` carries the
+        // arithmetic; the important part here is that an over-cap buffer is *refused* — not
+        // scanned, not sent, and never rendered as "No secrets found".
+        let byteCount = text.utf8.count
+        guard byteCount <= UploadLimits.maxPayloadBytes else {
+            scanState = .refusedTooLarge(bytes: byteCount)
+            return
+        }
         scanProgressTask = Task { @MainActor in
             // A delay rather than a size threshold: the threshold would have to be guessed, and
             // the thing actually worth reacting to is "this is taking long enough that the user

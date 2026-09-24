@@ -96,7 +96,7 @@ Verified against `diced/zipline` at v4.7.0, not from memory.
 | Entry point | ⌘⇧U always opens the overlay; no instant-upload variant | One surface. An instant path would need the secret verdict as a second dialog stacked on it, which is the thing the overlay exists to avoid. |
 | Secret gate | Prompt inline: Redact / Send as-is / Cancel | Blocking has no escape hatch for a deliberate share; silent redaction mangles false positives with no way to say no. |
 | Redaction target | The uploaded copy only | Uploading must not rewrite your buffer or your clipboard. |
-| Scan cap | None — every upload is fully scanned, off the main actor | `SecretDetector.maxBytes` (256 KB) exists because scanning runs on *every summon and capture*. An upload is one deliberate action and can afford the full scan. The upload path calls `SecretDetector.scanIgnoringSizeCap(_:)`, added in Task 2 by splitting the size policy out of the existing `scan(_:)`; `scan(_:)` itself keeps the 256 KB guard unchanged for every main-actor caller. A separate, deliberately awkward name rather than a defaulted parameter, so the one call site that skips the cap reads as the exception it is, and so `scan(_:)` stays provably identical to what every other caller already relies on. |
+| Scan cap | None *within* a 16 MB admission cap — every admitted upload is fully scanned, off the main actor, and anything over the cap is refused outright | `SecretDetector.maxBytes` (256 KB) exists because scanning runs on *every summon and capture*. An upload is one deliberate action and can afford the full scan. The upload path calls `SecretDetector.scanIgnoringSizeCap(_:)`, added in Task 2 by splitting the size policy out of the existing `scan(_:)`; `scan(_:)` itself keeps the 256 KB guard unchanged for every main-actor caller. A separate, deliberately awkward name rather than a defaulted parameter, so the one call site that skips the cap reads as the exception it is, and so `scan(_:)` stays provably identical to what every other caller already relies on. **Added after the PR #59 review:** `UploadLimits.maxPayloadBytes` (16 MB) bounds what may enter this path at all — the scan is uncancellable and `SecretRedactor` plus the multipart body make the peak ~3× the input — and an over-cap buffer is a *refusal* stating its size and the limit, never a clean verdict. |
 | Scan placement | Detached task, started as the overlay opens | The overlay's controls stay usable during the wait, and a long scan is visible instead of a frozen hotkey. |
 | Loading state | "Checking for secrets…" appears only after ~150 ms | No flicker on ordinary pastes, and no size-threshold constant to justify. |
 | Language control | Sets the file extension. The user's `ziplineDefaultExtension` setting wins whenever it has been set; detection fills in only while the setting is still its `txt` default | v4 highlights by extension. Detection existed and was tried first as the seed, then reversed during review: `MarkdownDetector` returns true on a single `^#{1,6} \S` line, so letting the detector win meant every YAML file, Dockerfile, conf file and shebang-less script uploaded as `md`, silently overriding an explicit user choice. The detector is trigger-happy, not confident — fine for *promoting* a transform in the palette, wrong for *overriding* a setting the user deliberately typed. |
@@ -152,8 +152,21 @@ public struct URLSessionZiplineClient: ZiplineUploading { … }
 
 `URLSessionZiplineClient` builds the multipart body, sets `authorization` and
 the mapped `x-zipline-*` headers, and reads `files[0].url`. Ephemeral session,
-60 s timeout — not `TitleFetcher`'s 3 s, because this is a body being sent
-rather than a `<head>` being skimmed.
+60 s *idle* timeout — not `TitleFetcher`'s 3 s, because this is a body being
+sent rather than a `<head>` being skimmed — and a separate 600 s *resource*
+timeout bounding the whole transfer. The two are different questions and
+sharing one value was a bug: `timeoutIntervalForResource` does not restart on
+progress, so 60 s there cancelled a large body mid-send on a slow uplink and
+reported `.transport`. `UploadLimits` holds both alongside the 16 MB cap, so
+the size the path admits and the time the client has to send it stay one
+decision (~27 kB/s sustained is the floor that pair implies).
+
+The file extension is validated at `ZiplineUpload.init` and nowhere else: it is
+interpolated into the multipart `Content-Disposition` filename and sent as a
+header value, so it is protocol framing, and `ZiplineFileExtension.canonical`
+refuses anything outside `[a-z0-9._+-]{1,16}` rather than sanitising it. Both
+the overlay and the Upload settings tab show the rule inline for a rejected
+value.
 
 The client takes the server and token as parameters and has no opinion about
 where they came from, so "not configured" is not one of its errors: the app
