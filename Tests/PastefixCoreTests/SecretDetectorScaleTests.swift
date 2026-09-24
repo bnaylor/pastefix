@@ -42,16 +42,68 @@ struct SecretDetectorScaleTests {
             let seconds = Double(elapsed.components.seconds)
                 + Double(elapsed.components.attoseconds) / 1e18
             measurements.append((text.utf8.count, seconds))
+            // A sanity check on the corpus, not on the cap: `pastTheCapIsActuallyScanned`
+            // below is what asserts the scan reaches bytes past `maxBytes`. This corpus's
+            // first secret is in its first ~300 bytes, so on its own it proves nothing
+            // about that.
             #expect(!matches.isEmpty, "the corpus is supposed to contain secrets")
         }
         for m in measurements {
             print("SecretDetector.scanIgnoringSizeCap: \(m.bytes) bytes in \(String(format: "%.3f", m.seconds)) s")
         }
-        // 4 MB is the largest paste this flow should ever meet without the user
-        // noticing they did something unusual. Two seconds is the point past
-        // which a spinner is a lie and the overlay needs real progress.
+        // **A ratio, not a stopwatch reading.** The property this test exists to catch is
+        // superlinear cost, and that is machine-independent: a 16x input costs about 16x on
+        // any machine, while the regression being guarded against (`NSRegularExpression` over
+        // a multi-MB `NSString`, or the JWT backtracking of Plan 11) costs 256x or worse. The
+        // absolute figure is not machine-independent — the 2.0 s bound this replaces was
+        // measured at 0.85 s on an M4 Max debug build, ~2.3x headroom, which is a coin toss on
+        // a loaded CI runner or an Intel machine and says nothing about the shape of the curve.
+        // So the absolute numbers stay as printed output above and the assertion is on growth.
+        //
+        // 2x linear, not the 1.5x a review suggested, for one reason: both measurements are
+        // wall clock taken while the other 65 suites run in parallel, so each carries
+        // scheduling noise in the same direction. Quadratic is 256x — 8x clear of this bound —
+        // so the slack costs nothing the test was ever able to catch.
+        let base = measurements.first!
         let largest = measurements.last!
-        #expect(largest.seconds < 2.0,
-                "scan of \(largest.bytes) bytes took \(largest.seconds)s — see Task 1 decision gate")
+        let sizeRatio = Double(largest.bytes) / Double(base.bytes)
+        guard base.seconds > 0 else {
+            Issue.record("the \(base.bytes)-byte scan measured 0 s; the clock is not usable here")
+            return
+        }
+        let costRatio = largest.seconds / base.seconds
+        print("SecretDetector.scanIgnoringSizeCap: \(String(format: "%.1f", sizeRatio))x the bytes "
+              + "cost \(String(format: "%.1f", costRatio))x the time")
+        #expect(costRatio <= sizeRatio * 2,
+                "\(largest.bytes) bytes took \(costRatio)x the time of \(base.bytes) bytes, against \(sizeRatio)x the input — that is superlinear")
+    }
+
+    /// The claim `scanIgnoringSizeCap` exists to make: it reads *past* 256 KB.
+    ///
+    /// The `scaleCurve` corpus could not show this. Its first secret sits in the first ~300
+    /// bytes, so `!matches.isEmpty` passed whether the scanner examined 4 MB or stopped at
+    /// `maxBytes` — which is the whole point of the entry point. This puts a known key *after*
+    /// the cap and asserts where it was found, and pairs with `SecretDetectorTests.boundedCost`,
+    /// which asserts the capped `scan` returns `[]` for the same shape.
+    @Test("a secret past maxBytes is found, and found past maxBytes")
+    func pastTheCapIsActuallyScanned() {
+        // ASCII throughout, so a UTF-8 offset and a character offset are the same number.
+        let filler = String(repeating: "a", count: SecretDetector.maxBytes)
+        let text = filler + " AKIAIOSFODNN7EXAMPLE"
+        #expect(text.utf8.count > SecretDetector.maxBytes)
+
+        let matches = SecretDetector.scanIgnoringSizeCap(text)
+        let keys = matches.filter { $0.kind == .awsAccessKey }
+        #expect(keys.count == 1)
+        guard let key = keys.first else { return }
+        let offset = text.utf8.distance(from: text.utf8.startIndex, to: key.range.lowerBound)
+        // The literal, not just the constant: a scan that stopped at the cap could only ever
+        // report an offset below this one.
+        #expect(offset > 262_144)
+        #expect(offset == SecretDetector.maxBytes + 1)   // the separating space
+
+        // The mirror, so the pair states the whole rule: the capped entry point refuses the same
+        // buffer outright rather than reporting the key it never looked for.
+        #expect(SecretDetector.scan(text).isEmpty)
     }
 }
