@@ -1,111 +1,324 @@
 import AppKit
 import Foundation
 
+// Pasteboard fixtures for GUI passes, with an explicit pass lifecycle around the human's
+// live clipboard:
+//
+//   pb begin [path]     snapshot every type of every item (0600 file, 0700 directory)
+//   pb <fixture> …      text | concealed | concealed-late | legacy | tiff | png | rich
+//   pb end [path]       restore, verify every saved type byte-for-byte, delete the save
+//   pb discard [path]   drop the save without restoring
+//   pb types | count    read-only
+//
+// Fixtures refuse unless a save exists, parses, and is younger than PFX_PB_MAX_AGE_HOURS
+// (default 6): an old save means a previous pass was abandoned, and copying over the
+// clipboard again would bury whatever the human has put there since.
+
 let args = CommandLine.arguments
-let pb = NSPasteboard.general
+let env = ProcessInfo.processInfo.environment
+// PFX_PB_NAME=<name> targets a private named pasteboard instead of the general one, so the
+// begin/end round trip can be self-tested without touching the human's clipboard.
+let pb = env["PFX_PB_NAME"].map { NSPasteboard(name: .init($0)) } ?? NSPasteboard.general
+let fm = FileManager.default
+let defaultStateDir = NSHomeDirectory() + "/.local/state/pfx-ui"
+
 func marker(_ s: String) -> NSPasteboard.PasteboardType { .init(s) }
-
-func defaultSavePath() -> String {
-    ProcessInfo.processInfo.environment["PFX_PB_SAVE"]
-        ?? (NSHomeDirectory() + "/.local/state/pfx-ui/clipboard.json")
+func fail(_ msg: String, _ code: Int32) -> Never { print(msg); exit(code) }
+func arg(_ i: Int, _ what: String) -> String {
+    guard args.count > i else { fail("usage: pb \(args[1]) \(what)", 1) }
+    return args[i]
 }
 
-// Every destructive subcommand refuses to run unless a save file already exists, so a pass
-// can never clobber whatever was on the clipboard before it started without a way back.
-func requireSave() {
-    if ProcessInfo.processInfo.environment["PFX_PB_FORCE"] == "1" { return }
-    let path = defaultSavePath()
-    if !FileManager.default.fileExists(atPath: path) {
-        print("refusing: no clipboard save at \(path) — run 'pb save \(path)' first (or set PFX_PB_FORCE=1)")
-        exit(2)
+func defaultSavePath() -> String { env["PFX_PB_SAVE"] ?? (defaultStateDir + "/clipboard.json") }
+func savePathArg() -> String { args.count > 2 ? args[2] : defaultSavePath() }
+func maxAgeSeconds() -> TimeInterval { (env["PFX_PB_MAX_AGE_HOURS"].flatMap(Double.init) ?? 6) * 3600 }
+
+// MARK: - Save file format (version 1)
+//
+// { "version": 1, "changeCount": N, "savedAt": "ISO-8601",
+//   "missing": [{"item": i, "type": "<uti>"}, …],   types whose data(forType:) was nil
+//   "items": [ [ ["<uti>", "<base64>"], … ], … ] }
+//
+// Items are ordered; each item's types are ordered as the source pasteboard listed them
+// (the first type is the preferred representation), so restore re-declares them in the
+// same order.
+
+struct Save {
+    var items: [[(uti: String, data: Data)]]
+    var missing: [(item: Int, type: String)]
+    var changeCount: Int
+    var savedAt: String
+    var typeCount: Int { items.reduce(0) { $0 + $1.count } }
+}
+
+func parseSave(_ raw: Data) -> Save? {
+    guard let obj = try? JSONSerialization.jsonObject(with: raw) as? [String: Any],
+          (obj["version"] as? Int) == 1,
+          let rawItems = obj["items"] as? [[[String]]] else { return nil }
+    var items: [[(uti: String, data: Data)]] = []
+    for rawItem in rawItems {
+        var types: [(uti: String, data: Data)] = []
+        for pair in rawItem {
+            guard pair.count == 2, let d = Data(base64Encoded: pair[1]) else { return nil }
+            types.append((pair[0], d))
+        }
+        items.append(types)
+    }
+    let missing = (obj["missing"] as? [[String: Any]] ?? []).compactMap { m -> (item: Int, type: String)? in
+        guard let i = m["item"] as? Int, let t = m["type"] as? String else { return nil }
+        return (i, t)
+    }
+    return Save(items: items,
+                missing: missing,
+                changeCount: obj["changeCount"] as? Int ?? -1,
+                savedAt: obj["savedAt"] as? String ?? "?")
+}
+
+func loadSave(at path: String) -> (save: Save?, error: String?) {
+    guard let raw = fm.contents(atPath: path) else { return (nil, "no save file at \(path)") }
+    guard let save = parseSave(raw) else { return (nil, "save file at \(path) does not parse (\(raw.count) bytes)") }
+    return (save, nil)
+}
+
+// MARK: - Directory and file creation with tight modes
+
+func ensurePrivateDirectory(_ dir: String) {
+    var isDir: ObjCBool = false
+    if !fm.fileExists(atPath: dir, isDirectory: &isDir) {
+        do {
+            try fm.createDirectory(atPath: dir, withIntermediateDirectories: true,
+                                   attributes: [.posixPermissions: 0o700])
+        } catch { fail("cannot create \(dir): \(error.localizedDescription)", 1) }
+        return
+    }
+    guard isDir.boolValue else { fail("\(dir) exists and is not a directory", 1) }
+    let mode = (try? fm.attributesOfItem(atPath: dir)[.posixPermissions] as? Int) ?? 0
+    if mode & 0o077 != 0 {
+        if dir == defaultStateDir {
+            try? fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: dir) // ours; tighten it
+        } else {
+            print("warning: \(dir) is mode \(String(mode, radix: 8)); the save is 0600 but its directory is not private")
+        }
     }
 }
 
-// Saves every type of every pasteboard item (not just text), so restore is a full round trip.
-func savePasteboard(to path: String) {
-    let dir = (path as NSString).deletingLastPathComponent
-    if !dir.isEmpty {
-        try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+/// Creates `path` with O_EXCL and mode 0600, so two `begin`s can never both win the race
+/// and the bytes are never readable by anyone else, not even briefly.
+func writeExclusive(_ data: Data, to path: String) -> Bool {
+    let fd = open(path, O_WRONLY | O_CREAT | O_EXCL, 0o600)
+    guard fd >= 0 else { return false }
+    defer { close(fd) }
+    fchmod(fd, 0o600) // umask-proof
+    var ok = true
+    data.withUnsafeBytes { buf in
+        var off = 0
+        while off < buf.count {
+            let n = write(fd, buf.baseAddress! + off, buf.count - off)
+            if n <= 0 { ok = false; return }
+            off += n
+        }
     }
-    var out: [[String: [String: String]]] = []
-    for item in pb.pasteboardItems ?? [] {
-        var types: [String: String] = [:]
+    return ok
+}
+
+// MARK: - begin / end / discard
+
+func begin(path: String) {
+    if fm.fileExists(atPath: path) {
+        fail("refusing: a save already exists at \(path) — a previous pass did not `end`; run `pb end` to restore it or `pb discard` to drop it", 2)
+    }
+    ensurePrivateDirectory((path as NSString).deletingLastPathComponent)
+
+    var items: [[[String]]] = []
+    var missing: [[String: Any]] = []
+    for (i, item) in (pb.pasteboardItems ?? []).enumerated() {
+        var pairs: [[String]] = []
         for type in item.types {
-            guard let data = item.data(forType: type) else { continue }
-            types[type.rawValue] = data.base64EncodedString()
+            if let data = item.data(forType: type) {
+                pairs.append([type.rawValue, data.base64EncodedString()])
+            } else {
+                missing.append(["item": i, "type": type.rawValue])
+            }
         }
-        out.append(["types": types])
+        items.append(pairs)
     }
-    let json = try! JSONSerialization.data(withJSONObject: out, options: [.prettyPrinted, .sortedKeys])
-    try! json.write(to: URL(fileURLWithPath: path))
-    print("saved \(out.count) item(s) to \(path)")
+    let typeCount = items.reduce(0) { $0 + $1.count }
+    let fmt = ISO8601DateFormatter()
+    let doc: [String: Any] = [
+        "version": 1,
+        "changeCount": pb.changeCount,
+        "savedAt": fmt.string(from: Date()),
+        "missing": missing,
+        "items": items,
+    ]
+    guard let json = try? JSONSerialization.data(withJSONObject: doc, options: [.prettyPrinted, .sortedKeys]) else {
+        fail("could not encode the snapshot", 1)
+    }
+    guard writeExclusive(json, to: path) else {
+        fail("refusing: could not create \(path) exclusively (\(String(cString: strerror(errno)))) — a save may already exist; see `pb end` / `pb discard`", 2)
+    }
+    print("begin: saved \(items.count) item(s), \(typeCount) type(s) to \(path) (changeCount \(pb.changeCount))")
+    if !missing.isEmpty {
+        print("warning: \(missing.count) type(s) returned no data and cannot be saved (promised/lazy data the provider has not materialised); `pb end` will report whether the pasteboard derives them again:")
+        for m in missing { print("  - \(m["type"] ?? "?") (item \(m["item"] ?? "?"))") }
+    }
 }
 
-func restorePasteboard(from path: String) {
-    guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)) else {
-        print("no save file at \(path)")
-        exit(1)
+func end(path: String) {
+    let (loaded, err) = loadSave(at: path)
+    guard let save = loaded else {
+        fail("refusing: \(err ?? "unreadable save") — the pasteboard was NOT touched; nothing was restored and the save was kept", 3)
     }
-    let raw = (try? JSONSerialization.jsonObject(with: data)) as? [[String: [String: String]]] ?? []
-    pb.clearContents()
-    var items: [NSPasteboardItem] = []
-    for entry in raw {
+
+    // Build every item before clearing, so a bad entry is a refusal, not a wipe.
+    var restorable: [(index: Int, item: NSPasteboardItem)] = []
+    var setFailures: [String] = []
+    for (i, types) in save.items.enumerated() {
         let item = NSPasteboardItem()
-        for (uti, b64) in entry["types"] ?? [:] {
-            guard let d = Data(base64Encoded: b64) else { continue }
-            item.setData(d, forType: marker(uti))
+        var declared = 0
+        for t in types {
+            if item.setData(t.data, forType: marker(t.uti)) { declared += 1 } else { setFailures.append("\(t.uti) (item \(i))") }
         }
-        items.append(item)
+        if declared > 0 { restorable.append((i, item)) }
     }
-    pb.writeObjects(items)
-    print("restored \(items.count) item(s) from \(path)")
+
+    pb.clearContents()
+    let wrote = restorable.isEmpty ? true : pb.writeObjects(restorable.map(\.item))
+    if !save.items.isEmpty, !wrote || restorable.isEmpty {
+        fail("restore FAILED: the save held \(save.items.count) item(s) but none could be written; the pasteboard is now EMPTY; the save was kept at \(path) — retry `pb end` or restore by hand", 4)
+    }
+
+    // Verify: every saved type's bytes must read back identically.
+    let live = pb.pasteboardItems ?? []
+    var mismatches: [String] = []
+    if live.count != restorable.count {
+        mismatches.append("item count: wrote \(restorable.count), pasteboard has \(live.count)")
+    }
+    for (pos, entry) in restorable.enumerated() where pos < live.count {
+        for t in save.items[entry.index] {
+            let got = live[pos].data(forType: marker(t.uti))
+            if got != t.data {
+                mismatches.append("\(t.uti) (item \(entry.index)): saved \(t.data.count) B, read back \(got.map { "\($0.count) B" } ?? "nil")")
+            }
+        }
+    }
+    mismatches.append(contentsOf: setFailures.map { "\($0): setData refused" })
+    if !mismatches.isEmpty {
+        print("restore INCOMPLETE: \(save.items.count) item(s) written but \(mismatches.count) type(s) did not verify:")
+        for m in mismatches { print("  - \(m)") }
+        fail("the save was kept at \(path) — retry `pb end`, or tell the user exactly which types above were not restored", 4)
+    }
+
+    // Everything captured is back and verified; the save has no further use either way.
+    do { try fm.removeItem(atPath: path) } catch {
+        fail("restored and verified, but could not delete \(path): \(error.localizedDescription)", 1)
+    }
+    let summary = "restored \(save.items.count) item(s), \(save.typeCount) type(s); verified; save deleted"
+    // Types that had no data at `begin`: AppKit derives some of them again from what was
+    // restored (e.g. public.utf16-external-plain-text from the UTF-8 string); only the ones
+    // the pasteboard no longer advertises at all are genuinely gone.
+    let liveTypes = Set(live.flatMap { $0.types.map(\.rawValue) })
+    let derived = save.missing.filter { liveTypes.contains($0.type) }
+    let gone = save.missing.filter { !liveTypes.contains($0.type) }
+    if gone.isEmpty {
+        print(summary)
+        if !derived.isEmpty {
+            print("note: \(derived.count) type(s) had no data at `begin`; the pasteboard advertises them again (derived by AppKit from the restored types, bytes not verified):")
+            for m in derived { print("  - \(m.type) (item \(m.item))") }
+        }
+    } else {
+        print("\(summary) — BUT \(gone.count) type(s) could not be captured at `begin` and are NOT on the pasteboard now:")
+        for m in gone { print("  - \(m.type) (item \(m.item))") }
+        if !derived.isEmpty { print("(\(derived.count) other uncaptured type(s) were derived again by AppKit: \(derived.map(\.type).joined(separator: ", ")))") }
+        exit(5)
+    }
+}
+
+func discard(path: String) {
+    let (loaded, err) = loadSave(at: path)
+    guard fm.fileExists(atPath: path) else { fail(err ?? "no save file at \(path)", 1) }
+    do { try fm.removeItem(atPath: path) } catch { fail("could not delete \(path): \(error.localizedDescription)", 1) }
+    if let s = loaded {
+        print("discarded save at \(path) without restoring: \(s.items.count) item(s), \(s.typeCount) type(s), saved \(s.savedAt)")
+    } else {
+        print("discarded unparseable save at \(path) without restoring")
+    }
+}
+
+/// Fixtures may only run inside a pass: a save that exists, parses, and is fresh.
+func requirePass() {
+    let path = defaultSavePath()
+    if env["PFX_PB_FORCE"] == "1" {
+        print("PFX_PB_FORCE=1: skipping the pass check (no save required at \(path))")
+        return
+    }
+    let (loaded, err) = loadSave(at: path)
+    guard loaded != nil else {
+        fail("refusing: \(err ?? "no save") — run `pb begin` first (or set PFX_PB_FORCE=1)", 2)
+    }
+    let mtime = (try? fm.attributesOfItem(atPath: path)[.modificationDate] as? Date) ?? .distantPast
+    let age = Date().timeIntervalSince(mtime)
+    if age > maxAgeSeconds() {
+        fail(String(format: "refusing: the save at %@ is %.1f h old (limit PFX_PB_MAX_AGE_HOURS=%.1f) — a previous pass was abandoned; run `pb end` to restore it or `pb discard` to drop it, then `pb begin`",
+                    path, age / 3600, maxAgeSeconds() / 3600), 2)
+    }
+}
+
+// MARK: - Fixtures
+
+guard args.count > 1 else {
+    fail("usage: pb begin|end|discard [path] | text|concealed|concealed-late|legacy|rich STR | tiff|png W H | types | count", 1)
 }
 
 switch args[1] {
-case "save":
-    savePasteboard(to: args.count > 2 ? args[2] : defaultSavePath())
-case "restore":
-    restorePasteboard(from: args.count > 2 ? args[2] : defaultSavePath())
+case "begin": begin(path: savePathArg())
+case "end": end(path: savePathArg())
+case "discard": discard(path: savePathArg())
+case "save", "restore":
+    fail("`pb \(args[1])` was renamed: use `pb begin` before the pass and `pb end` after it (`pb discard` drops a save)", 1)
 case "text":
-    requireSave()
-    pb.clearContents(); pb.setString(args[2], forType: .string)
+    let s = arg(2, "STRING"); requirePass()
+    pb.clearContents(); pb.setString(s, forType: .string)
 case "concealed":
-    requireSave()
+    let s = arg(2, "STRING"); requirePass()
     pb.clearContents()
-    pb.setString(args[2], forType: .string)
+    pb.setString(s, forType: .string)
     pb.setData(Data(), forType: marker("org.nspasteboard.ConcealedType"))
 case "concealed-late":
-    requireSave()
+    let s = arg(2, "STRING"); requirePass()
     // marker added AFTER the string, same change (the ordering the final review flagged)
     pb.clearContents()
-    pb.setString(args[2], forType: .string)
+    pb.setString(s, forType: .string)
     usleep(700_000)   // > one monitor tick between the string and the marker
     pb.setData(Data(), forType: marker("org.nspasteboard.ConcealedType"))
 case "legacy":
-    requireSave()
+    let s = arg(2, "STRING"); requirePass()
     pb.clearContents()
-    pb.setString(args[2], forType: .string)
+    pb.setString(s, forType: .string)
     pb.setData(Data(), forType: marker("de.petermaurer.TransientPasteboardType"))
 case "tiff":
-    requireSave()
-    let w = Int(args[2])!, h = Int(args[3])!
+    guard let w = Int(arg(2, "W H")), let h = Int(arg(3, "W H")), w > 0, h > 0 else { fail("usage: pb tiff W H", 1) }
+    requirePass()
     let img = NSImage(size: NSSize(width: w, height: h))
     img.lockFocus(); NSColor.systemTeal.setFill(); NSRect(x: 0, y: 0, width: w, height: h).fill(); img.unlockFocus()
-    pb.clearContents(); pb.setData(img.tiffRepresentation!, forType: .tiff)
+    guard let tiff = img.tiffRepresentation else { fail("could not render TIFF", 1) }
+    pb.clearContents(); pb.setData(tiff, forType: .tiff)
 case "png":
-    requireSave()
-    let w = Int(args[2])!, h = Int(args[3])!
-    let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: w, pixelsHigh: h, bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
+    guard let w = Int(arg(2, "W H")), let h = Int(arg(3, "W H")), w > 0, h > 0 else { fail("usage: pb png W H", 1) }
+    requirePass()
+    guard let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: w, pixelsHigh: h, bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0) else { fail("could not allocate bitmap", 1) }
     for y in 0..<h { for x in 0..<w { rep.setColor(NSColor(red: CGFloat(x % 256)/255, green: CGFloat(y % 256)/255, blue: 0.5, alpha: 1), atX: x, y: y) } }
-    pb.clearContents(); pb.setData(rep.representation(using: .png, properties: [:])!, forType: .png)
+    guard let png = rep.representation(using: .png, properties: [:]) else { fail("could not encode PNG", 1) }
+    pb.clearContents(); pb.setData(png, forType: .png)
 case "rich":
-    requireSave()
-    let a = NSMutableAttributedString(string: args[2], attributes: [.font: NSFont.boldSystemFont(ofSize: 14)])
-    let rtf = try! a.data(from: NSRange(location: 0, length: a.length), documentAttributes: [.documentType: NSAttributedString.DocumentType.rtf])
-    pb.clearContents(); pb.setData(rtf, forType: .rtf); pb.setString(args[2], forType: .string)
+    let s = arg(2, "STRING"); requirePass()
+    let a = NSMutableAttributedString(string: s, attributes: [.font: NSFont.boldSystemFont(ofSize: 14)])
+    guard let rtf = try? a.data(from: NSRange(location: 0, length: a.length), documentAttributes: [.documentType: NSAttributedString.DocumentType.rtf]) else { fail("could not encode RTF", 1) }
+    pb.clearContents(); pb.setData(rtf, forType: .rtf); pb.setString(s, forType: .string)
 case "types":
     print((pb.types ?? []).map(\.rawValue).joined(separator: "\n"))
 case "count":
     print(pb.changeCount)
-default: print("?")
+default:
+    fail("unknown subcommand \(args[1]); see the usage line (`pb`)", 1)
 }
