@@ -255,6 +255,7 @@ struct SettingsView: View {
                 .font(.caption).foregroundStyle(.secondary)
             KeyboardShortcuts.Recorder("Open history:", name: .summonHistory)
                 .shortcutValidation { validateSummon($0, recording: .summonHistory) }
+            KeyboardShortcuts.Recorder("Upload to Zipline:", name: .uploadToZipline)
         }
         .padding()
     }
