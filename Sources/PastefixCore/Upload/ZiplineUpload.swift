@@ -24,15 +24,22 @@ public struct ZiplineUpload: Sendable, Equatable {
     /// `PasteDocument.detectedKinds` and must not pay a second `ContentDetector`
     /// pass (a capped secret scan included) to ask this question.
     ///
-    /// **`json` or `txt`, and nothing else.** Markdown used to be in here and was
-    /// removed: `MarkdownDetector` answers yes on two weak signals, and a 427 KB
-    /// file of fortunes — 391 lines opening `- `, 125 opening `> `, not one
-    /// heading or fence — uploaded as `.md`. The asymmetry is the argument. `.md`
-    /// against `.txt` changes almost nothing about how Zipline renders a paste,
-    /// while a wrong `.md` on ordinary prose is visible and wrong; JSON is worth
-    /// highlighting and is the one kind detected by actually parsing the thing.
-    /// `MarkdownDetector` is deliberately left alone — it still drives the
-    /// Detected badge and palette ordering, where a generous guess costs nothing.
+    /// **`json` or `txt`, and nothing else.** This function never reads
+    /// `.markdown`, so nothing about `MarkdownDetector` can move its answer.
+    ///
+    /// Markdown used to be in here and was removed over a 427 KB file of fortunes
+    /// — 391 lines opening `- `, 125 opening `> `, not one heading or fence —
+    /// which the then presence-only weak-signal rule called Markdown, so it
+    /// uploaded as `.md`. #50 has since fixed that at the source: weak signals now
+    /// need 10% density, and that file's ~4% and ~1% no longer qualify. Markdown
+    /// still does not belong here, and the reason was never only that one file:
+    /// the asymmetry is the argument. `.md` against `.txt` changes almost nothing
+    /// about how Zipline renders a paste, while a wrong `.md` on ordinary prose is
+    /// visible and wrong — and a single `^#{1,6} \S` line is still decisive on its
+    /// own, so a shell-comment-heavy config is still one heading away from `.md`.
+    /// JSON is worth highlighting and is the one kind detected by actually parsing
+    /// the thing. `MarkdownDetector` keeps driving the Detected badge and palette
+    /// ordering, where a generous guess costs nothing.
     ///
     /// nil kinds (no document) means "nothing detected", not "detect it for me".
     public static func defaultExtension(for kinds: Set<ContentKind>?) -> String {

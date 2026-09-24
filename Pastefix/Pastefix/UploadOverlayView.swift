@@ -410,13 +410,20 @@ struct UploadOverlayView: View {
             Text(message)
                 .multilineTextAlignment(.center)
                 .foregroundStyle(.secondary)
-            // Closes the overlay on the way out, like the history overlay's "Enable in Settings…":
-            // it takes the panel's dim off from behind the Settings window. It also sidesteps a
-            // staleness problem — the token lives in the keychain, which publishes nothing, so
-            // this view cannot observe it becoming set. Re-pressing ⌘⇧U after configuring opens a
-            // fresh overlay that reads both values again, which is the only honest refresh
-            // available here.
-            SettingsLink { Text("Open Settings…") }
+            // `OpenSettingsButton`, not `SettingsLink` (#54): from inside the non-activating
+            // panel a plain `SettingsLink` opens Settings without making Pastefix active, so the
+            // window appears unfocused and — before `PanelController` learned to yield its level
+            // — behind the panel, unraisable. This is the *first-run* path (no server URL or no
+            // token) with exactly one button on it, so a Settings window the user cannot reach is
+            // the whole feature failing at its first step. The history overlay's
+            // "Enable in Settings…" is the same door; keep the two spelled the same way.
+            //
+            // Closing the overlay on the way out takes the panel's dim off from behind the
+            // Settings window. It also sidesteps a staleness problem — the token lives in the
+            // keychain, which publishes nothing, so this view cannot observe it becoming set.
+            // Re-pressing ⌘⇧U after configuring opens a fresh overlay that reads both values
+            // again, which is the only honest refresh available here.
+            OpenSettingsButton { Text("Open Settings…") }
                 .simultaneousGesture(TapGesture().onEnded { onClose() })
         }
         .frame(maxWidth: .infinity, minHeight: 140)
