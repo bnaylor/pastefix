@@ -2,14 +2,13 @@ import Testing
 @testable import PastefixCore
 
 @Suite struct MarkdownDetectorTests {
-    // Signal density (#50): a signal only counts once at least two lines match it, so a fixture
-    // built for the old "two distinct signals anywhere" rule needs at least two matching lines
-    // per signal it relies on, not one. Amended in place (the markdown-ness of each fixture is
-    // unchanged) rather than dropped, per plan item (e).
+    // Signal density (#50): a signal counts when its lines are >= 10% of the non-empty lines, a
+    // proportion rather than an absolute minimum, so short snippets with one link or one bold
+    // line next to a list or quote stay Markdown while long prose with stray dashes does not.
     @Test(arguments: [
         "# Title\nbody", "text\n\n```swift\nlet x = 1\n```",
-        "- one [docs](https://x.y)\n- two [more](https://x.y)",
-        "> quoted\n> more\nand **strong**\nalso **bold**",
+        "- one [docs](https://x.y)\n- two [more](https://x.y)", "- one\n- two\nsee [docs](https://x.y)",
+        "> quoted\n> more\nand **strong**\nalso **bold**", "> quoted\nand **strong**",
         "| a | b |\n|---|---|\n| 1 | 2 |\nwith `code`\nand `more code`",
         "1. first\n2. second\n\n> note\n> more",
         // CRLF: Swift reads "\r\n" as one Character, so the split has to normalize first.

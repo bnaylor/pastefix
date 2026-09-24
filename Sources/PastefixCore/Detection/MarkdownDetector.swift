@@ -23,8 +23,8 @@ public enum MarkdownDetector {
 
     /// A heading or fence line is decisive on its own and returns `true` immediately, as before.
     /// Otherwise five *weak* signals (list, quote, table, link, inline emphasis/code) are each
-    /// only counted if they *recur*: a signal qualifies when it matched at least 2 lines AND at
-    /// least 10% of the non-empty lines scanned, and `looksLikeMarkdown` returns `true` only when
+    /// only counted if they *recur*: a signal qualifies when the lines it matched are at least 10%
+    /// of the non-empty lines scanned, and `looksLikeMarkdown` returns `true` only when
     /// at least two distinct signals qualify.
     ///
     /// The presence-only version of this rule ("two distinct weak signals matched anywhere in the
@@ -32,10 +32,10 @@ public enum MarkdownDetector {
     /// dashes and `> `-prefixed lines occasionally look like a list item or a blockquote, and
     /// scattered across the file that is only ~4% and ~1% of lines respectively — but the old rule
     /// fired the instant one of each turned up anywhere in the scanned window, however rare. The
-    /// 10% density floor (and the >= 2 floor, so two matches out of a three-line scan don't count
-    /// as "dense") requires a signal to actually recur before it counts, while genuinely
-    /// Markdown-shaped text — a list with a couple of links, or a couple of quote lines next to a
-    /// couple of bold lines — still clears it easily.
+    /// 10% density floor requires a signal to actually recur before it counts in long text (10% of
+    /// 400 lines is 40 matches), while genuinely Markdown-shaped text stays as it was: a short
+    /// snippet such as two list items and one link line is 33% link lines, so the floor is a
+    /// proportion on purpose and not an absolute minimum.
     ///
     /// Density is measured over the same scanned head as before: at most `maxBytes` (64 KB) of the
     /// buffer and at most `maxLines` (400) lines of it. A signal that only shows up past that
@@ -66,7 +66,7 @@ public enum MarkdownDetector {
                 if inline.firstMatch(in: line, range: r) != nil { inlineLines += 1 }
             }
         }
-        func qualifies(_ matchedLines: Int) -> Bool { matchedLines >= 2 && matchedLines * 10 >= nonEmptyLines }
+        func qualifies(_ matchedLines: Int) -> Bool { matchedLines > 0 && matchedLines * 10 >= nonEmptyLines }
         let qualifying = [listLines, quoteLines, tableLines, linkLines, inlineLines].filter(qualifies).count
         return qualifying >= 2
     }
