@@ -240,7 +240,7 @@ struct HistoryOverlayView: View {
                 Text("Clipboard history is off").foregroundStyle(.secondary)
                 // Same door the menu bar uses; closing the overlay first takes the dim off the
                 // panel behind the Settings window.
-                SettingsLink { Text("Enable in Settings…") }
+                OpenSettingsButton { Text("Enable in Settings…") }
                     .simultaneousGesture(TapGesture().onEnded { onClose() })
             }
         } else if history.items.isEmpty {

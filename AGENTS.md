@@ -351,6 +351,9 @@ Also caught in review on `29c1d02`: a page truncated at the byte cap mid-charact
 - **Fixed sleeps in concurrency tests flake under the default parallel runner:** a 1 s scan inside a 1.3 s `settle` failed under load. Poll a condition with a generous ceiling and assert it afterwards; `.serialized` on the suite is a secondary measure only.
 - **Toolchain:** `Thread.sleep(forTimeInterval:)` is `noasync` in Swift 6 mode (wrap it in a synchronous helper when a test needs an uninterruptible body); a mutating call inside `#expect(...)` does not compile (bind the result to a `let` first).
 
+*Bug batch 2026-09-24:*
+- **The floating, non-activating panel hides our own Settings window** (#54): a normal-level window can never be raised past a `.floating` one, so Settings opened behind the panel and stayed there. `PanelController` now drops to `.normal` while another of our windows is key and reclaims `.floating` when that window closes or the panel becomes key again (not when Settings merely resigns key to another app); and any in-panel Settings button must `NSApp.activate` first (`OpenSettingsButton`), because a `.nonactivatingPanel` does not activate the app on a click.
+
 ## Definition of Done
 
 Before opening or updating a PR:

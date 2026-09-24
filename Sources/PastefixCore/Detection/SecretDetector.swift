@@ -1,12 +1,13 @@
 import Foundation
 
 public enum SecretKind: String, CaseIterable, Sendable {
-    case awsAccessKey, awsSecretKey, githubToken, openAIKey, slackToken, stripeKey, googleAPIKey, privateKey, jwt, passwordInURL, genericAssignment
+    case awsAccessKey, awsSecretKey, githubToken, anthropicKey, openAIKey, slackToken, stripeKey, googleAPIKey, privateKey, jwt, passwordInURL, genericAssignment
     public var displayName: String {
         switch self {
         case .awsAccessKey: "AWS access key"
         case .awsSecretKey: "AWS secret key"
         case .githubToken: "GitHub token"
+        case .anthropicKey: "Anthropic key"
         case .openAIKey: "OpenAI key"
         case .slackToken: "Slack token"
         case .stripeKey: "Stripe key"
@@ -22,6 +23,7 @@ public enum SecretKind: String, CaseIterable, Sendable {
         case .awsAccessKey: "aws-access-key"
         case .awsSecretKey: "aws-secret-key"
         case .githubToken: "github-token"
+        case .anthropicKey: "anthropic-key"
         case .openAIKey: "openai-key"
         case .slackToken: "slack-token"
         case .stripeKey: "stripe-key"
@@ -86,6 +88,16 @@ public enum SecretDetector {
         Rule(kind: .awsAccessKey, regex: rx(#"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b"#), group: 0, needsEntropy: false),
         Rule(kind: .awsSecretKey, regex: rx(#"aws[_-]?secret[_-]?(?:access[_-]?)?key\W{0,5}([A-Za-z0-9/+=]{40})(?![A-Za-z0-9_\-/+=])"#, .caseInsensitive), group: 1, needsEntropy: false),
         Rule(kind: .githubToken, regex: rx(#"\b(?:gh[pousr]_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{22,255})(?![A-Za-z0-9_\-])"#), group: 0, needsEntropy: false),
+        // Ordered before the OpenAI rule below: its "-" prefix is a *specific case* of the
+        // OpenAI class, and for a real "sk-ant-…" token the two matches span the identical
+        // range (the OpenAI class swallows "ant-…" too, so both greedy runs end at the same
+        // place). That is a same-range tie, not a length or position difference, so it is not
+        // rule-list order that decides the winner — the overlap resolution in `scan` sorts by
+        // (location asc, length desc, `kindOrder` asc), and `kindOrder` is `SecretKind`
+        // declaration order. `anthropicKey` is declared before `openAIKey` above for that
+        // reason; the rule is still placed here, ahead of the OpenAI rule, purely so a reader
+        // sees the more specific pattern first.
+        Rule(kind: .anthropicKey, regex: rx(#"\bsk-ant-[A-Za-z0-9_-]{20,200}(?![A-Za-z0-9_\-])"#), group: 0, needsEntropy: false),
         Rule(kind: .openAIKey, regex: rx(#"\bsk-(?:proj-)?[A-Za-z0-9_-]{20,200}(?![A-Za-z0-9_\-])"#), group: 0, needsEntropy: false),
         Rule(kind: .slackToken, regex: rx(#"\bxox[abprs]-[A-Za-z0-9-]{10,200}(?![A-Za-z0-9_\-])"#), group: 0, needsEntropy: false),
         Rule(kind: .stripeKey, regex: rx(#"\b(?:sk|rk)_live_[A-Za-z0-9]{16,200}(?![A-Za-z0-9_\-])"#), group: 0, needsEntropy: false),

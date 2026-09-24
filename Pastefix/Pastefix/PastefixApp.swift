@@ -43,7 +43,7 @@ struct MenuBarMenu: View {
     var body: some View {
         Button("Summon Pastefix") { summon() }
         Toggle("Clipboard History", isOn: $settings.historyEnabled)
-        SettingsLink { Text("Settings…") }
+        OpenSettingsButton { Text("Settings…") }
             .keyboardShortcut(",", modifiers: .command)
         CheckForUpdatesButton(updater: updater)
         Divider()
