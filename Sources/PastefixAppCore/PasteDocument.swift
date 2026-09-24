@@ -7,15 +7,20 @@ public struct PasteDocument: Sendable {
     public let origin: ClipboardSnapshot
     public private(set) var history: [String]
     public private(set) var cursor: Int
-    public private(set) var detectedKinds: Set<ContentKind>
-    /// Secret matches in `working`, recomputed on the same discrete events as `detectedKinds`
-    /// (init, push, undo/redo, refresh) so a redact transform pins to the same ranges the
-    /// palette was built from, rather than re-scanning after every keystroke.
-    public private(set) var secretMatches: [SecretMatch]
-    /// True when `working` was over `SecretDetector.maxBytes` and so was never examined. An empty
-    /// `secretMatches` then means "unknown", not "clean", and the UI must say so — silence reads
-    /// as a clean bill of health. Recomputed on exactly the same events as `secretMatches`.
-    public private(set) var secretScanSkipped: Bool
+    /// Detection for `working`. Pending after every discrete event (init, push, undo, redo,
+    /// refresh) until the scheduler delivers a result for `detectionRevision`; the struct never
+    /// scans on its own, because every caller is on the main actor.
+    public private(set) var detection: DetectionState = .pending
+    /// Incremented on every event that invalidates `detection`. A result carries the revision it
+    /// was computed for and is refused if the document has moved on.
+    public private(set) var detectionRevision = 0
+
+    public var isDetecting: Bool { if case .pending = detection { return true } else { return false } }
+    public var detectedKinds: Set<ContentKind> { if case .complete(let r) = detection { return r.kinds } else { return [] } }
+    public var secretMatches: [SecretMatch] { if case .complete(let r) = detection { return r.secretMatches } else { return [] } }
+    /// False while pending: an unscanned-yet buffer is not the same as an over-cap one, and the
+    /// grey badge is for the latter.
+    public var secretScanSkipped: Bool { if case .complete(let r) = detection { return r.secretScanSkipped } else { return false } }
     /// How Save should write the buffer. Set by an `OutputModeTransformer`; reset to
     /// `.plain` whenever the document is re-armed for a new summon (`refresh`).
     public var outputMode: OutputMode = .plain
@@ -24,11 +29,6 @@ public struct PasteDocument: Sendable {
         self.origin = origin
         self.history = [origin.plainText ?? ""]
         self.cursor = 0
-        // One scan, two consumers: `ContentDetector.detect(_:)` would otherwise run its own.
-        let secrets = SecretDetector.scan(history[0])
-        self.detectedKinds = ContentDetector.detect(history[0], secrets: secrets)
-        self.secretMatches = secrets
-        self.secretScanSkipped = !SecretDetector.isScannable(history[0])
         self.outputMode = .plain
     }
 
@@ -79,14 +79,15 @@ public struct PasteDocument: Sendable {
     }
 
     /// Append a new state (e.g. a transform result). Leaves `history`/`cursor` untouched if
-    /// unchanged, but still redetects: a push is a discrete event even when it lands on text a
-    /// prior `setWorking` already coalesced in, so detection resyncs to what's actually working.
+    /// unchanged, but still invalidates detection: a push is a discrete event even when it lands
+    /// on text a prior `setWorking` already coalesced in, so the scheduler resyncs to what's
+    /// actually working.
     public mutating func pushState(_ text: String) {
-        guard text != working else { redetect(); return }
+        guard text != working else { invalidateDetection(); return }
         history = Array(history.prefix(cursor + 1))
         history.append(text)
         cursor = history.count - 1
-        redetect()
+        invalidateDetection()
     }
 
     /// Coalesce a manual edit into the current state (no new history entry).
@@ -100,25 +101,39 @@ public struct PasteDocument: Sendable {
     public mutating func undo() {
         if canUndo {
             cursor -= 1
-            redetect()
+            invalidateDetection()
         }
     }
 
     public mutating func redo() {
         if canRedo {
             cursor += 1
-            redetect()
+            invalidateDetection()
         }
     }
 
     public mutating func refresh(origin: ClipboardSnapshot) {
+        // Carry the revision forward across the reset instead of restarting it at 0: a fresh
+        // `PasteDocument` starts at revision 0, so a naive reset makes a pre-refresh revision-0
+        // result indistinguishable from a post-refresh one, and `applyDetection` would accept a
+        // stale result for the wrong document. Bumping past the old value keeps every revision
+        // this document has ever reported unique for its lifetime.
+        let next = detectionRevision + 1
         self = PasteDocument(origin: origin)
+        detectionRevision = next
     }
 
-    private mutating func redetect() {
-        let secrets = SecretDetector.scan(working)
-        detectedKinds = ContentDetector.detect(working, secrets: secrets)
-        secretMatches = secrets
-        secretScanSkipped = !SecretDetector.isScannable(working)
+    /// Installs `result` if it was computed for the current revision and nothing has been
+    /// installed for it yet. Returns whether it applied.
+    @discardableResult
+    public mutating func applyDetection(_ result: DetectionResult, revision: Int) -> Bool {
+        guard revision == detectionRevision, isDetecting else { return false }
+        detection = .complete(result)
+        return true
+    }
+
+    private mutating func invalidateDetection() {
+        detection = .pending
+        detectionRevision += 1
     }
 }

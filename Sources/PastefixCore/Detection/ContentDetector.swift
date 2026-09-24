@@ -1,14 +1,17 @@
 import Foundation
 
 public enum ContentDetector {
-    /// Buffers larger than this are not inspected; the badge is a nicety, summon latency is not.
+    /// Buffers larger than this are not inspected. Detection now runs off the main actor (Plan
+    /// 14), so this bounds work, not summon latency. Note the URL rule has its own tighter
+    /// bound: `.url` is never reported above `URLFinder.maxBytes` (256 KB) even though the
+    /// other rules run to 1 MB.
     public static let maxBytes = 1_048_576
 
     /// Scans `text` for every kind, including `.secret`.
     ///
     /// Callers that need the individual secret ranges as well should call `SecretDetector.scan`
     /// once and use `detect(_:secrets:)` instead: this wrapper's scan is not shared, so doing
-    /// both pays the (main-actor, up to 256 KB) scan twice per discrete event.
+    /// both pays the (up to 256 KB) scan twice per discrete event.
     public static func detect(_ text: String) -> Set<ContentKind> {
         detect(text, secrets: SecretDetector.scan(text))
     }

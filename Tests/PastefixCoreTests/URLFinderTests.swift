@@ -73,4 +73,24 @@ import Foundation
             #expect(f.url.absoluteString.hasSuffix(String(f.original)), Comment(rawValue: String(f.original)))
         }
     }
+
+    @Test func overCapReturnsNothing() {
+        let unit = "https://example.com/p?x=1 "
+        let atCap = String(repeating: unit, count: URLFinder.maxBytes / unit.utf8.count)
+        #expect(atCap.utf8.count <= URLFinder.maxBytes)
+        #expect(!URLFinder.find(in: atCap).isEmpty)
+        let over = atCap + String(repeating: "a", count: URLFinder.maxBytes - atCap.utf8.count + 1)
+        #expect(over.utf8.count > URLFinder.maxBytes)
+        #expect(URLFinder.find(in: over).isEmpty)
+    }
+
+    @Test func cancelledTaskStopsEnumerationEarly() async {
+        let text = String(repeating: "https://example.com/path?x=1 ", count: 8_000) // ~232 KB
+        #expect(URLFinder.find(in: text).count == 8_000)
+        let n = await Task { () -> Int in
+            withUnsafeCurrentTask { $0?.cancel() }
+            return URLFinder.find(in: text).count
+        }.value
+        #expect(n < 8_000)
+    }
 }

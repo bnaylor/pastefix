@@ -10,6 +10,11 @@ timestamp: 2026-09-20T18:00:00Z
 
 # Pastefix v2 — Content Transforms & Detection (Plan 3)
 
+> **Amendment (Plan 14, 2026-09-23):** every transform, including the ones added here, now
+> declares `maxInputBytes` and `timeout`, enforced by `TransformCoordinator` through `Deadline.run`;
+> `URLFinder` (used by detection, `URLCleaner`, and `MarkdownLink`) gained its own 256 KB cap and
+> cancellation support. See `docs/specs/2026-09-23-pastefix-v2-large-buffer-safety.md`.
+
 ## Scope
 
 Closes most of the requirements' **First** tier that the foundation spec left
