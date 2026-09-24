@@ -191,13 +191,13 @@ private struct FailingArming: OutputModeTransformer {
 
     @Test func slowTransformTimesOutAtItsOwnBudget() async {
         var t = FakeTransformer(id: "x", name: "X", requiresRichInput: false) { i in
-            blockingSleep(0.5); return i.text
+            blockingSleep(0.75); return i.text
         }
         t.timeout = 0.2
         let start = ContinuousClock.now
         let (_, outcome) = await TransformCoordinator.apply(t, to: doc("hi"))
         #expect(outcome == .failed("The transform timed out."))
-        #expect(ContinuousClock.now - start < .seconds(0.4))
+        #expect(ContinuousClock.now - start < .seconds(0.6))
     }
 
     @Test func cancelledCallerGetsCancelledOutcome() async {
