@@ -15,4 +15,15 @@ extension KeyboardShortcuts.Name {
     /// rebindable in Settings. No dots in the name — `KeyboardShortcuts` will
     /// not take them (AGENTS.md, Plan 9).
     static let uploadToZipline = Self("uploadToZipline", default: .init(.u, modifiers: [.command, .shift]))
+
+    /// Every global (non-snippet) hotkey the app registers, paired with the label its Shortcut-tab
+    /// Recorder shows. The single source of truth for the Shortcut tab's collision validation
+    /// (`SettingsView.validateSummon`, `.isSummonShortcut`): both walk this list instead of naming
+    /// each other's names by hand, so a hotkey added here is covered by construction rather than by
+    /// remembering every call site.
+    static let globalHotkeys: [(name: Self, label: String)] = [
+        (.summonPastefix, "Summon Pastefix"),
+        (.summonHistory, "Open history"),
+        (.uploadToZipline, "Upload to Zipline"),
+    ]
 }

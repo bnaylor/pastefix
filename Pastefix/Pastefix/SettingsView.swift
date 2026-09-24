@@ -256,18 +256,20 @@ struct SettingsView: View {
             KeyboardShortcuts.Recorder("Open history:", name: .summonHistory)
                 .shortcutValidation { validateSummon($0, recording: .summonHistory) }
             KeyboardShortcuts.Recorder("Upload to Zipline:", name: .uploadToZipline)
+                .shortcutValidation { validateSummon($0, recording: .uploadToZipline) }
         }
         .padding()
     }
 
-    /// The mirror of the Snippets tab's validation: a summon shortcut may not take a combo the
-    /// other summon or a pinned snippet already holds. Refusing from one side only would leave
-    /// the collision reachable by recording in the other order.
+    /// The mirror of the Snippets tab's validation: a global shortcut may not take a combo any
+    /// *other* global hotkey or a pinned snippet already holds. Refusing from one side only would
+    /// leave the collision reachable by recording in the other order.
     private func validateSummon(_ shortcut: KeyboardShortcuts.Shortcut,
                                 recording name: KeyboardShortcuts.Name) -> KeyboardShortcuts.ValidationResult {
-        let other: KeyboardShortcuts.Name = name == .summonPastefix ? .summonHistory : .summonPastefix
-        if KeyboardShortcuts.getShortcut(for: other) == shortcut {
-            return .disallow(reason: "Already used by Pastefix's other summon shortcut.")
+        if let clash = KeyboardShortcuts.Name.globalHotkeys.first(where: {
+            $0.name != name && KeyboardShortcuts.getShortcut(for: $0.name) == shortcut
+        }) {
+            return .disallow(reason: "Already used by Pastefix's “\(clash.label)” shortcut.")
         }
         if let clash = history.pinnedItems.first(where: {
             KeyboardShortcuts.getShortcut(for: SnippetHotkeys.name(for: $0.id)) == shortcut
@@ -277,10 +279,10 @@ struct SettingsView: View {
         return .allow
     }
 
-    /// True when the combo is one of the app's own reserved summon shortcuts.
+    /// True when the combo is one of the app's own reserved global hotkeys.
     static func isSummonShortcut(_ shortcut: KeyboardShortcuts.Shortcut) -> Bool {
-        [KeyboardShortcuts.Name.summonPastefix, .summonHistory].contains {
-            KeyboardShortcuts.getShortcut(for: $0) == shortcut
+        KeyboardShortcuts.Name.globalHotkeys.contains {
+            KeyboardShortcuts.getShortcut(for: $0.name) == shortcut
         }
     }
 
