@@ -9,19 +9,27 @@ struct CommandPaletteView: View {
 
     @State private var query = ""
     @State private var selection = 0
-    /// The transformer id the user actually highlighted, tracked alongside `selection`.
-    /// Detection can land mid-navigation and re-partition `results` (applicable-first ordering
-    /// depends on `detectedKinds`), which moves a transform to a different row out from under a
-    /// bare index. Keying on identity instead means ↵ always applies the transform the user saw
-    /// highlighted, not whatever the re-sorted list now puts at that row.
-    @State private var selectedID: String?
+    /// The kinds `results` ranks against, frozen at the moment the card first appears.
+    ///
+    /// The list must not move under the cursor: with no key pressed yet, `selection == 0` points
+    /// at whatever is in row 0, and a detection result landing after the panel renders (detection
+    /// runs off the main actor and finishes late) can re-partition `results` — applicable-first
+    /// ordering depends on `detectedKinds` — swapping row 0's occupant out from under an unmoved
+    /// cursor and making ↵ apply a transform the user never saw highlighted. Identity tracking
+    /// can't fix this: there is no prior identity to follow when nothing has been selected yet.
+    /// Freezing the kinds this list ranks against fixes it at the root — the view is recreated
+    /// each time the palette opens (`PanelView` inserts it only `if isPaletteOpen`), so the
+    /// snapshot lives exactly as long as one palette session. The trade-off: a palette opened
+    /// before detection lands shows the unpromoted order for its whole session, until reopened.
+    @State private var kindsSnapshot: Set<ContentKind>?
     @FocusState private var fieldFocused: Bool
 
     private var results: [SearchResult] {
-        TransformSearch.rank(
+        let kinds = kindsSnapshot ?? (model.document?.detectedKinds ?? [])
+        return TransformSearch.rank(
             query: query,
-            in: model.enabledTransformers(),
-            kinds: model.document?.detectedKinds ?? []
+            in: model.enabledTransformers(for: kinds),
+            kinds: kinds
         )
     }
 
@@ -53,7 +61,7 @@ struct CommandPaletteView: View {
                     .font(.title3)
                     .focused($fieldFocused)
                     .onSubmit { applyCurrentSelection() }
-                    .onChange(of: query) { _, _ in selection = 0; selectedID = nil }
+                    .onChange(of: query) { _, _ in selection = 0 }
             }
             .padding(12)
             Divider()
@@ -102,19 +110,10 @@ struct CommandPaletteView: View {
         // Cancel's `.cancelAction` already closes the palette first; this is a harmless
         // duplicate that keeps Esc working even if that button is ever disabled or removed.
         .onKeyPress(.escape) { onClose(); return .handled }
-        // When detection lands, `results` can re-partition without any key press. If the
-        // highlighted transform is still present, follow it to its new row; otherwise fall back
-        // to the old clamping behaviour.
-        .onChange(of: results.map(\.transformer.id)) { _, newIDs in
-            if let selectedID, let index = newIDs.firstIndex(of: selectedID) {
-                selection = index
-            } else {
-                // The chosen transform is gone (disabled, or the query moved on); forget it so it
-                // cannot pull the highlight back if it reappears without a key press.
-                selectedID = nil
-                selection = clampedSelection(in: results)
-            }
-        }
+        // Freeze the ranking kinds for this palette session — see `kindsSnapshot`'s doc comment.
+        // `PanelView` only inserts this view `if isPaletteOpen`, so `onAppear` fires exactly once
+        // per open and `@State` resets on the next one.
+        .onAppear { kindsSnapshot = model.document?.detectedKinds ?? [] }
     }
 
     private func row(_ result: SearchResult, isSelected: Bool) -> some View {
@@ -162,15 +161,12 @@ struct CommandPaletteView: View {
     /// Applies whatever is highlighted *now*. A retained handler must not close over render-time
     /// locals; read `@State` (which resolves through its storage box and is always current) at
     /// call time. Return applied the first result after arrowing until this was fixed.
+    ///
+    /// With `results` ranked against a frozen `kindsSnapshot`, the list cannot move under the
+    /// cursor, so a plain clamped index is exact again — no identity tracking needed.
     private func applyCurrentSelection() {
         let items = results
-        // Apply by identity when we have one and it's still in the list — the highlighted row may
-        // have moved since the last key press (see `selectedID`'s doc comment).
-        if let selectedID, let index = items.firstIndex(where: { $0.transformer.id == selectedID }) {
-            apply(items, index)
-        } else {
-            apply(items, clampedSelection(in: items))
-        }
+        apply(items, clampedSelection(in: items))
     }
 
     private func move(_ delta: Int, count: Int) {
@@ -178,10 +174,7 @@ struct CommandPaletteView: View {
         // Step from the index the list is actually showing, which is `selection` clamped
         // to the current result count — otherwise a stale larger `selection` skips rows.
         let current = min(selection, count - 1)
-        let newIndex = ((current + delta) % count + count) % count
-        selection = newIndex
-        let items = results
-        if items.indices.contains(newIndex) { selectedID = items[newIndex].transformer.id }
+        selection = ((current + delta) % count + count) % count
     }
 
     private func apply(_ items: [SearchResult], _ index: Int) {

@@ -120,8 +120,16 @@ final class AppModel: ObservableObject {
     /// detected content first. Settings uses `allTransformers`, which detection never reorders.
     func enabledTransformers() -> [any Transformer] {
         guard let document else { return [] }
+        return enabledTransformers(for: document.detectedKinds)
+    }
+
+    /// Same as `enabledTransformers()`, but ranked against a caller-supplied set of kinds instead
+    /// of the live document — `CommandPaletteView` freezes this at the moment the palette opens so
+    /// the list order does not move under the cursor when detection lands mid-navigation.
+    func enabledTransformers(for kinds: Set<ContentKind>) -> [any Transformer] {
+        guard let document else { return [] }
         let enabled = transformers.filter { TransformCoordinator.isEnabled($0, for: document) }
-        return PaletteOrdering.order(enabled, for: document.detectedKinds)
+        return PaletteOrdering.order(enabled, for: kinds)
     }
 
     /// Enabled transforms in the user's order, without detection-based promotion — for browse
