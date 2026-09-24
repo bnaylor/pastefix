@@ -216,7 +216,12 @@ JSON-backed shape as every other setting.
    stale; their work is never discarded to chase the clipboard.
    `PasteDocument.isStale(comparedToPasteboardChangeCount:)` is the one place
    that answers this, and `summon()` itself is untouched, so ⌘⇧C and ⌘⇧V are
-   unchanged. Only `changeCount` is read, never the pasteboard's contents.
+   unchanged. Deciding this reads `changeCount` alone, never the pasteboard's
+   contents. The overlay makes one other pasteboard read, and it is a *type
+   list*, not content: `NSPasteboard.general.types`, for the image check behind
+   the "the clipboard holds an image" message. No image bytes are read, and
+   nothing but the type list — same cost and same exposure as
+   `ClipboardBridge.snapshot()`'s own declared-types check.
 
    This was wrong in shipped code: any open session was reused, so copying a
    file of API keys with the panel up and pressing ⌘⇧U scanned the *previous*
@@ -330,8 +335,16 @@ here because they describe a measurement that no longer exists.
   untested rather than writing to a real login keychain from CI.
 
 No UI tests for the overlay; the app target has none today and this is not the
-change that starts that. Baseline was 438 tests / 51 suites after PR #46;
-shipped at 481 / 58 — +43 tests, +7 suites.
+change that starts that. What this feature added is seven suites' worth of
+upload coverage — `ZiplineHeadersTests`, `ZiplineFileExtensionTests`,
+`ZiplineClientTests`, `UploadLimitsTests`, `ZiplineTokenStoreTests`,
+`ZiplineSettingsTests`, `ZiplinePasteboardImageTests`.
+
+No running total is kept here, deliberately. `swift test` prints the current
+one, and a figure written into a spec is stale by the next commit: this line
+said "481 / 58" through three review rounds that each added tests, and it was
+562 / 66 before anyone noticed. A count is a build artefact, not a design
+decision, and this document is for the decisions.
 
 ## Project layout delta
 

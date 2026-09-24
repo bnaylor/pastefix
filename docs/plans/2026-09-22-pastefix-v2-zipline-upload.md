@@ -249,6 +249,13 @@ struct UploadPayloadTests {
 }
 ```
 
+> **Historical — the extension rule shipped differently.** `defaultExtension`
+> takes `Set<ContentKind>?`, not text, and answers `json` or `txt` only: the
+> Markdown case above was removed over a 427 KB file of fortunes that a
+> presence-only weak signal called Markdown. The spec carries the current rule,
+> and `ZiplineUpload.defaultExtension(for:)` carries the reasoning. This plan is
+> kept as written.
+
 - [ ] **Step 2: Run to verify they fail**
 
 ```bash
@@ -859,6 +866,13 @@ public final class InMemoryTokenStore: ZiplineTokenStore, @unchecked Sendable {
 }
 ```
 
+> **Historical — `kSecAttrAccessible` is not set in the shipped store.** The
+> attribute is honoured only by the data-protection keychain, and this query
+> targets the legacy login keychain, so setting it stated an intent the item does
+> not carry. `KeychainTokenStore`'s doc comment records the measurements behind
+> dropping it and what the item does carry instead (an ACL bound to the signing
+> identity). This plan is kept as written.
+
 - [ ] **Step 4: Run to verify they pass**
 
 ```bash
@@ -1083,6 +1097,8 @@ State machine, and the order matters:
    - Expiration: Never / 1 h / 1 d / 7 d, seeded from `settings.ziplineDefaultExpiry` via `SettingsStore.expiry(fromRaw:)`.
    - Burn on read: a toggle, seeded from `settings.ziplineDefaultBurnOnRead`. **Separate from expiration** — it is `x-zipline-max-views`, not an expiry value.
    - Extension: seeded from `ZiplineUpload.defaultExtension(for: text)`, overridable.
+     (Historical: it shipped taking `Set<ContentKind>?` and answering `json` or
+     `txt` only — see the spec.)
    - A secret row, which is one of: nothing yet (under ~150 ms), "Checking for secrets…", "No secrets found", or the finding list.
    - Upload is **disabled until the scan resolves**.
 3. **`uploading`** — Upload replaced by progress; controls disabled.
