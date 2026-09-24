@@ -206,5 +206,9 @@ public enum ZiplineUploadError: Error, Equatable {
     case server(status: Int, message: String?)
     /// A 2xx whose body did not yield `files[0].url`. Never treated as success.
     case malformedResponse
+    /// A 2xx that ran past `UploadLimits.maxResponseBytes` — the reply was not read past the
+    /// cap, so it is not "malformed", it is a reply this client refused to keep reading. In
+    /// practice: the server URL points at something that answers an upload with a web page.
+    case oversizedResponse
     case transport(String)
 }

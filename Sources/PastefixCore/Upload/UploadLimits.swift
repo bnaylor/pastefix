@@ -51,6 +51,20 @@ public enum UploadLimits {
     /// raising the cap without raising this is a test failure rather than a field report.
     public static let resourceTimeout: TimeInterval = 600
 
+    /// The most of a *reply* this client will read before giving up on it.
+    ///
+    /// A Zipline `{"files":[{"url":"…"}]}` body is a few hundred bytes. The server URL, though,
+    /// is a free-text field: point it at a file host, a captive portal, or a proxy and what
+    /// comes back is an HTML page of arbitrary size, which `session.data(for:)` buffered in
+    /// full before `shortURL(from:)` got to reject it. This repo's network pattern is a hard
+    /// timeout *and* a byte cap (`URLSessionTitleFetcher.maxBytes`, same 256 KB), so the read
+    /// is streamed and stops here.
+    ///
+    /// Deliberately not derived from `expectedContentLength`: it is `-1` for any chunked
+    /// response, and it is a number the other end chose. The cap is enforced against the bytes
+    /// actually delivered.
+    public static let maxResponseBytes = 262_144
+
     /// The slowest uplink on which the largest admissible upload can still finish. The cap and
     /// the resource timeout are two ways of saying this number; it exists so that changing
     /// either one has to be an argument about it.

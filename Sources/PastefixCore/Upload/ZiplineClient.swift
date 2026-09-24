@@ -66,21 +66,52 @@ public struct URLSessionZiplineClient: ZiplineUploading {
         let session = URLSession(configuration: config)
         defer { session.invalidateAndCancel() }
 
-        let data: Data
+        // A *per-task* delegate, never a session delegate — see `SameOriginRedirectPolicy`.
+        // Held rather than passed inline so its refusal reason is readable afterwards: a
+        // refused 3xx is delivered as a 3xx response, and which refusal it was decides which
+        // message the user gets.
+        let policy = SameOriginRedirectPolicy()
+        let bytes: URLSession.AsyncBytes
         let response: URLResponse
+        let data: Data
+        let truncated: Bool
         do {
-            // A *per-task* delegate, never a session delegate — see `SameOriginRedirectPolicy`.
-            (data, response) = try await session.data(for: req, delegate: SameOriginRedirectPolicy())
+            // `bytes(for:)`, not `data(for:)`: the reply is read through a byte cap rather than
+            // buffered in full. See `UploadLimits.maxResponseBytes`.
+            (bytes, response) = try await session.bytes(for: req, delegate: policy)
+            (data, truncated) = try await Self.readCapped(bytes, limit: UploadLimits.maxResponseBytes)
         } catch {
             throw ZiplineUploadError.transport(error.localizedDescription)
         }
 
         guard let http = response as? HTTPURLResponse else { throw ZiplineUploadError.malformedResponse }
+        // Status first: a 404 whose error page ran past the cap is still best reported as a 404,
+        // and a body truncated mid-JSON simply does not parse, so `error(status:…)` falls back to
+        // naming the URL rather than quoting half a message.
         guard (200..<300).contains(http.statusCode) else {
-            throw Self.error(status: http.statusCode, body: data, requestURL: endpoint)
+            throw Self.error(status: http.statusCode, body: data, requestURL: endpoint,
+                             refusal: policy.refusal)
         }
+        guard !truncated else { throw ZiplineUploadError.oversizedResponse }
         guard let url = Self.shortURL(from: data) else { throw ZiplineUploadError.malformedResponse }
         return url
+    }
+
+    /// Reads at most `limit` bytes of the reply, reporting whether there was more.
+    ///
+    /// Stops on reaching the cap and leaves the rest of the stream unread — the caller's
+    /// `session.invalidateAndCancel()` tears the task down. `truncated` is returned rather than
+    /// thrown because the status code outranks it: an over-long *error* page is still a status
+    /// error, and only an over-long *2xx* is `.oversizedResponse`.
+    static func readCapped(_ bytes: URLSession.AsyncBytes,
+                           limit: Int) async throws -> (body: Data, truncated: Bool) {
+        var data = Data()
+        data.reserveCapacity(min(limit, 8_192))
+        for try await byte in bytes {
+            if data.count >= limit { return (data, true) }
+            data.append(byte)
+        }
+        return (data, false)
     }
 
     /// Zipline's own iShare-era config surfaces a `requestURL` of exactly
@@ -140,17 +171,33 @@ public struct URLSessionZiplineClient: ZiplineUploading {
     /// none: a bare 404 from a misconfigured server URL is otherwise
     /// undiagnosable from the UI. Never the token — it is a header, not part
     /// of this URL, so there is nothing to scrub.
-    private static func error(status: Int, body: Data, requestURL: URL) -> ZiplineUploadError {
+    ///
+    /// `refusal` is the redirect policy's own answer to "why did I not follow it", which is the
+    /// only way to tell a cross-origin refusal from a same-origin 301 whose body CFNetwork had
+    /// already dropped. Both are 3xx statuses and the remedy is the same sentence's worth of
+    /// advice, but naming the wrong cause sends the user looking for a redirect to another host
+    /// that never happened.
+    private static func error(status: Int, body: Data, requestURL: URL,
+                              refusal: SameOriginRedirectPolicy.Refusal?) -> ZiplineUploadError {
         if status == 401 { return .unauthorized }
         // A 3xx can only reach here because `SameOriginRedirectPolicy` refused to follow it:
-        // a same-origin redirect is followed and its final response is what lands. Say so,
+        // an allowed redirect is followed and its final response is what lands. Say so,
         // because a bare "Server error 308" with the upload's own URL in it is the least
         // diagnosable message this client can produce.
         if (300..<400).contains(status) {
-            return .server(status: status,
-                           message: "The server redirected the upload to a different host. "
-                                  + "Pastefix won't send your text or token to an address you "
-                                  + "didn't configure — set the server URL to the final address.")
+            switch refusal {
+            case .bodyDropped:
+                return .server(status: status,
+                               message: "The server redirected the upload with a status (\(status)) "
+                                      + "that drops the uploaded text, so Pastefix stopped rather "
+                                      + "than send an empty request — set the server URL to the "
+                                      + "address it redirects to.")
+            case .crossOrigin, nil:
+                return .server(status: status,
+                               message: "The server redirected the upload to a different host. "
+                                      + "Pastefix won't send your text or token to an address you "
+                                      + "didn't configure — set the server URL to the final address.")
+            }
         }
         let object = try? JSONSerialization.jsonObject(with: body) as? [String: Any]
         let message = object?["message"] as? String
@@ -197,15 +244,49 @@ public struct URLSessionZiplineClient: ZiplineUploading {
 /// It also removes the question of whether a given CFNetwork build strips `authorization`
 /// across origins by itself, which is version-dependent and not something to rely on.
 ///
+/// **And: refuse a redirect whose method is no longer `POST`.** Same-origin is necessary but
+/// not sufficient. CFNetwork implements the RFC 7231 rewrite for 301, 302 and 303 — a `POST`
+/// becomes a `GET` and the body is dropped — so a same-origin 301 from `/api/upload` to
+/// `/api/upload/` was previously followed as a bodiless `GET`, which Zipline answers 404 or
+/// 405, surfacing as a bare "Server error 405" about an upload that never carried the text.
+/// Only 307 and 308 preserve the method and the body. Refusing the rewritten hop turns that
+/// into a message naming the cause, with the one fix that works: configure the final address.
+///
 /// What this costs: a reverse proxy that answers `http` with a 301 to `https` is
 /// cross-origin (the scheme differs) and is refused, so the user has to type the `https`
 /// URL. App Transport Security already forces that for any named host (see the ATS note in
-/// `UploadSettingsView`), so in practice it costs close to nothing. The benign same-origin
-/// cases — trailing-slash normalisation, a path rewrite in front of `api/upload` — still work.
+/// `UploadSettingsView`), so in practice it costs close to nothing. Of the benign same-origin
+/// cases, the ones that arrive as a 307 or 308 — a path rewrite in front of `api/upload` —
+/// still work; trailing-slash normalisation sent as a 301 does not, and cannot: there is no
+/// body left to send by the time this delegate is consulted. That was the previous comment's
+/// claim and it was wrong.
 ///
-/// Stateless, hence `@unchecked Sendable`: it stores nothing and the delegate method reads
-/// only its arguments.
+/// Not stateless, and that is the one piece of state: the reason a redirect was refused, so
+/// the delivered 3xx can be reported with the right cause. `@unchecked Sendable` because the
+/// delegate callback and the client's read happen on different threads; the `NSLock` is the
+/// synchronisation that makes the promise true (AGENTS.md: if you write `@unchecked Sendable`,
+/// the synchronization must actually exist).
 final class SameOriginRedirectPolicy: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+    /// Why a redirect was not followed. Only ever set by the delegate callback, and only for a
+    /// refusal — a followed redirect leaves it nil.
+    enum Refusal: Sendable, Equatable {
+        /// The target left the origin the user configured (scheme, host or port differs).
+        case crossOrigin
+        /// Same origin, but the redirect status rewrote `POST` to `GET`, so the upload body is
+        /// already gone. 301, 302 and 303 do this; 307 and 308 do not.
+        case bodyDropped
+    }
+
+    private let lock = NSLock()
+    private var recorded: Refusal?
+
+    /// The first refusal on this task, or nil if no redirect was refused. First rather than
+    /// last: a chain stops at the hop that was refused, so there can only be one.
+    var refusal: Refusal? {
+        lock.lock(); defer { lock.unlock() }
+        return recorded
+    }
+
     /// Checks the claim above rather than merely stating it: this type must not gain a
     /// challenge callback, session-level or task-level, by accident.
     override init() {
@@ -219,15 +300,33 @@ final class SameOriginRedirectPolicy: NSObject, URLSessionTaskDelegate, @uncheck
                     willPerformHTTPRedirection response: HTTPURLResponse,
                     newRequest request: URLRequest,
                     completionHandler: @escaping (URLRequest?) -> Void) {
-        completionHandler(Self.redirect(from: task.originalRequest?.url, to: request))
+        let refusal = Self.refusal(from: task.originalRequest?.url, to: request)
+        if let refusal {
+            lock.lock()
+            if recorded == nil { recorded = refusal }
+            lock.unlock()
+        }
+        completionHandler(refusal == nil ? request : nil)
     }
 
-    /// Compared against the **original** request's URL rather than the previous hop, so a
-    /// chain cannot walk off the configured origin one same-origin-looking step at a time.
+    /// Why this redirect must not be followed, or nil when it may be.
+    ///
+    /// Origin is compared against the **original** request's URL rather than the previous hop,
+    /// so a chain cannot walk off the configured origin one same-origin-looking step at a time.
+    static func refusal(from origin: URL?, to request: URLRequest) -> Refusal? {
+        guard let origin, let target = request.url, isSameOrigin(origin, target) else {
+            return .crossOrigin
+        }
+        // Not "is the status 307/308": this is the method CFNetwork has already decided to use,
+        // which is the thing that actually determines whether the body survives.
+        guard request.httpMethod?.uppercased() == "POST" else { return .bodyDropped }
+        return nil
+    }
+
+    /// The request to follow, or nil to refuse. Kept as the shape the delegate contract wants,
+    /// and defined in terms of `refusal(from:to:)` so there is one rule, not two.
     static func redirect(from origin: URL?, to request: URLRequest) -> URLRequest? {
-        guard let origin, let target = request.url,
-              isSameOrigin(origin, target) else { return nil }
-        return request
+        refusal(from: origin, to: request) == nil ? request : nil
     }
 
     /// Origin in the RFC 6454 sense: scheme, host and port, with the scheme's default port

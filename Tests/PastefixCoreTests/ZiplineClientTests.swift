@@ -53,7 +53,15 @@ private final class StubProtocol: URLProtocol, @unchecked Sendable {
                                            headerFields: ["Location": location])!
             var followUp = request
             followUp.url = URL(string: location, relativeTo: request.url)?.absoluteURL
-            // 307/308 preserve the method and the body; that is exactly why they matter here.
+            // Faithful to CFNetwork's RFC 7231 rewrite, because the rewrite is what the policy
+            // under test is about: 301, 302 and 303 turn a POST into a bodiless GET, while 307
+            // and 308 preserve both. A stub that always re-POSTed could not tell the two apart —
+            // and did not, which is why a same-origin 301 went untested.
+            if [301, 302, 303].contains(Self.redirectStatus) {
+                followUp.httpMethod = "GET"
+                followUp.httpBody = nil
+                followUp.httpBodyStream = nil
+            }
             client?.urlProtocol(self, wasRedirectedTo: followUp, redirectResponse: response)
             client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
             client?.urlProtocol(self, didLoad: Data())
@@ -277,6 +285,44 @@ struct ZiplineClientTests {
         #expect(sentElsewhere.isEmpty)
     }
 
+    @Test("a same-origin 301 is refused, because CFNetwork has already dropped the body")
+    func redirectSameOrigin301IsRefused() async throws {
+        let c = client()
+        // The realistic shape: the server normalises `/api/upload` to `/api/upload/` with a 301.
+        // Same origin, so the origin check passes — and it must still be refused, because a 301
+        // rewrote the POST to a bodiless GET, which Zipline answers 404/405. Before this the
+        // request was followed and the user saw a bare "Server error 405" about an upload whose
+        // text never left.
+        StubProtocol.redirectStatus = 301
+        StubProtocol.redirectTo = "https://zip.example.test/api/upload/"
+        let thrown = await #expect(throws: ZiplineUploadError.self) {
+            try await c.upload(upload, to: server, token: "tok_123")
+        }
+        guard let thrown, case .server(let status, let message) = thrown else {
+            Issue.record("expected server, got \(String(describing: thrown))"); return
+        }
+        #expect(status == 301)
+        // Names the cause the user can act on, and does *not* claim another host was involved.
+        #expect(message?.contains("drops the uploaded text") == true)
+        #expect(message?.contains("server URL") == true)
+        #expect(message?.contains("different host") == false)
+        // One hop only: nothing was re-sent, with or without the body.
+        #expect(StubProtocol.requests.count == 1)
+    }
+
+    @Test("a same-origin 308 is still followed: 308 preserves the method and the body")
+    func redirectSameOrigin308IsFollowed() async throws {
+        let c = client()
+        StubProtocol.redirectStatus = 308
+        StubProtocol.redirectTo = "https://zip.example.test/api/upload/"
+        StubProtocol.body = #"{"files":[{"url":"https://zip.example.test/u/abc"}]}"#.data(using: .utf8)!
+        let url = try await c.upload(upload, to: server, token: "tok_123")
+        #expect(url == URL(string: "https://zip.example.test/u/abc"))
+        #expect(StubProtocol.requests.count == 2)
+        // The second hop carried the text — which is the whole difference from the 301 above.
+        #expect(String(decoding: StubProtocol.requests.last!.body, as: UTF8.self).contains("hello world"))
+    }
+
     @Test("a redirect to a different port on the same host is cross-origin and refused")
     func redirectDifferentPortIsRefused() async throws {
         let c = client()
@@ -302,20 +348,24 @@ struct ZiplineClientTests {
     // directly, so a change to `isSameOrigin` fails here with a readable reason rather than
     // only as a puzzling integration failure.
 
-    @Test("the redirect policy allows a same-origin target and the scheme's default port")
+    /// A redirect as CFNetwork hands it to the delegate: the method it has already decided on.
+    private func hop(_ target: String, method: String = "POST") -> URLRequest {
+        var request = URLRequest(url: URL(string: target)!)
+        request.httpMethod = method
+        return request
+    }
+
+    @Test("the redirect policy allows a same-origin POST target and the scheme's default port")
     func policyAllowsSameOrigin() {
         let origin = URL(string: "https://zip.example.test/api/upload")!
         #expect(SameOriginRedirectPolicy.redirect(
-            from: origin,
-            to: URLRequest(url: URL(string: "https://zip.example.test/elsewhere")!)) != nil)
+            from: origin, to: hop("https://zip.example.test/elsewhere")) != nil)
         // Explicit :443 is the same origin as an implicit one.
         #expect(SameOriginRedirectPolicy.redirect(
-            from: origin,
-            to: URLRequest(url: URL(string: "https://zip.example.test:443/api/upload")!)) != nil)
+            from: origin, to: hop("https://zip.example.test:443/api/upload")) != nil)
         // Host comparison is case-insensitive; a case difference is not a different origin.
         #expect(SameOriginRedirectPolicy.redirect(
-            from: origin,
-            to: URLRequest(url: URL(string: "https://ZIP.EXAMPLE.TEST/api/upload")!)) != nil)
+            from: origin, to: hop("https://ZIP.EXAMPLE.TEST/api/upload")) != nil)
     }
 
     @Test("the redirect policy refuses a different host, port or scheme")
@@ -326,10 +376,95 @@ struct ZiplineClientTests {
                        "https://zip.example.test:8443/api/upload",
                        "http://zip.example.test/api/upload",
                        "file:///etc/passwd"] {
-            #expect(SameOriginRedirectPolicy.redirect(
-                from: origin,
-                to: URLRequest(url: URL(string: target)!)) == nil,
-                    "should have refused \(target)")
+            #expect(SameOriginRedirectPolicy.refusal(from: origin, to: hop(target)) == .crossOrigin,
+                    "should have refused \(target) as cross-origin")
+        }
+    }
+
+    @Test("the redirect policy refuses a same-origin hop whose method is no longer POST")
+    func policyRefusesDroppedBody() {
+        let origin = URL(string: "https://zip.example.test/api/upload")!
+        // The 301/302/303 shape: same origin, trailing slash added, method rewritten to GET by
+        // CFNetwork — so the upload body is already gone and following it would send nothing.
+        #expect(SameOriginRedirectPolicy.refusal(
+            from: origin, to: hop("https://zip.example.test/api/upload/", method: "GET"))
+                == .bodyDropped)
+        #expect(SameOriginRedirectPolicy.redirect(
+            from: origin, to: hop("https://zip.example.test/api/upload/", method: "GET")) == nil)
+        // Cross-origin outranks it: the message must name the host, not the body.
+        #expect(SameOriginRedirectPolicy.refusal(
+            from: origin, to: hop("https://evil.example.test/api/upload", method: "GET"))
+                == .crossOrigin)
+        // A followed hop records nothing.
+        #expect(SameOriginRedirectPolicy.refusal(
+            from: origin, to: hop("https://zip.example.test/api/upload/")) == nil)
+    }
+
+    // MARK: - Response byte cap: a reply that is not a Zipline reply is not read in full
+
+    @Test("a 2xx reply past the byte cap is refused rather than buffered")
+    func oversizeReplyIsRefused() async throws {
+        let c = client()
+        // What a file host, a captive portal or a proxy in front of the wrong URL actually
+        // returns: a large HTML page with a 200. Before the cap this was read into memory in
+        // full before `shortURL(from:)` rejected it.
+        let page = "<html><body>" + String(repeating: "x", count: UploadLimits.maxResponseBytes * 2)
+        StubProtocol.body = Data(page.utf8)
+        #expect(StubProtocol.body.count > UploadLimits.maxResponseBytes)
+        await #expect(throws: ZiplineUploadError.oversizedResponse) {
+            try await c.upload(upload, to: server, token: "tok_123")
+        }
+    }
+
+    @Test("a reply just under the byte cap is still read and parsed")
+    func replyUnderCapIsAccepted() async throws {
+        let c = client()
+        // The cap must be a ceiling on the read, not a size the parser trips over: a verbose but
+        // legitimate reply (Zipline echoes file metadata) still has to yield the URL.
+        let prefix = #"{"files":[{"url":"https://zip.example.test/u/abc","name":""#
+        let suffix = #""}]}"#
+        let padding = UploadLimits.maxResponseBytes - prefix.utf8.count - suffix.utf8.count - 1
+        StubProtocol.body = Data((prefix + String(repeating: "a", count: padding) + suffix).utf8)
+        #expect(StubProtocol.body.count == UploadLimits.maxResponseBytes - 1)
+        let url = try await c.upload(upload, to: server, token: "tok_123")
+        #expect(url == URL(string: "https://zip.example.test/u/abc"))
+    }
+
+    @Test("an oversize error page is still reported by its status, not as oversize")
+    func oversizeErrorPageKeepsItsStatus() async throws {
+        let c = client()
+        StubProtocol.status = 404
+        StubProtocol.body = Data(String(repeating: "x", count: UploadLimits.maxResponseBytes * 2).utf8)
+        let thrown = await #expect(throws: ZiplineUploadError.self) {
+            try await c.upload(upload, to: server, token: "tok_123")
+        }
+        guard let thrown, case .server(let status, let message) = thrown else {
+            Issue.record("expected server, got \(String(describing: thrown))"); return
+        }
+        // The status is the diagnosable part; the truncated body simply does not parse as JSON,
+        // so the message falls back to naming the URL.
+        #expect(status == 404)
+        #expect(message?.contains("zip.example.test/api/upload") == true)
+    }
+
+    @Test("readCapped stops at the limit and says the stream had more")
+    func readCappedReportsTruncation() async throws {
+        // The cap itself, without a transport: `truncated` is what decides `.oversizedResponse`,
+        // so it is worth pinning at both sides of the boundary.
+        StubProtocol.reset()
+        StubProtocol.body = Data(String(repeating: "y", count: 10).utf8)
+        // Exactly at the limit is not truncated; one byte over is.
+        for (limit, expectTruncated, expectCount) in [(10, false, 10), (9, true, 9), (11, false, 10)] {
+            let session = URLSession(configuration: {
+                let config = URLSessionConfiguration.ephemeral
+                config.protocolClasses = [StubProtocol.self]
+                return config
+            }())
+            defer { session.invalidateAndCancel() }
+            let (bytes, _) = try await session.bytes(for: URLRequest(url: server))
+            let (data, truncated) = try await URLSessionZiplineClient.readCapped(bytes, limit: limit)
+            #expect(truncated == expectTruncated, "limit \(limit)")
+            #expect(data.count == expectCount, "limit \(limit)")
         }
     }
 

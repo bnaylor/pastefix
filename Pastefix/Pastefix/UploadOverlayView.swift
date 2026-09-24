@@ -875,6 +875,13 @@ struct UploadOverlayView: View {
             // Explicit about the clipboard: a 2xx with an unreadable body is the one failure that
             // might plausibly have stored something, and the user needs to know they have no link.
             return "The server replied with something that was not an upload result. Nothing was copied."
+        case .oversizedResponse:
+            // Named apart from `.malformedResponse` because the cause is specific and the fix is:
+            // a reply this long is a web page, which means the server URL is pointing at a file
+            // host, a login page or a proxy rather than at Zipline.
+            return "The server replied with more than "
+                 + "\(UploadLimits.maxResponseBytes / 1024) KB instead of an upload result — "
+                 + "check the Zipline server URL in Settings. Nothing was copied."
         case .transport(let detail):
             return "Couldn't reach the server: \(detail)"
         }
