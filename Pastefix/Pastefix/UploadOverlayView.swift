@@ -34,6 +34,16 @@ struct UploadOverlayView: View {
     /// clipboard the bytes below it no longer came from. It is the header's claim about what is
     /// about to be scanned and sent, so it has to be pinned to the same instant as the bytes.
     @State private var sourceIsClipboard: Bool
+    /// Whether `source` is empty **because** the clipboard holds only an image — `.tiff` or
+    /// `.png`, the two types `PasteboardMonitor` and `HistoryStore` already treat as one. Decided
+    /// once in `init`, from the same snapshot instant as `source` and `sourceIsClipboard`: only
+    /// `NSPasteboard.general.types` is read, never image bytes, matching `ClipboardBridge.snapshot()`
+    /// itself never reading them (image upload is #48, out of scope here).
+    ///
+    /// Gated on `sourceIsClipboard` so an edited panel buffer that happens to be empty — the
+    /// user's own choice, nothing to do with whatever the clipboard currently holds — never
+    /// borrows this explanation. See `ZiplinePasteboardImage`.
+    @State private var clipboardHasUnsupportedImage: Bool
     @State private var phase: Phase
     @State private var scanState: ScanState = .scanning
     /// `source` with its findings redacted, measured in bytes — nil until the scan lands, and nil
@@ -184,8 +194,14 @@ struct UploadOverlayView: View {
         // nothing and prompts for nothing. ⌘⇧U has already re-snapshotted a stale, unedited
         // document by the time this runs (`AppDelegate.summonUpload`), so "not the clipboard"
         // here means the buffer really is the panel's own — edited, or loaded from history.
-        _sourceIsClipboard = State(initialValue:
-            model.document?.matchesPasteboard(changeCount: NSPasteboard.general.changeCount) ?? false)
+        let sourceIsClipboard = model.document?.matchesPasteboard(changeCount: NSPasteboard.general.changeCount) ?? false
+        _sourceIsClipboard = State(initialValue: sourceIsClipboard)
+        // Cheap on purpose: `NSPasteboard.general.types` is a type-list read, the same cost
+        // `PasteboardMonitor`'s own gate pays before touching content, and nothing here decodes
+        // or even fetches the image data the upload path deliberately never reads.
+        _clipboardHasUnsupportedImage = State(initialValue:
+            text.isEmpty && sourceIsClipboard
+                && ZiplinePasteboardImage.typesIndicateImage(NSPasteboard.general.types ?? []))
         // Seeded here rather than in `onAppear` so the very first frame is already the right
         // state — in particular, a user with no server configured never sees a flash of controls
         // they cannot use, which is the whole point of checking "configured?" before anything
@@ -347,7 +363,11 @@ struct UploadOverlayView: View {
     /// when the clipboard holds something Pastefix itself wrote (the last upload's short URL).
     private var sourceDescription: String {
         let origin = sourceIsClipboard ? "the clipboard" : "the panel buffer"
-        guard !source.isEmpty else { return "\(origin) — empty" }
+        guard !source.isEmpty else {
+            // "empty" is the wrong word for a clipboard that holds an image — there is something
+            // there, just nothing this overlay can send yet. See `clipboardHasUnsupportedImage`.
+            return clipboardHasUnsupportedImage ? "\(origin) — image, not supported yet" : "\(origin) — empty"
+        }
         return "\(origin) · \(HistoryFormatting.byteLabel(payloadByteCount))"
     }
 
@@ -553,7 +573,16 @@ struct UploadOverlayView: View {
             // Under the delay: nothing at all. A row that appears and is replaced within a frame
             // or two is a flicker, and an empty row is not a claim about the text either way.
         case .clean:
-            if source.isEmpty {
+            if clipboardHasUnsupportedImage {
+                // Correct that there is nothing to send; the generic empty-buffer line below is
+                // wrong about *why* here — the clipboard is not empty, it holds an image, and
+                // image upload is simply not built yet (#48, out of scope for this feature). See
+                // `ZiplinePasteboardImage`.
+                Label("The clipboard holds an image. Image upload isn't supported yet — that's #48.",
+                      systemImage: "photo")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            } else if source.isEmpty {
                 // True but useless: an empty buffer has no secrets in the same way it has nothing
                 // else, and a clean bill of health on nothing implies something was examined.
                 Label("Nothing to scan — the buffer is empty.", systemImage: "questionmark.circle")
