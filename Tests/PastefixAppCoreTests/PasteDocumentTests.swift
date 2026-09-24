@@ -92,8 +92,20 @@ import PastefixCore
         #expect(!d.isDetecting && d.detectionRevision == 3 && d.detectedKinds == [.json])
         d.pushState("plain")                        // equal text is still an event
         #expect(d.isDetecting && d.detectionRevision == 4)
+        let beforeRefresh = d.detectionRevision
         d.refresh(origin: ClipboardSnapshot(plainText: "www.example.com", richRTFD: nil))
-        #expect(d.isDetecting && d.detectionRevision == 0)
+        #expect(d.isDetecting && d.detectionRevision > beforeRefresh)
+    }
+
+    @Test func refreshRefusesAPreRefreshResult() {
+        var d = doc("https://example.com")
+        settle(&d)
+        let preRefreshRevision = d.detectionRevision
+        let preRefreshResult = DetectionResult.compute(d.working)
+        d.refresh(origin: ClipboardSnapshot(plainText: "something else entirely", richRTFD: nil))
+        let applied = d.applyDetection(preRefreshResult, revision: preRefreshRevision)
+        #expect(!applied)
+        #expect(d.isDetecting)
     }
 
     @Test func staleRevisionIsRefused() {

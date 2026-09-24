@@ -71,7 +71,14 @@ public struct PasteDocument: Sendable {
     }
 
     public mutating func refresh(origin: ClipboardSnapshot) {
+        // Carry the revision forward across the reset instead of restarting it at 0: a fresh
+        // `PasteDocument` starts at revision 0, so a naive reset makes a pre-refresh revision-0
+        // result indistinguishable from a post-refresh one, and `applyDetection` would accept a
+        // stale result for the wrong document. Bumping past the old value keeps every revision
+        // this document has ever reported unique for its lifetime.
+        let next = detectionRevision + 1
         self = PasteDocument(origin: origin)
+        detectionRevision = next
     }
 
     /// Installs `result` if it was computed for the current revision and nothing has been

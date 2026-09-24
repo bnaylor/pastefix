@@ -5,16 +5,21 @@ import PastefixCore
 /// back on it.
 ///
 /// Single slot, not a queue: a request that arrives while a scan runs replaces whatever was
-/// waiting and cancels the running scan (`URLFinder` observes cancellation; the other rules are
-/// fast). Queueing would let rapid undo/redo stack 1 MB scans — the `TIFFConversionSlot` lesson.
-/// A cancelled scan's result is discarded; so is a finished scan's when something newer is
-/// waiting, because the document it describes is already gone.
+/// waiting and cancels the running scan. Queueing would let rapid undo/redo stack 1 MB scans —
+/// the `TIFFConversionSlot` lesson. A cancelled scan's result is discarded; so is a finished
+/// scan's when something newer is waiting, because the document it describes is already gone.
 ///
-/// The slot is soft across `cancelAll()`: it lets go of the running scan rather than waiting for
-/// it, so that scan keeps running to completion in the background, cancelled and undelivered, and
-/// an immediate `request` right after `cancelAll()` may briefly overlap it. That's bounded by the
-/// same caps as any other scan and by `URLFinder` observing cancellation, so the overlap is short
-/// and never accumulates.
+/// The slot is hard, process-wide, including across `cancelAll()`: at most one scan ever runs.
+/// `cancelAll()` clears `waiting` and cancels the running scan's task, but does not let go of the
+/// slot — the cancelled scan keeps it until it actually finishes in the background, cancelled and
+/// undelivered. A `request` that arrives while that cancelled scan is still winding down becomes
+/// `waiting` (the same path an ordinary displacement takes) and starts only once the slot is free.
+/// This matters because almost nothing here observes cancellation: of `SecretDetector` and the
+/// `ContentDetector` rules, only `URLFinder` checks `Task.isCancelled` (and it's skipped above
+/// 256 KB), so a "cancelled" scan usually just runs to completion anyway. If the slot were
+/// released early, a cancelled-but-still-running scan could overlap a fresh one, and repeated
+/// summon/dismiss could accumulate overlapping scans without bound. The slot, not cancellation,
+/// is what keeps this to one scan at a time.
 @MainActor
 public final class DetectionScheduler {
     public struct Request: Sendable {
@@ -45,9 +50,11 @@ public final class DetectionScheduler {
     }
 
     public func cancelAll() {
+        // Cancel the running scan but keep holding the slot for it: it finishes in the
+        // background, undelivered (see the type doc), and `finished` releases the slot then. A
+        // request arriving in the meantime goes through `waiting`, same as any displacement.
         waiting = nil
         running?.task.cancel()
-        running = nil
     }
 
     private func start(_ req: Request) {

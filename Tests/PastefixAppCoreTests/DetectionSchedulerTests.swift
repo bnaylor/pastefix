@@ -3,12 +3,19 @@ import Foundation
 import PastefixCore
 @testable import PastefixAppCore
 
-/// Records which texts the injected scan ran for, from detached tasks.
+/// Records which texts the injected scan ran for, from detached tasks, and the peak number
+/// simultaneously in flight — evidence that the slot is a hard bound, not just an assertion about
+/// delivery order.
 private final class Log: @unchecked Sendable {
     private let lock = NSLock()
     private var items: [String] = []
+    private var inFlight = 0
+    private var peak = 0
     var value: [String] { lock.withLock { items } }
+    var maxConcurrent: Int { lock.withLock { peak } }
     func add(_ s: String) { lock.withLock { items.append(s) } }
+    func enter() { lock.withLock { inFlight += 1; peak = max(peak, inFlight) } }
+    func exit() { lock.withLock { inFlight -= 1 } }
 }
 
 @MainActor
@@ -25,7 +32,13 @@ private func waitUntil(_ condition: @MainActor () -> Bool, ceiling: Duration = .
 }
 
 private func slowScan(_ log: Log, sleep: TimeInterval = 0.15) -> @Sendable (String) -> DetectionResult {
-    { text in log.add(text); Thread.sleep(forTimeInterval: sleep); return DetectionResult.compute(text) }
+    { text in
+        log.add(text)
+        log.enter()
+        defer { log.exit() }
+        Thread.sleep(forTimeInterval: sleep)
+        return DetectionResult.compute(text)
+    }
 }
 
 /// Records whether an injected scan observed cancellation and how long that took.
@@ -62,6 +75,7 @@ private final class CancelObservation: @unchecked Sendable {
         // No extra settle needed: once C is delivered, `running` and `waiting` are both nil, so
         // nothing else can arrive, and B's absence from the log was decided at displacement time.
         #expect(log.value == ["A", "C"], "B was displaced before it started; A was cancelled but could not be stopped")
+        #expect(log.maxConcurrent == 1)
     }
 
     @Test func aFinishedScanIsDeliveredWhenNothingDisplacedIt() async {
@@ -87,16 +101,16 @@ private final class CancelObservation: @unchecked Sendable {
         #expect(log.value == ["A"], "the waiting request never starts")
     }
 
-    @Test func requestAfterCancelAllRunsFresh() async {
+    @Test func requestAfterCancelAllWaitsForTheCancelledScan() async {
         let log = Log()
         var delivered: [String] = []
-        let s = DetectionScheduler(compute: slowScan(log, sleep: 0.05)) { req, _ in delivered.append(req.text) }
+        let s = DetectionScheduler(compute: slowScan(log, sleep: 0.15)) { req, _ in delivered.append(req.text) }
         s.request(.init(text: "A", revision: 0, generation: 1))
         s.cancelAll()
-        await settle(0.1)
         s.request(.init(text: "B", revision: 0, generation: 2))
         await waitUntil { delivered == ["B"] }
-        #expect(delivered == ["B"])
+        #expect(log.value == ["A", "B"])
+        #expect(log.maxConcurrent == 1)
     }
 
     @Test func cancellationReachesTheRunningScan() async {
