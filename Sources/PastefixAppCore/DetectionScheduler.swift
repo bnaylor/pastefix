@@ -72,7 +72,7 @@ public final class DetectionScheduler {
     }
 
     private func finished(_ mine: Int, _ req: Request, _ result: DetectionResult, cancelled: Bool) {
-        guard running?.ticket == mine else { return }   // cancelAll() already let go of this one
+        guard running?.ticket == mine else { return }   // defensive: `start` runs only when `running` is nil, so this cannot fail today
         running = nil
         if let next = waiting { waiting = nil; start(next); return }
         if !cancelled { deliver(req, result) }

@@ -109,6 +109,9 @@ struct CommandPaletteView: View {
             if let selectedID, let index = newIDs.firstIndex(of: selectedID) {
                 selection = index
             } else {
+                // The chosen transform is gone (disabled, or the query moved on); forget it so it
+                // cannot pull the highlight back if it reappears without a key press.
+                selectedID = nil
                 selection = clampedSelection(in: results)
             }
         }
