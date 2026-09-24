@@ -387,5 +387,7 @@ Historical reference material for the 2007 and 2019 incarnations is vendored und
 
 ## Where to look first
 
+- **Verifying UI behaviour on the real app** (panel timing, overlays, banners, hotkeys, Settings): follow [`docs/gui-automation.md`](docs/gui-automation.md) — ground rules (ask for the screen first, save/restore the clipboard, never type blind), the build → Developer ID re-sign → drive → restore process, and the helper tools in `tools/gui-automation/`.
+
 - New here? Read the spec end-to-end, then trace a transform: `TransformerRegistry.load()` → a `Transformer.apply(_:)` (native, then `ShellRunner.run` / `JSRunner.run`) → `TransformError` back out.
 - `git log --oneline -- <path>` shows recent intent; commit messages are descriptive.
