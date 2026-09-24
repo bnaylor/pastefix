@@ -1,6 +1,6 @@
 ---
 type: spec
-status: draft
+status: implemented
 id: 2026-09-23-pastefix-v2-large-buffer-safety
 title: Pastefix v2 — Large-Buffer Safety (Plan 14)
 description: Content detection and the secret scan run off the main actor and land late under a revision/generation guard; the URL detector gets its own 256 KB cap; every transform declares an input cap and a timeout, the coordinator enforces both through a shared deadline helper, and dismissing the session cancels the in-flight apply.

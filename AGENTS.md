@@ -365,7 +365,7 @@ When you **significantly expand the project** — a new target, subsystem, scrip
 | 10 — Markdown preview | MarkdownPreview, MarkdownPreviewView, ⌘⇧M toggle | ✅ merged — PR #40 (`c98cca8`) — [spec](docs/specs/2026-09-21-pastefix-v2-markdown-preview.md), [plan](docs/plans/2026-09-21-pastefix-v2-markdown-preview.md) |
 | 11 — Secret detector | SecretDetector, Redact Secrets, secrets badge, history flag | ✅ merged — PR #42 (`85d7fd7`) — [spec](docs/specs/2026-09-21-pastefix-v2-secret-detector.md), [plan](docs/plans/2026-09-21-pastefix-v2-secret-detector.md) |
 | 12 — Regex presets | RegexPreset, RegexPresetTransformer, Presets tab | ✅ merged — PR #44 (`955f01b`) — [spec](docs/specs/2026-09-21-pastefix-v2-regex-presets.md), [plan](docs/plans/2026-09-21-pastefix-v2-regex-presets.md) |
-| 14 — Large-buffer safety | DetectionScheduler, Deadline.run, maxInputBytes/timeout, URLFinder cap | 🚧 in progress — branch feat/large-buffer-safety — [spec](docs/specs/2026-09-23-pastefix-v2-large-buffer-safety.md), [plan](docs/plans/2026-09-23-pastefix-v2-large-buffer-safety.md) |
+| 14 — Large-buffer safety | DetectionScheduler, Deadline.run, maxInputBytes/timeout, URLFinder cap | ✅ merged — PR #53 (`7bd250c`) — [spec](docs/specs/2026-09-23-pastefix-v2-large-buffer-safety.md), [plan](docs/plans/2026-09-23-pastefix-v2-large-buffer-safety.md) |
 
 Historical reference material for the 2007 and 2019 incarnations is vendored under [`docs/inputs/legacy/`](docs/inputs/legacy/).
 
