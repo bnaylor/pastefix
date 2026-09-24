@@ -70,16 +70,31 @@ Below the fields, a sample-input box shows a **live preview**: the transformed s
 
 Once saved, a preset behaves like any other transform: it appears in the ⌘K palette and in the sidebar under a **Presets** group, and can be enabled, disabled, and reordered in Settings → Transforms. Deleting a preset also forgets whatever you had set for it there. Running a preset against the clipboard buffer is capped at 256 KB of input, 2 MB of output (a pattern that matches the empty string applies its replacement at every position) and a 3-second timeout; over any of those it fails with an error instead of hanging the panel.
 
+## Zipline upload (Plan 13)
+
+Press **⌘⇧U** to upload the working text to a self-hosted [Zipline](https://zipline.diced.sh) v4 instance and replace the clipboard with the short URL it returns. With the panel closed, ⌘⇧U takes a fresh snapshot of the clipboard, the same as ⌘⇧C. With the panel already open and its buffer unedited, it re-reads the clipboard if that has moved on since the buffer was taken; once you've edited the buffer, your edits win over a newer clipboard, however stale that makes the upload. The overlay's header always names which one it is about to send — "the clipboard" or "the panel buffer" — and its size, so what's about to leave the machine is never a guess. Zipline v4 only. Image upload is separate and unimplemented (issue #48): with only an image on the clipboard there's no text to snapshot, so the overlay treats it as an empty buffer rather than failing.
+
+Every upload is scanned for secrets first, in full, with no size cap — deliberately unlike the 256 KB-capped badge under Secrets above, because a scan that runs once per deliberate upload can afford more than one that runs on every capture and summon. When something is found, you get the kinds found and a choice: **Redact** (preselected — Return uploads the redacted copy) or send as-is. Redaction only changes the uploaded copy; your buffer and the clipboard are untouched.
+
+**Expires** (Never / 1 hour / 1 day / 7 days) and **Burn after reading** are separate controls, because Zipline treats them as separate headers — a paste can be both one-view and gone in an hour.
+
+**File type** sets the uploaded file's extension, which is how Zipline v4 picks syntax highlighting; there's no separate language control. It defaults to `json` when the buffer looks like JSON and `txt` otherwise, but your **Settings → Upload** default wins whenever you've set one away from `txt`, and anything you type into the field yourself wins over both.
+
+On success, the clipboard becomes the short URL and the overlay shows it with buttons to copy it again and to open it; the URL is captured into clipboard history like any other copy.
+
+**Settings → Upload** holds the server URL, the API token, and the defaults ⌘⇧U opens with (expiration, burn-on-read, file type — all still changeable per upload in the overlay). The token lives in the Keychain, never in Settings: press **Set Token** to store it — a token you type and then quit without pressing it is not saved — and **Clear Token** to remove it. Private, LAN, and Tailscale addresses are the expected way to reach a self-hosted Zipline, not something to work around. Plain `http` works for an IP address (a Tailscale 100.x one included) and for a `.local` name; a named host such as `box.tailnet.ts.net` needs `https`, which Tailscale issues a certificate for. There's no certificate-trust bypass, so a self-signed certificate fails the upload by design.
+
 ## Settings (Plan 2b)
 
-Pastefix includes a Settings window (⌘, or "Settings…" in the menu) with six tabs:
+Pastefix includes a Settings window (⌘, or "Settings…" in the menu) with seven tabs:
 
 - **General:** Configure wrap width (default 400 columns), toggle auto-hide-on-blur (dismisses the panel when focus leaves), and choose a custom folder for user scripts (default `~/.config/pastefix/scripts/`).
 - **Privacy:** A **History** section (remember-history toggle, item-count stepper, and a Clear History dialog offering "Clear N items" — unpinned only — or "Clear Everything") and an **Excluded Apps** section (add/remove apps whose copies are never read into history, Restore Defaults).
 - **Snippets:** An Accessibility status line ("ready" / "needs Accessibility permission", with a shortcut to open System Settings) and a list of pinned snippets, each with an editable title, a per-snippet global-shortcut recorder, and Unpin.
 - **Presets:** A menu of your regex find & replace rules (+ / − to add/remove) above a full-width editor with the four flags and a live preview; see Regex presets above.
-- **Shortcut:** Rebind the global hotkey (default ⌘⇧C) and the history hotkey (default ⌘⇧V), each using an interactive keyboard recorder.
+- **Shortcut:** Rebind the global hotkey (default ⌘⇧C) and the history hotkey (default ⌘⇧V), each using an interactive keyboard recorder. (⌘⇧U, the upload hotkey, has no recorder here yet — its default isn't currently reachable from this tab.)
 - **Transforms:** Enable/disable individual transforms and drag to reorder them in the palette.
+- **Upload:** The Zipline server URL, API token, and the expiration/burn/file-type defaults ⌘⇧U opens with; see Zipline upload above.
 
 All settings persist via `UserDefaults`. User scripts are watched for changes; editing a script under `~/.config/pastefix/scripts/` updates the palette instantly without relaunch.
 
