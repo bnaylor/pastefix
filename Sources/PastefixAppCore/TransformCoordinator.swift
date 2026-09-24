@@ -20,9 +20,17 @@ public enum TransformCoordinator {
         var doc = document
         let input = TransformInput(text: doc.working, richRTFD: doc.origin.richRTFD)
         // Refuse before running: the cap is the only bound on a body inside an uninterruptible
-        // Foundation call, and the user is told the limit rather than watching a spinner.
-        guard input.text.utf8.count <= transformer.maxInputBytes else {
-            return (doc, .failed("\(transformer.name) is limited to \(ByteLimit.describe(transformer.maxInputBytes)) of text."))
+        // Foundation call, and the user is told the limit rather than watching a spinner. A
+        // transform that reads `input.richRTFD` (RichToPlain, RichToMarkdown) is measured on that
+        // data, not on `input.text`, which it never touches.
+        if transformer.requiresRichInput {
+            guard (input.richRTFD?.count ?? 0) <= transformer.maxInputBytes else {
+                return (doc, .failed("\(transformer.name) is limited to \(ByteLimit.describe(transformer.maxInputBytes)) of rich text."))
+            }
+        } else {
+            guard input.text.utf8.count <= transformer.maxInputBytes else {
+                return (doc, .failed("\(transformer.name) is limited to \(ByteLimit.describe(transformer.maxInputBytes)) of text."))
+            }
         }
         do {
             // A wall-clock bound per transform: the caller resumes at the transform's own

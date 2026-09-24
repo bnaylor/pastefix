@@ -212,6 +212,38 @@ private struct FailingArming: OutputModeTransformer {
         #expect(outcome == .failed("The transform was cancelled."))
     }
 
+    @Test func richTransformCapIsMeasuredOnRichBytesNotText() async {
+        let ran = Flag()
+        var t = FakeTransformer(id: "r", name: "R", requiresRichInput: true) { input in
+            ran.raise(); return input.richRTFD == nil ? "NO-RICH" : "HAS-RICH"
+        }
+        t.maxInputBytes = 16
+        let bigPlainText = String(repeating: "a", count: 200_000)
+        let withSmallRich = PasteDocument(
+            origin: ClipboardSnapshot(plainText: bigPlainText, richRTFD: Data(repeating: 0, count: 8))
+        )
+        let (updated, outcome) = await TransformCoordinator.apply(t, to: withSmallRich)
+        #expect(outcome == .applied)
+        #expect(ran.value)
+        #expect(updated.working == "HAS-RICH")
+    }
+
+    @Test func richTransformOverCapOnRichBytesIsRefusedBeforeApplyRuns() async {
+        let ran = Flag()
+        var t = FakeTransformer(id: "r", name: "R", requiresRichInput: true) { input in
+            ran.raise(); return input.richRTFD == nil ? "NO-RICH" : "HAS-RICH"
+        }
+        t.maxInputBytes = 16
+        let bigPlainText = String(repeating: "a", count: 200_000)
+        let withLargeRich = PasteDocument(
+            origin: ClipboardSnapshot(plainText: bigPlainText, richRTFD: Data(repeating: 0, count: 32))
+        )
+        let (updated, outcome) = await TransformCoordinator.apply(t, to: withLargeRich)
+        #expect(outcome == .failed("R is limited to 16 bytes of rich text."))
+        #expect(!ran.value)
+        #expect(updated.working == bigPlainText)
+    }
+
     @Test func appliedDocumentIsPendingDetectionAtTheNextRevision() async {
         let t = FakeTransformer(id: "x", name: "X", requiresRichInput: false) { $0.text.uppercased() }
         let (updated, _) = await TransformCoordinator.apply(t, to: doc("hi"))

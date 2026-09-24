@@ -11,7 +11,8 @@ public struct MarkdownToRich: OutputModeTransformer {
     // Same MarkdownHTML.render pipeline MarkdownPreview caps at 16 KB for display; ~1.1 s at
     // 64 KB of list-heavy input (Plan 10 measurement) is the most the 3 s budget should be
     // asked to cover.
-    public let maxInputBytes = 65_536
+    public static let maxInputBytes = 65_536
+    public var maxInputBytes: Int { Self.maxInputBytes }
 
     public init() {}
 

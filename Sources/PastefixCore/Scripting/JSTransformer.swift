@@ -8,11 +8,14 @@ public struct JSTransformer: Transformer {
     public let applicableKinds: Set<ContentKind>?
     public let category: String?
     private let url: URL
-    public let timeout: TimeInterval
+    private let runnerTimeout: TimeInterval
+    // One second of margin so a script that finishes inside its own budget is never reported as
+    // timed out by the outer race.
+    public var timeout: TimeInterval { runnerTimeout + 1 }
 
     public init(url: URL, metadata: ScriptMetadata, timeout: TimeInterval) {
         self.url = url
-        self.timeout = timeout
+        self.runnerTimeout = timeout
         self.id = "js:" + url.lastPathComponent
         self.name = metadata.name ?? url.deletingPathExtension().lastPathComponent
         self.source = .javascript(url)
@@ -22,6 +25,6 @@ public struct JSTransformer: Transformer {
 
     public func apply(_ input: TransformInput) async throws -> String {
         let src = try String(contentsOf: url, encoding: .utf8)
-        return try await JSRunner.run(source: src, input: input.text, timeout: timeout)
+        return try await JSRunner.run(source: src, input: input.text, timeout: runnerTimeout)
     }
 }

@@ -25,6 +25,8 @@ private struct Bare: Transformer {
             "builtin.urlclean": (262_144, 3),
             "builtin.markdownlink": (262_144, 6),
             "builtin.redactsecrets": (262_144, 3),
+            "builtin.richtoplain": (4_194_304, 3),
+            "builtin.richtomarkdown": (4_194_304, 3),
             RegexPresetTransformer.transformerID(for: preset.id): (262_144, 3),
         ]
         #expect(Set(all.map(\.id)).isSuperset(of: table.keys))
@@ -37,5 +39,15 @@ private struct Bare: Transformer {
 
     @Test func markdownLinkTimeoutTracksItsFetchTimeout() {
         #expect(MarkdownLink(fetchTimeout: 1).timeout == 3)
+    }
+
+    @Test func shellTransformerTimeoutHasAMarginOverTheRunner() {
+        let t = ShellTransformer(url: URL(fileURLWithPath: "/tmp/x.sh"), metadata: ScriptMetadata.parse(""), timeout: 3)
+        #expect(t.timeout == 4)
+    }
+
+    @Test func jsTransformerTimeoutHasAMarginOverTheRunner() {
+        let t = JSTransformer(url: URL(fileURLWithPath: "/tmp/x.js"), metadata: ScriptMetadata.parse(""), timeout: 3)
+        #expect(t.timeout == 4)
     }
 }
