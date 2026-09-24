@@ -22,6 +22,18 @@ import Testing
     @Test func openAIKey() {
         #expect(kinds("OPENAI=sk-proj-" + String(repeating: "x9", count: 20)) == [.openAIKey])
         #expect(kinds("my task-list is sk-ipped") == [])
+        // Anthropic's more specific "sk-ant-" prefix must not be swallowed by the OpenAI rule.
+        #expect(kinds("sk-proj-" + String(repeating: "a", count: 48)) == [.openAIKey])
+        #expect(kinds("sk-" + String(repeating: "a", count: 48)) == [.openAIKey])
+    }
+    @Test func anthropicKey() {
+        // sk-ant-api03- plus 60 mixed alnum/-/_ characters: the OpenAI rule's class matches the
+        // identical span (its greedy run swallows "ant-api03-…" too), so this is a same-range tie
+        // broken by SecretKind declaration order, not rule-list position — see the comment above
+        // the anthropicKey rule.
+        let token = "sk-ant-api03-" + String(repeating: "aB3-x_9K7q", count: 6)   // 60 mixed chars
+        #expect(kinds("key: \(token) end") == [.anthropicKey])
+        #expect(texts("key: \(token) end") == [token])
     }
     @Test func slackStripeGoogle() {
         #expect(kinds("xoxb-1234567890-abcdefghij") == [.slackToken])

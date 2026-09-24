@@ -23,9 +23,17 @@ import Testing
                   "-----BEGIN RSA PRIVATE KEY-----\nMIIEow\n-----END RSA PRIVATE KEY-----",
                   "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c",
                   "{\"password\": \"9f8e7d6c5b4a39281706f5e4d3c2b1a0\"}",
-                  "xoxb-1234567890-abcdefghij"] {
+                  "xoxb-1234567890-abcdefghij",
+                  "sk-ant-api03-" + String(repeating: "aB3-x_9K7q", count: 6)] {
             #expect(SecretDetector.scan(redact(s)).isEmpty, "not quiescent: \(redact(s))")
         }
+    }
+    @Test func anthropicKeyGetsItsOwnToken() {
+        // Must redact to "anthropic-key", not "openai-key": before the fix the OpenAI rule
+        // claimed the same span and every sk-ant- key was mislabeled.
+        let token = "sk-ant-api03-" + String(repeating: "aB3-x_9K7q", count: 6)
+        #expect(redact(token) == "[REDACTED anthropic-key]")
+        #expect(SecretDetector.scan(redact(token)).isEmpty)
     }
     @Test func preservesSurroundingText() {
         let pem = "-----BEGIN PRIVATE KEY-----\nabc\n-----END PRIVATE KEY-----"
