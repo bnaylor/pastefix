@@ -13,6 +13,8 @@ public struct RichToMarkdown: Transformer {
     // 1 MB → 0.02 s, 2 MB → 0.05 s, 4 MB → 0.09 s on an Apple M4 Pro. All three are far under the
     // 1.5 s half-budget (half of the 3 s timeout, since the import observes no cancellation and
     // the cap is the only bound), so the cap stays the largest of the three candidates measured.
+    // The measurement covers the RTFD import only; the run walk in `MarkdownFromRich.convert` is
+    // linear in runs (152k at 4 MB) and was not timed separately.
     public let maxInputBytes = 4 * 1_048_576
 
     public init() {}

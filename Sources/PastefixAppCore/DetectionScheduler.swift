@@ -50,7 +50,7 @@ public final class DetectionScheduler {
     private let scanDeadline: TimeInterval
     private let deliver: @MainActor (Request, DetectionResult) -> Void
     private var ticket = 0
-    private var running: (ticket: Int, task: Task<Void, Never>, work: Task<DetectionResult, Never>)?
+    private var running: (ticket: Int, work: Task<DetectionResult, Never>)?
     private var waiting: Request?
 
     public init(compute: @escaping @Sendable (String) -> DetectionResult = DetectionResult.compute,
@@ -86,7 +86,7 @@ public final class DetectionScheduler {
         // routing that check through the wrapper instead would let a fast displacement burst skip
         // `compute` entirely, which broke the existing burst/cancelAll tests when tried.
         let work = Task.detached(priority: .userInitiated) { compute(req.text) }
-        let task = Task { [weak self] in
+        Task { [weak self] in
             // `Deadline.run` bounds how long we *wait* for `work`, not whether it runs: on success
             // it simply returns `work`'s value; on the `scanDeadline` elapsing it hands the slot
             // back immediately and leaves `work` running in the background, undelivered — that is
@@ -94,7 +94,7 @@ public final class DetectionScheduler {
             let result = try? await Deadline.run(seconds: deadline) { await work.value }
             self?.finished(mine, req, result, cancelled: work.isCancelled)
         }
-        running = (mine, task, work)
+        running = (mine, work)
     }
 
     private func finished(_ mine: Int, _ req: Request, _ result: DetectionResult?, cancelled: Bool) {

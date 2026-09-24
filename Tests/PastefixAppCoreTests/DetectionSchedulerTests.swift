@@ -13,6 +13,7 @@ private final class Log: @unchecked Sendable {
     private var peak = 0
     var value: [String] { lock.withLock { items } }
     var maxConcurrent: Int { lock.withLock { peak } }
+    var active: Int { lock.withLock { inFlight } }
     func add(_ s: String) { lock.withLock { items.append(s) } }
     func enter() { lock.withLock { inFlight += 1; peak = max(peak, inFlight) } }
     func exit() { lock.withLock { inFlight -= 1 } }
@@ -177,5 +178,8 @@ private final class CancelObservation: @unchecked Sendable {
         // B was delivered long before the stuck body's own 1.0 s sleep would have finished.
         #expect(ContinuousClock.now - bRequestedAt < .seconds(0.8))
         #expect(log.value == ["STUCK", "B"])
+        // Do not leave the abandoned body running past the test: wait for it like the other timing tests do.
+        await waitUntil { log.active == 0 }
+        #expect(log.active == 0)
     }
 }

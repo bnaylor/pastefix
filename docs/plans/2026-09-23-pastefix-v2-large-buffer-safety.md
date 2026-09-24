@@ -859,7 +859,7 @@ Call sites:
 
 **Files:** Modify `AGENTS.md`, `docs/specs/2026-09-23-pastefix-v2-large-buffer-safety.md`, `docs/specs/2026-08-11-pastefix-v2-foundation-pipeline.md`, `docs/specs/2026-09-20-pastefix-v2-content-transforms.md`.
 
-- [ ] AGENTS status table: add `| 13 — Large-buffer safety | DetectionScheduler, Deadline.run, maxInputBytes/timeout | 🚧 in progress — branch feat/large-buffer-safety — [spec](…), [plan](…) |`.
+- [ ] AGENTS status table: add `| 14 — Large-buffer safety | DetectionScheduler, Deadline.run, maxInputBytes/timeout | 🚧 in progress — branch feat/large-buffer-safety — [spec](…), [plan](…) |`.
 - [ ] AGENTS file map: `DetectionResult.swift`, `DetectionScheduler.swift`, `Deadline.swift`, `ByteLimit.swift` one-liners.
 - [ ] AGENTS Patterns: (a) "Session text is scanned off the main actor. `PasteDocument` never scans; `DetectionScheduler` runs `DetectionResult.compute` and results land by revision + generation. Never call `SecretDetector`/`ContentDetector` on the main actor for session text." (b) "Every transform declares `maxInputBytes` and `timeout`; the coordinator enforces both. A new transform whose cost is superlinear or that calls an uninterruptible API lowers its cap; one that can loop checks `Task.isCancelled`." (c) "`Deadline.run` is the only sanctioned deadline race; it abandons and cancels, it does not stop. Hand-rolled task-group races are not a bound."
 - [ ] AGENTS "Things that have bitten us — Plan 14": inline `await transformer.apply` on the main actor's task ran synchronous bodies on the main actor; `JSRunner`-style races that resume the caller and leave the work running; `Cancel` that only discarded the result.
