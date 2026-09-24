@@ -90,6 +90,23 @@ import Foundation
         #expect(ContinuousClock.now - start < .seconds(2))
     }
 
+    /// Cancellation reaches the in-block check the same way the deadline does: `replace` has no
+    /// task group of its own to cut loose, so a pre-cancelled task must still stop promptly via
+    /// `Task.isCancelled` inside `enumerateMatches`.
+    @Test func cancellationStopsReplacePromptly() async throws {
+        let evil = RegexPreset(name: "evil", pattern: "a", replacement: "b")
+        let text = String(repeating: "a", count: 10_000)
+        let start = ContinuousClock.now
+        let task = Task {
+            withUnsafeCurrentTask { $0?.cancel() }
+            #expect(throws: TransformError.timeout) {
+                try RegexPresetTransformer.replace(text, preset: evil, deadline: nil)
+            }
+        }
+        await task.value
+        #expect(ContinuousClock.now - start < .seconds(2))
+    }
+
     @Test func previewReportsOutputAndMatchCount() throws {
         let p = RegexPreset(name: "o", pattern: "o", replacement: "0")
         let r = try RegexPresetTransformer.preview("foo boo", preset: p, deadline: .now + .seconds(1))

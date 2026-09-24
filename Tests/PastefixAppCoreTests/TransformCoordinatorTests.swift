@@ -8,8 +8,26 @@ private struct FakeTransformer: Transformer {
     let name: String
     let requiresRichInput: Bool
     let source: TransformerSource = .builtin
+    var maxInputBytes = TransformLimits.defaultMaxInputBytes
+    var timeout: TimeInterval = TransformLimits.defaultTimeout
     let behavior: @Sendable (TransformInput) async throws -> String
     func apply(_ input: TransformInput) async throws -> String { try await behavior(input) }
+}
+
+/// Lock-guarded flag a detached body can set and the test can poll (copied privately from
+/// `Tests/PastefixCoreTests/DeadlineTests.swift`, a different module).
+private final class Flag: @unchecked Sendable {
+    private let lock = NSLock()
+    private var raised = false
+    var value: Bool { lock.withLock { raised } }
+    func raise() { lock.withLock { raised = true } }
+}
+
+/// `Thread.sleep(forTimeInterval:)` is `@available(*, noasync)`: calling it directly inside an
+/// async closure is an error in Swift 6 language mode. Indirecting through a synchronous function
+/// sidesteps that check without changing what the call does.
+private func blockingSleep(_ seconds: TimeInterval) {
+    Thread.sleep(forTimeInterval: seconds)
 }
 
 private struct Arming: OutputModeTransformer {
@@ -62,8 +80,12 @@ private struct FailingArming: OutputModeTransformer {
         let t = FakeTransformer(id: "id", name: "Id", requiresRichInput: false) { $0.text }
         let (updated, outcome) = await TransformCoordinator.apply(t, to: d)
         #expect(outcome == .unchanged)
-        #expect(updated.secretMatches.count == 1)
-        #expect(updated.detectedKinds.contains(.secret))
+        #expect(updated.isDetecting)
+        var settled = updated
+        let applied = settled.applyDetection(DetectionResult.compute(settled.working), revision: settled.detectionRevision)
+        #expect(applied)
+        #expect(settled.secretMatches.count == 1)
+        #expect(settled.detectedKinds.contains(.secret))
         #expect(updated.canUndo == false)
         #expect(updated.canRedo == false)
     }
@@ -146,5 +168,93 @@ private struct FailingArming: OutputModeTransformer {
         let doc = PasteDocument(origin: ClipboardSnapshot(plainText: "# x", richRTFD: nil))
         let (out, outcome) = await TransformCoordinator.apply(FailingArming(), to: doc)
         #expect(out.outputMode == .plain); if case .failed = outcome {} else { Issue.record("expected failure") }
+    }
+
+    @Test func overCapIsRefusedBeforeApplyRuns() async {
+        let ran = Flag()
+        var t = FakeTransformer(id: "x", name: "Markdown → Rich Text", requiresRichInput: false) { _ in
+            ran.raise(); return ""
+        }
+        t.maxInputBytes = 65_536
+        let (updated, outcome) = await TransformCoordinator.apply(t, to: doc(String(repeating: "a", count: 65_537)))
+        #expect(outcome == .failed("Markdown → Rich Text is limited to 64 KB of text."))
+        #expect(!ran.value)
+        #expect(updated.canUndo == false)
+    }
+
+    @Test func exactlyAtCapRuns() async {
+        var t = FakeTransformer(id: "x", name: "X", requiresRichInput: false) { $0.text.uppercased() }
+        t.maxInputBytes = 4
+        let (_, outcome) = await TransformCoordinator.apply(t, to: doc("abcd"))
+        #expect(outcome == .applied)
+    }
+
+    /// The property under test is "the caller got its timeout while the body was still running" —
+    /// a flag the body raises as its last statement, checked the instant `apply` returns — not a
+    /// wall-clock margin, which flakes under parallel test load for reasons unrelated to whether
+    /// the coordinator actually abandoned the body (see `DeadlineTests` for the same reasoning).
+    @Test func slowTransformTimesOutAtItsOwnBudget() async {
+        let finished = Flag()
+        var t = FakeTransformer(id: "x", name: "X", requiresRichInput: false) { i in
+            blockingSleep(0.75)
+            finished.raise()
+            return i.text
+        }
+        t.timeout = 0.2
+        let (_, outcome) = await TransformCoordinator.apply(t, to: doc("hi"))
+        #expect(outcome == .failed("The transform timed out."))
+        #expect(!finished.value, "the caller returned while the body was still running")
+        let end = ContinuousClock.now + .seconds(2)
+        while !finished.value, ContinuousClock.now < end { try? await Task.sleep(for: .milliseconds(10)) }
+    }
+
+    @Test func cancelledCallerGetsCancelledOutcome() async {
+        let t = FakeTransformer(id: "x", name: "X", requiresRichInput: false) { i in
+            while !Task.isCancelled { try? await Task.sleep(for: .milliseconds(5)) }
+            return i.text
+        }
+        let outer = Task { await TransformCoordinator.apply(t, to: doc("hi")) }
+        try? await Task.sleep(for: .milliseconds(50))
+        outer.cancel()
+        let (_, outcome) = await outer.value
+        #expect(outcome == .failed("The transform was cancelled."))
+    }
+
+    @Test func richTransformCapIsMeasuredOnRichBytesNotText() async {
+        let ran = Flag()
+        var t = FakeTransformer(id: "r", name: "R", requiresRichInput: true) { input in
+            ran.raise(); return input.richRTFD == nil ? "NO-RICH" : "HAS-RICH"
+        }
+        t.maxInputBytes = 16
+        let bigPlainText = String(repeating: "a", count: 200_000)
+        let withSmallRich = PasteDocument(
+            origin: ClipboardSnapshot(plainText: bigPlainText, richRTFD: Data(repeating: 0, count: 8))
+        )
+        let (updated, outcome) = await TransformCoordinator.apply(t, to: withSmallRich)
+        #expect(outcome == .applied)
+        #expect(ran.value)
+        #expect(updated.working == "HAS-RICH")
+    }
+
+    @Test func richTransformOverCapOnRichBytesIsRefusedBeforeApplyRuns() async {
+        let ran = Flag()
+        var t = FakeTransformer(id: "r", name: "R", requiresRichInput: true) { input in
+            ran.raise(); return input.richRTFD == nil ? "NO-RICH" : "HAS-RICH"
+        }
+        t.maxInputBytes = 16
+        let bigPlainText = String(repeating: "a", count: 200_000)
+        let withLargeRich = PasteDocument(
+            origin: ClipboardSnapshot(plainText: bigPlainText, richRTFD: Data(repeating: 0, count: 32))
+        )
+        let (updated, outcome) = await TransformCoordinator.apply(t, to: withLargeRich)
+        #expect(outcome == .failed("R is limited to 16 bytes of rich text."))
+        #expect(!ran.value)
+        #expect(updated.working == bigPlainText)
+    }
+
+    @Test func appliedDocumentIsPendingDetectionAtTheNextRevision() async {
+        let t = FakeTransformer(id: "x", name: "X", requiresRichInput: false) { $0.text.uppercased() }
+        let (updated, _) = await TransformCoordinator.apply(t, to: doc("hi"))
+        #expect(updated.isDetecting && updated.detectionRevision == 1)
     }
 }

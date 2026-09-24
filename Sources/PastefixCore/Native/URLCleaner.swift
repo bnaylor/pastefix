@@ -9,6 +9,7 @@ public struct URLCleaner: Transformer {
     public let source: TransformerSource = .builtin
     public let applicableKinds: Set<ContentKind>? = [.url]
     public let category: String? = TransformCategory.urls
+    public var maxInputBytes: Int { URLFinder.maxBytes }
 
     public init() {}
 

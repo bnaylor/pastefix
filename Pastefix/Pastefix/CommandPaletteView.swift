@@ -9,13 +9,27 @@ struct CommandPaletteView: View {
 
     @State private var query = ""
     @State private var selection = 0
+    /// The kinds `results` ranks against, frozen at the moment the card first appears.
+    ///
+    /// The list must not move under the cursor: with no key pressed yet, `selection == 0` points
+    /// at whatever is in row 0, and a detection result landing after the panel renders (detection
+    /// runs off the main actor and finishes late) can re-partition `results` — applicable-first
+    /// ordering depends on `detectedKinds` — swapping row 0's occupant out from under an unmoved
+    /// cursor and making ↵ apply a transform the user never saw highlighted. Identity tracking
+    /// can't fix this: there is no prior identity to follow when nothing has been selected yet.
+    /// Freezing the kinds this list ranks against fixes it at the root — the view is recreated
+    /// each time the palette opens (`PanelView` inserts it only `if isPaletteOpen`), so the
+    /// snapshot lives exactly as long as one palette session. The trade-off: a palette opened
+    /// before detection lands shows the unpromoted order for its whole session, until reopened.
+    @State private var kindsSnapshot: Set<ContentKind>?
     @FocusState private var fieldFocused: Bool
 
     private var results: [SearchResult] {
-        TransformSearch.rank(
+        let kinds = kindsSnapshot ?? (model.document?.detectedKinds ?? [])
+        return TransformSearch.rank(
             query: query,
-            in: model.enabledTransformers(),
-            kinds: model.document?.detectedKinds ?? []
+            in: model.enabledTransformers(for: kinds),
+            kinds: kinds
         )
     }
 
@@ -96,6 +110,10 @@ struct CommandPaletteView: View {
         // Cancel's `.cancelAction` already closes the palette first; this is a harmless
         // duplicate that keeps Esc working even if that button is ever disabled or removed.
         .onKeyPress(.escape) { onClose(); return .handled }
+        // Freeze the ranking kinds for this palette session — see `kindsSnapshot`'s doc comment.
+        // `PanelView` only inserts this view `if isPaletteOpen`, so `onAppear` fires exactly once
+        // per open and `@State` resets on the next one.
+        .onAppear { kindsSnapshot = model.document?.detectedKinds ?? [] }
     }
 
     private func row(_ result: SearchResult, isSelected: Bool) -> some View {
@@ -143,6 +161,9 @@ struct CommandPaletteView: View {
     /// Applies whatever is highlighted *now*. A retained handler must not close over render-time
     /// locals; read `@State` (which resolves through its storage box and is always current) at
     /// call time. Return applied the first result after arrowing until this was fixed.
+    ///
+    /// With `results` ranked against a frozen `kindsSnapshot`, the list cannot move under the
+    /// cursor, so a plain clamped index is exact again — no identity tracking needed.
     private func applyCurrentSelection() {
         let items = results
         apply(items, clampedSelection(in: items))

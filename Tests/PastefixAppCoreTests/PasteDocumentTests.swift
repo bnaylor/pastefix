@@ -64,44 +64,92 @@ import PastefixCore
         #expect(d.canUndo == false)
     }
 
-    @Test func detectedKindsTrackWorkingText() {
+    /// Runs the scan the scheduler would and installs it, as the app does after each event.
+    private func settle(_ d: inout PasteDocument) {
+        // Assigned to a local first: Swift Testing's `#expect` macro can't take the address of
+        // an `inout` parameter for a mutating call written directly inside the expression.
+        let applied = d.applyDetection(DetectionResult.compute(d.working), revision: d.detectionRevision)
+        #expect(applied)
+    }
+
+    @Test func startsPendingAndSettlesToKinds() {
         var d = doc("https://example.com")
-        #expect(d.detectedKinds == [.url])
+        #expect(d.isDetecting && d.detectionRevision == 0 && d.detectedKinds.isEmpty)
+        settle(&d)
+        #expect(!d.isDetecting && d.detectedKinds == [.url])
+    }
+
+    @Test func discreteEventsBumpRevisionAndResetToPending() {
+        var d = doc("https://example.com"); settle(&d)
         d.pushState("{\"a\":1}")
-        #expect(d.detectedKinds == [.json])
-        d.undo()
-        #expect(d.detectedKinds == [.url])
-        d.redo()
-        #expect(d.detectedKinds == [.json])
-        // Manual edits do not re-detect: the palette order is pinned per discrete event.
-        d.setWorking("plain")
-        #expect(d.detectedKinds == [.json])
-        d.pushState("x")
-        #expect(d.detectedKinds == [])
+        #expect(d.isDetecting && d.detectionRevision == 1 && d.detectedKinds.isEmpty)
+        settle(&d); #expect(d.detectedKinds == [.json])
+        d.undo();   #expect(d.isDetecting && d.detectionRevision == 2)
+        settle(&d); #expect(d.detectedKinds == [.url])
+        d.redo();   #expect(d.detectionRevision == 3)
+        settle(&d); #expect(d.detectedKinds == [.json])
+        d.setWorking("plain")                       // manual edit: no event
+        #expect(!d.isDetecting && d.detectionRevision == 3 && d.detectedKinds == [.json])
+        d.pushState("plain")                        // equal text is still an event
+        #expect(d.isDetecting && d.detectionRevision == 4)
+        let beforeRefresh = d.detectionRevision
         d.refresh(origin: ClipboardSnapshot(plainText: "www.example.com", richRTFD: nil))
-        #expect(d.detectedKinds == [.url])
+        #expect(d.isDetecting && d.detectionRevision > beforeRefresh)
     }
 
-    @Test func secretMatchesPinnedAtDiscreteEvents() {
-        var d = PasteDocument(origin: ClipboardSnapshot(plainText: "AKIAIOSFODNN7EXAMPLE", richRTFD: nil))
+    @Test func refreshRefusesAPreRefreshResult() {
+        var d = doc("https://example.com")
+        settle(&d)
+        let preRefreshRevision = d.detectionRevision
+        let preRefreshResult = DetectionResult.compute(d.working)
+        d.refresh(origin: ClipboardSnapshot(plainText: "something else entirely", richRTFD: nil))
+        let applied = d.applyDetection(preRefreshResult, revision: preRefreshRevision)
+        #expect(!applied)
+        #expect(d.isDetecting)
+    }
+
+    @Test func staleRevisionIsRefused() {
+        var d = doc("https://example.com")
+        let old = DetectionResult.compute(d.working)
+        d.pushState("{\"a\":1}")
+        // Assigned to a local first: Swift Testing's `#expect` macro can't take the address of
+        // `d` for a mutating call written directly inside the negated expression.
+        let staleApplied = d.applyDetection(old, revision: 0)
+        #expect(!staleApplied)
+        #expect(d.isDetecting && d.detectedKinds.isEmpty)
+        settle(&d)
+        #expect(d.detectedKinds == [.json])
+        let secondApplied = d.applyDetection(old, revision: 1)
+        #expect(!secondApplied, "a settled revision does not take a second result")
+    }
+
+    @Test func secretsAndSkipFlagComeFromTheResult() {
+        var d = doc("AKIAIOSFODNN7EXAMPLE")
+        #expect(d.secretMatches.isEmpty && !d.secretScanSkipped, "pending is neither found nor skipped")
+        settle(&d)
         #expect(d.secretMatches.map(\.kind) == [.awsAccessKey] && d.detectedKinds.contains(.secret))
-        d.setWorking("plain now")                      // manual edit: not re-detected
-        #expect(d.secretMatches.count == 1)
-        d.pushState("plain now")                       // discrete event
-        #expect(d.secretMatches.isEmpty && !d.detectedKinds.contains(.secret))
+        let big = String(repeating: "a", count: SecretDetector.maxBytes) + " AKIAIOSFODNN7EXAMPLE"
+        d.pushState(big); settle(&d)
+        #expect(d.secretScanSkipped && d.secretMatches.isEmpty && !d.detectedKinds.contains(.secret))
     }
 
-    @Test func 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() {
-        // An empty `secretMatches` from a buffer that was never scanned is not a clean bill of
-        // health, and the badge needs to be able to tell the two apart.
+    @Test func oversizeRoundTripFlipsTheSkipFlag() {
         let big = String(repeating: "a", count: SecretDetector.maxBytes) + " AKIAIOSFODNN7EXAMPLE"
-        var d = PasteDocument(origin: ClipboardSnapshot(plainText: big, richRTFD: nil))
-        #expect(d.secretScanSkipped && d.secretMatches.isEmpty && !d.detectedKinds.contains(.secret))
-        d.pushState("AKIAIOSFODNN7EXAMPLE")                    // back under the cap
+        var d = doc(big)
+        settle(&d)
+        #expect(d.secretScanSkipped && d.secretMatches.isEmpty)
+        d.pushState("AKIAIOSFODNN7EXAMPLE")
+        settle(&d)
         #expect(!d.secretScanSkipped && d.secretMatches.map(\.kind) == [.awsAccessKey])
         d.undo()
+        settle(&d)
         #expect(d.secretScanSkipped && d.secretMatches.isEmpty)
-        #expect(!doc("small").secretScanSkipped)
+    }
+
+    @Test func computeMatchesTheOldInlineScan() {
+        let r = DetectionResult.compute("see https://example.com and AKIAIOSFODNN7EXAMPLE")
+        #expect(r.kinds == [.url, .secret] && r.secretMatches.count == 1 && !r.secretScanSkipped)
+        #expect(DetectionResult.compute("").kinds.isEmpty)
     }
 
     @Test func outputModeDefaultsSurvivesPushResetsOnRefresh() {

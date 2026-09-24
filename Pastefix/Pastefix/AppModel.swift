@@ -49,10 +49,42 @@ final class AppModel: ObservableObject {
     /// skipped render and the overlay stays open over a fresh session).
     @Published private(set) var sessionGeneration = 0
 
+    /// Off-main detection lane; results land through `detectionFinished`.
+    private lazy var detection = DetectionScheduler { [weak self] req, result in self?.detectionFinished(req, result) }
+    /// The in-flight apply, cancelled wherever the session changes so a slow transform does not
+    /// keep running for a buffer nobody can see.
+    private var applyTask: Task<Void, Never>?
+
+    /// True until the current buffer's scan lands. The Zipline upload gate (#14) must wait for
+    /// this before treating an empty `secretMatches` as "no secrets". A gate should observe
+    /// `$document` and re-check this rather than spin on the Bool: `document == nil` reads the
+    /// same `false` as a completed scan but means "no buffer", not "clean". The real tri-state
+    /// lives on `PasteDocument.detection` (`.pending` or `.complete`, the latter carrying
+    /// `secretScanSkipped` for an over-cap buffer).
+    var isDetecting: Bool { document?.isDetecting ?? false }
+
     init(settings: SettingsStore, history: HistoryStore) {
         self.settings = settings
         self.history = history
         reload()
+    }
+
+    private func requestDetection() {
+        guard let doc = document, doc.isDetecting else { return }
+        detection.request(.init(text: doc.working, revision: doc.detectionRevision, generation: sessionGeneration))
+    }
+
+    private func detectionFinished(_ req: DetectionScheduler.Request, _ result: DetectionResult) {
+        guard sessionGeneration == req.generation, var doc = document else { return }
+        if doc.applyDetection(result, revision: req.revision) { document = doc }
+    }
+
+    /// Stops work that belonged to the buffer being replaced.
+    private func abandonInFlightWork() {
+        applyTask?.cancel()
+        applyTask = nil
+        detection.cancelAll()
+        isApplying = false
     }
 
     /// Rebuild the transformer list from current settings (scripts dir, wrap
@@ -78,16 +110,26 @@ final class AppModel: ObservableObject {
     func summon() {
         errorMessage = nil
         resetSecretSelection()
+        abandonInFlightWork()
         sessionGeneration &+= 1
         document = PasteDocument(origin: ClipboardBridge.snapshot())
+        requestDetection()
     }
 
     /// Palette list: enabled transforms in the user's order, with those applicable to the
     /// detected content first. Settings uses `allTransformers`, which detection never reorders.
     func enabledTransformers() -> [any Transformer] {
         guard let document else { return [] }
+        return enabledTransformers(for: document.detectedKinds)
+    }
+
+    /// Same as `enabledTransformers()`, but ranked against a caller-supplied set of kinds instead
+    /// of the live document — `CommandPaletteView` freezes this at the moment the palette opens so
+    /// the list order does not move under the cursor when detection lands mid-navigation.
+    func enabledTransformers(for kinds: Set<ContentKind>) -> [any Transformer] {
+        guard let document else { return [] }
         let enabled = transformers.filter { TransformCoordinator.isEnabled($0, for: document) }
-        return PaletteOrdering.order(enabled, for: document.detectedKinds)
+        return PaletteOrdering.order(enabled, for: kinds)
     }
 
     /// Enabled transforms in the user's order, without detection-based promotion — for browse
@@ -142,19 +184,20 @@ final class AppModel: ObservableObject {
         guard let current = document, !isApplying else { return }
         isApplying = true
         let generation = sessionGeneration
-        Task {
+        applyTask = Task {
             let (updated, outcome) = await TransformCoordinator.apply(transformer, to: current)
             // The session can end (Save/Cancel/auto-hide) while a slow transform is in
             // flight, and the user can summon a fresh one before it finishes. Drop the
-            // result unless we are still in the session that asked for it — and never
-            // leave `isApplying` stuck true for the next summon. Clearing it on the stale
-            // path is safe: applies are serialised by `isApplying`, and a new session
-            // starts with it false.
+            // result unless we are still in the session that asked for it.
+            // `abandonInFlightWork()`/`endSession()` own `isApplying` for that path.
             guard self.document != nil, self.sessionGeneration == generation else {
-                self.isApplying = false
                 return
             }
             self.document = updated
+            // The failure path returns `current` unchanged (same revision), so only request a
+            // scan when the buffer actually moved — re-requesting on every refused click would
+            // cancel and restart an in-flight summon scan for no reason.
+            if updated.detectionRevision != current.detectionRevision { self.requestDetection() }
             // The caret is `PanelView`'s to carry across the new buffer; the badge's cycle
             // restarts here because the match list belongs to the buffer that just went away.
             self.resetSecretSelection()
@@ -163,6 +206,7 @@ final class AppModel: ObservableObject {
             case .failed(let message): self.errorMessage = message
             }
             self.isApplying = false
+            self.applyTask = nil
         }
     }
 
@@ -174,15 +218,19 @@ final class AppModel: ObservableObject {
 
     func undo() {
         guard var doc = document else { return }
+        let before = doc.detectionRevision
         doc.undo()
         document = doc
+        if doc.detectionRevision != before { requestDetection() }
         resetSecretSelection()
     }
 
     func redo() {
         guard var doc = document else { return }
+        let before = doc.detectionRevision
         doc.redo()
         document = doc
+        if doc.detectionRevision != before { requestDetection() }
         resetSecretSelection()
     }
 
@@ -190,6 +238,7 @@ final class AppModel: ObservableObject {
         guard var doc = document else { return }
         doc.refresh(origin: ClipboardBridge.snapshot())
         document = doc
+        requestDetection()
         errorMessage = nil
         resetSecretSelection()
     }
@@ -210,6 +259,14 @@ final class AppModel: ObservableObject {
     func save() {
         guard let doc = document else { endSession(); return }
         if doc.outputMode == .renderedMarkdown {
+            // MarkdownToRich's own cap only bounds arming (the transform ran against a buffer at
+            // or under it), but the buffer can grow afterwards — further edits, or a preset that
+            // amplifies text — and this render runs synchronously on the main actor, same as the
+            // rest of Save.
+            guard doc.working.utf8.count <= MarkdownToRich.maxInputBytes else {
+                errorMessage = "Markdown → Rich Text is limited to \(ByteLimit.describe(MarkdownToRich.maxInputBytes)) of text. Click the badge to save as plain text instead."
+                return
+            }
             do {
                 let rich = try RichOutputRenderer.render(markdown: doc.working)
                 ClipboardBridge.writeRich(text: doc.working, html: rich.html, rtf: rich.rtf)
@@ -245,8 +302,10 @@ final class AppModel: ObservableObject {
         guard item.hasText else { copyBack(item); return }
         errorMessage = nil
         resetSecretSelection()
+        abandonInFlightWork()
         sessionGeneration &+= 1
         document = PasteDocument(origin: ClipboardSnapshot(plainText: item.plainText ?? "", richRTFD: history.richRTFD(for: item)))
+        requestDetection()
     }
 
     /// Puts the whole item back on the clipboard and ends the session.
@@ -310,9 +369,9 @@ final class AppModel: ObservableObject {
     }
 
     private func endSession() {
+        abandonInFlightWork()
         document = nil
         errorMessage = nil
-        isApplying = false
         resetSecretSelection()
         sessionGeneration &+= 1
         onEndSession?()

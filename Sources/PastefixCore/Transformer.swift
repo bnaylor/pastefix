@@ -31,6 +31,13 @@ public enum TransformError: Error, Equatable {
     case invalidInput(String)
 }
 
+/// Defaults for `Transformer.maxInputBytes` and `Transformer.timeout`: what a transform gets
+/// unless it declares its own tighter (or looser) bound.
+public enum TransformLimits {
+    public static let defaultMaxInputBytes = 1_048_576
+    public static let defaultTimeout: TimeInterval = 3
+}
+
 /// How Save should write the buffer. Set by an `OutputModeTransformer`; lives on the document for the session.
 public enum OutputMode: String, Sendable, Equatable {
     case plain
@@ -56,12 +63,22 @@ public protocol Transformer: Identifiable, Sendable {
     /// Display group for browsing UIs (sidebar sections, palette subtitles). `nil` means
     /// uncategorised; scripts without a `category` header are shown under "Scripts".
     var category: String? { get }
+    /// Largest `TransformInput.text` (UTF-8 bytes) this transform accepts. The coordinator
+    /// refuses larger buffers before calling `apply`, so a body need not re-check unless it is
+    /// also reachable outside the coordinator (presets' Settings preview, for one).
+    var maxInputBytes: Int { get }
+    /// Wall-clock budget for `apply`, enforced by the coordinator through `Deadline.run`. A body
+    /// that can be interrupted should check `Task.isCancelled`; one that cannot relies on
+    /// `maxInputBytes` to keep it short.
+    var timeout: TimeInterval { get }
     func apply(_ input: TransformInput) async throws -> String
 }
 
 public extension Transformer {
     var applicableKinds: Set<ContentKind>? { nil }
     var category: String? { nil }
+    var maxInputBytes: Int { TransformLimits.defaultMaxInputBytes }
+    var timeout: TimeInterval { TransformLimits.defaultTimeout }
 }
 
 /// Category names shared by the built-ins, the grouping code, and tests.
