@@ -13,6 +13,14 @@ final class PanelController: NSObject, NSWindowDelegate {
     /// was already wide enough) keeps its width, so toggling is never lossy.
     private var didWidenForSidebar = false
 
+    /// The window of ours the panel has dropped to `.normal` level for (#54). The panel floats
+    /// so it stays above *other apps*; that purpose does not require floating above our own
+    /// Settings window (or an alert, or Sparkle's update window), and at `.floating` it hid
+    /// them: a normal-level window cannot be raised past a floating one, so Settings opened
+    /// behind the panel and no amount of clicking brought it forward.
+    private weak var yieldingTo: NSWindow?
+    private var observers: [NSObjectProtocol] = []
+
     init(rootView: NSView) {
         panel = NSPanel(
             contentRect: NSRect(x: 0, y: 0, width: 640, height: 460),
@@ -30,6 +38,56 @@ final class PanelController: NSObject, NSWindowDelegate {
         panel.contentView = rootView
         super.init()
         panel.delegate = self
+
+        // Level state machine: `.floating` by default. Another window of ours becoming key →
+        // `.normal` (`yield(to:)`). That window closing, or the panel becoming key again →
+        // `.floating` (`reclaimFloat()`). Rule: the yielded-to window resigning key to *another
+        // app* does NOT restore floating — the user may come straight back to Settings, and
+        // restoring on resign would drop it behind the panel again while they are still in it.
+        // Window notifications are posted on the main thread, so `assumeIsolated` is exact.
+        let center = NotificationCenter.default
+        observers.append(center.addObserver(forName: NSWindow.didBecomeKeyNotification, object: nil, queue: nil) {
+            [weak self] note in
+            guard let window = note.object as? NSWindow else { return }
+            MainActor.assumeIsolated { self?.otherWindowDidBecomeKey(window) }
+        })
+        observers.append(center.addObserver(forName: NSWindow.willCloseNotification, object: nil, queue: nil) {
+            [weak self] note in
+            guard let window = note.object as? NSWindow else { return }
+            MainActor.assumeIsolated { self?.windowWillClose(window) }
+        })
+    }
+
+    deinit {
+        for token in observers { NotificationCenter.default.removeObserver(token) }
+    }
+
+    // MARK: - Yielding the floating level to our own key windows (#54)
+
+    private func otherWindowDidBecomeKey(_ window: NSWindow) {
+        // Only real, visible windows of this app — never the panel itself (its delegate path
+        // reclaims), and never the menu bar item, menus, or popovers, which are transient
+        // AppKit windows that can take key without the user "being in" a window.
+        guard window !== panel, NSApp.windows.contains(window), window.isVisible else { return }
+        let className = NSStringFromClass(type(of: window))
+        guard !className.contains("NSStatusBar"), !className.contains("MenuWindow"),
+              !className.contains("NSPopover") else { return }
+        yield(to: window)
+    }
+
+    private func windowWillClose(_ window: NSWindow) {
+        guard window === yieldingTo else { return }
+        reclaimFloat()
+    }
+
+    private func yield(to window: NSWindow) {
+        yieldingTo = window
+        panel.level = .normal
+    }
+
+    private func reclaimFloat() {
+        yieldingTo = nil
+        panel.level = .floating
     }
 
     /// Widens the panel to make room for the transforms sidebar and narrows it again when
@@ -93,6 +151,10 @@ final class PanelController: NSObject, NSWindowDelegate {
 
     func hide() {
         panel.orderOut(nil)
+    }
+
+    func windowDidBecomeKey(_ notification: Notification) {
+        reclaimFloat()
     }
 
     func windowDidResignKey(_ notification: Notification) {
