@@ -56,7 +56,11 @@ final class AppModel: ObservableObject {
     private var applyTask: Task<Void, Never>?
 
     /// True until the current buffer's scan lands. The Zipline upload gate (#14) must wait for
-    /// this before treating an empty `secretMatches` as "no secrets".
+    /// this before treating an empty `secretMatches` as "no secrets". A gate should observe
+    /// `$document` and re-check this rather than spin on the Bool: `document == nil` reads the
+    /// same `false` as a completed scan but means "no buffer", not "clean". The real tri-state
+    /// lives on `PasteDocument.detection` (`.pending` or `.complete`, the latter carrying
+    /// `secretScanSkipped` for an over-cap buffer).
     var isDetecting: Bool { document?.isDetecting ?? false }
 
     init(settings: SettingsStore, history: HistoryStore) {
@@ -203,17 +207,19 @@ final class AppModel: ObservableObject {
 
     func undo() {
         guard var doc = document else { return }
+        let before = doc.detectionRevision
         doc.undo()
         document = doc
-        requestDetection()
+        if doc.detectionRevision != before { requestDetection() }
         resetSecretSelection()
     }
 
     func redo() {
         guard var doc = document else { return }
+        let before = doc.detectionRevision
         doc.redo()
         document = doc
-        requestDetection()
+        if doc.detectionRevision != before { requestDetection() }
         resetSecretSelection()
     }
 
