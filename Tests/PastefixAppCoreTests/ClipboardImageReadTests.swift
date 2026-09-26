@@ -11,8 +11,10 @@ struct ClipboardImageReadTests {
     /// Stands in for the pasteboard: a type-to-bytes table plus the adapter's decode behaviour
     /// (PNG through unchanged, TIFF converted, anything else undecodable).
     private func read(_ table: [String: Data?],
+                      hasFileURL: Bool = false,
                       decode: ((Data) -> Data?)? = nil) -> Data? {
         ClipboardImageRead.imagePNG(
+            hasFileURL: { hasFileURL },
             available: { asked in asked.sorted().first(where: { table.keys.contains($0) }) },
             data: { table[$0] ?? nil },
             decodePNG: decode ?? { bytes in
@@ -78,6 +80,7 @@ struct ClipboardImageReadTests {
         // answers with something else — a JPEG, a PDF, an app's private type — is not an image
         // even if bytes exist for it.
         let out = ClipboardImageRead.imagePNG(
+            hasFileURL: { false },
             available: { _ in "public.jpeg" },
             data: { _ in self.pngBytes },
             decodePNG: { $0 }
@@ -89,6 +92,7 @@ struct ClipboardImageReadTests {
     func asksAboutBothTypes() {
         var asked: Set<String>?
         _ = ClipboardImageRead.imagePNG(
+            hasFileURL: { false },
             available: { types in asked = types; return nil },
             data: { _ in nil },
             decodePNG: { $0 }
@@ -102,10 +106,26 @@ struct ClipboardImageReadTests {
         // this seam should not become the exception.
         var fetched = false
         _ = ClipboardImageRead.imagePNG(
+            hasFileURL: { false },
             available: { _ in nil },
             data: { _ in fetched = true; return nil },
             decodePNG: { $0 }
         )
         #expect(fetched == false)
+    }
+
+    @Test("public.file-url present is no image, even with a valid PNG offered")
+    func fileURLBeatsValidPNG() {
+        // The rule this file exists for: a Finder file copy carries `public.file-url` alongside
+        // a `public.tiff` that is a rendering of the file's icon, not an image the user copied.
+        // `hasFileURL` must win regardless of what the image-type lookup would otherwise answer.
+        let out = read([ClipboardImageRead.pngType: pngBytes], hasFileURL: true)
+        #expect(out == nil)
+    }
+
+    @Test("public.file-url absent leaves a valid PNG untouched")
+    func noFileURLLeavesPNGIntact() {
+        let out = read([ClipboardImageRead.pngType: pngBytes], hasFileURL: false)
+        #expect(out == pngBytes)
     }
 }

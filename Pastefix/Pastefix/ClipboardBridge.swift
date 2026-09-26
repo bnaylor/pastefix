@@ -32,6 +32,10 @@ enum ClipboardBridge {
         // Set by the decode closure below when the clipboard *had* an image we would not convert.
         var refusedPixels: Int?
         let image = ClipboardImageRead.imagePNG(
+            // A Finder file copy puts `public.file-url` on the pasteboard; see
+            // `ClipboardImageRead` for why that alone rules out an image regardless of what
+            // image types are also offered.
+            hasFileURL: { pasteboard.availableType(from: [.fileURL]) != nil },
             // PNG first, and the order is the point: `availableType(from:)` answers with the
             // earliest match, so a pasteboard offering both (most screenshot sources do) is read
             // as the PNG it already holds instead of paying a TIFF decode to arrive at one.
