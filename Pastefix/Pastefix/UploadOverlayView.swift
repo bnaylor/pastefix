@@ -72,6 +72,11 @@ struct UploadOverlayView: View {
     /// `onAppear` can fire more than once for one view instance, and a second `startScan` would
     /// orphan the first task — which then lands its own result on top of the newer one.
     @State private var scanStarted = false
+    /// Same shape as `scanStarted`, for the same reason: `onAppear` can fire more than once for
+    /// one view instance, and the token half of "configured?" (see `init` and `onAppear`) must
+    /// run at most once regardless — a second Keychain read on a second `onAppear` firing would
+    /// be exactly the render-path read this exists to avoid, just moved one level up.
+    @State private var tokenChecked = false
     /// Which part of the overlay holds first responder. It has to hold it *somewhere*: this
     /// overlay uploads a snapshot taken when it opened, so a keystroke that reached the buffer
     /// behind the backdrop would make the uploaded text differ from the text on screen, and one
@@ -215,18 +220,38 @@ struct UploadOverlayView: View {
         _clipboardHasUnsupportedImage = State(initialValue:
             text.isEmpty && sourceIsClipboard
                 && ZiplinePasteboardImage.typesIndicateImage(NSPasteboard.general.types ?? []))
-        // Seeded here rather than in `onAppear` so the very first frame is already the right
-        // state — in particular, a user with no server configured never sees a flash of controls
-        // they cannot use, which is the whole point of checking "configured?" before anything
-        // else. `@State` initial values are only consumed on first construction, so the user's
-        // later edits to these controls are never clobbered by a re-render.
+        // Only the server-URL half of "configured?" is decided here. Parsing a string costs
+        // nothing and touches no Keychain, so the very first frame already knows whether there is
+        // anywhere to send to — a user with no server configured never sees a flash of controls
+        // they cannot use. `@State` initial values are only consumed on first construction, so the
+        // user's later edits to these controls are never clobbered by a re-render.
         //
-        // Be clear about the cost, though: this is an argument expression, so the keychain read
-        // *runs* on every `init` and only its result is discarded. `init` runs whenever
-        // `PanelView` re-renders, which while this overlay is open means an `AppModel` or
-        // `SettingsStore` publish — rare, and a same-process `SecItemCopyMatching` is cheap. If
-        // that ever stops being true, the check moves into a `task` that gates the scan.
-        _phase = State(initialValue: Self.initialPhase(settings: settings, tokenStore: tokenStore))
+        // The token half used to be decided here too, and that was the bug: this is an argument
+        // expression, so whatever it calls *runs* on every `init` and only the result is discarded,
+        // and `init` runs whenever `PanelView` re-renders — while this overlay is open, on every
+        // `AppModel` or `SettingsStore` publish. A same-process `SecItemCopyMatching` was assumed
+        // cheap on the strength of that "rare" alone. Measured wrong, on a rendered GUI pass: a
+        // read that needs the user's permission — which can happen because an ad-hoc Debug
+        // rebuild's signature no longer matches the stored item's ACL, or because the login
+        // keychain is locked; both produce the same blocking prompt, and which one was live during
+        // that pass is not established — opens a `SecurityAgent` prompt that freezes the main
+        // thread until answered, and denial does not stop the next one: one ⌘⇧U, with the read
+        // living here, produced two such prompts — one per re-render — and with auto-hide on, the
+        // prompt's focus steal hid the panel entirely. A render-path read was a prompt loop, not a
+        // cheap call.
+        //
+        // So the token read moves to `.onAppear` (see that handler), which fires once per
+        // appearance rather than once per render — same fix, same reasoning, as
+        // `UploadSettingsView.tokenIsStored`. `.composing` here is provisional whenever a server is
+        // configured: `.onAppear` corrects it to `.configure` before `startScan` can run, so
+        // "configured?" is still answered before anything is scanned — just not necessarily before
+        // the very first paint any more. That is a real, if usually imperceptible, change from the
+        // guarantee this comment used to make for the token case (SwiftUI settles a synchronous
+        // `onAppear` state change before the frame is presented, but that is not the same as
+        // knowing the answer inside `init`), stated here rather than left accidental.
+        _phase = State(initialValue: ZiplineServerURL.parse(settings.ziplineServerURL) == nil
+            ? .configure(Self.noServerMessage)
+            : .composing)
         // The user's setting wins whenever they have set one; detection fills in only while the
         // setting is still its "txt" default — i.e. when the user has expressed no preference at
         // all. Letting a guess override an extension someone deliberately typed was the wrong way
@@ -282,8 +307,29 @@ struct UploadOverlayView: View {
             // overlay's own handlers. The card rather than the extension field, so a stray
             // keypress does not silently rewrite the filename.
             focus = .card
+            // The token half of "configured?" — see `init`'s comment on `_phase` for why it lives
+            // here instead. Gated on `tokenChecked` rather than on `phase` alone: `onAppear` can
+            // fire more than once for one view instance (the same fact `scanStarted` below already
+            // has to guard against), and a second firing must not be a second Keychain read no
+            // matter what `phase` happens to hold by then. Gated on `.composing` inside that: a
+            // server-less `init` already left `phase` at `.configure(noServerMessage)`, and asking
+            // the Keychain anything in that case would be a read for a question already answered.
+            if !tokenChecked {
+                tokenChecked = true
+                if case .composing = phase {
+                    // Nothing about the token is logged, here or anywhere.
+                    switch Self.lookUpToken(tokenStore) {
+                    case .found: break
+                    case .absent: phase = .configure(Self.noTokenMessage)
+                    case .unreadable(let message): phase = .configure(message)
+                    }
+                }
+            }
             // Nothing is scanned in the configure state: there is nowhere to send the result, and
-            // a scan started there would be work done for a question nobody asked.
+            // a scan started there would be work done for a question nobody asked. The token check
+            // above runs first and can move `phase` out of `.composing`, so this still sees the
+            // fully-decided answer to "configured?" before deciding whether to scan — the ordering
+            // the whole overlay exists to preserve (see the type's own doc comment).
             guard !scanStarted, phase == .composing else { return }
             scanStarted = true
             startScan()
@@ -945,18 +991,6 @@ struct UploadOverlayView: View {
         }
     }
 
-    private static func initialPhase(settings: SettingsStore, tokenStore: any ZiplineTokenStore) -> Phase {
-        guard ZiplineServerURL.parse(settings.ziplineServerURL) != nil else {
-            return .configure(noServerMessage)
-        }
-        // Nothing about the token is logged, here or anywhere.
-        switch lookUpToken(tokenStore) {
-        case .found: return .composing
-        case .absent: return .configure(noTokenMessage)
-        case .unreadable(let message): return .configure(message)
-        }
-    }
-
     /// The height the scrolling region gets: the smaller of what its content needs and what the
     /// panel has left after everything that is not the scroll region.
     ///
@@ -1133,7 +1167,7 @@ struct UploadOverlayView: View {
             phase = .configure(Self.noTokenMessage)
             return
         case .unreadable(let message):
-            // The same three-way answer as `initialPhase`, for the same reason: a keychain that
+            // The same three-way answer `onAppear` uses, for the same reason: a keychain that
             // has become unreadable since the overlay opened is not a token that was removed.
             phase = .configure(message)
             return
