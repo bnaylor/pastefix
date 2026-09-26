@@ -36,6 +36,22 @@ public struct PasteDocument: Sendable {
     public var canUndo: Bool { cursor > 0 }
     public var canRedo: Bool { cursor < history.count - 1 }
 
+    /// The session's standalone image, if the clipboard had one. Carried whatever the session
+    /// displays as, so an image-aware action reaches it even from a text session.
+    public var imagePNG: Data? { origin.imagePNG }
+
+    /// True when this session should render as an image rather than the editor: an image is
+    /// present and there is no real text.
+    ///
+    /// "No real text" is blank-once-trimmed, which is the rule `PendingImage.resolve` and
+    /// `HistoryStore.record` already use. Reusing it rather than writing a second one is the
+    /// point: a capture path and a session path that disagree about whether a buffer has text
+    /// give two different answers for one clipboard, and nobody notices until they do.
+    public var displaysAsImage: Bool {
+        guard origin.imagePNG != nil else { return false }
+        return working.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
     /// True when nothing has happened to this document since it was captured: no transform
     /// pushed, nothing typed, nothing to redo, and no output mode armed.
     ///
