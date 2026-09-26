@@ -52,4 +52,36 @@ struct PasteDocumentImageTests {
     func noUndo() {
         #expect(doc(text: nil, image: png).canUndo == false)
     }
+
+    @Test("clearing a mixed session's text leaves it displaying as text")
+    func clearingMixedTextIsSticky() {
+        // The editor must not vanish mid-edit. `setWorking` pushes no history, so a live
+        // derivation over `working` would flip this true on the keystroke that empties the buffer,
+        // swap the editor for the image view, and leave `canUndo == false` — no ⌘Z back, no way to
+        // type for the rest of the session. The form is decided at init and stays decided.
+        var d = doc(text: "caption", image: png)
+        #expect(d.displaysAsImage == false)
+        d.setWorking("")
+        #expect(d.displaysAsImage == false, "the editor must still be there after ⌘A Delete")
+        d.setWorking("   \n ")
+        #expect(d.displaysAsImage == false, "blank is not a different answer from empty here")
+        #expect(d.canUndo == false, "and there is nothing to undo, which is why stickiness matters")
+    }
+
+    @Test("a pushed transform cannot change the display form either")
+    func pushIsSticky() {
+        var d = doc(text: "caption", image: png)
+        d.pushState("")
+        #expect(d.displaysAsImage == false)
+    }
+
+    @Test("a refreshed origin is a new decision")
+    func refreshRederives() {
+        // Stickiness is per origin, not for ever: ⌘R replaces the whole document, so a clipboard
+        // now holding only an image opens as an image session.
+        var d = doc(text: "caption", image: nil)
+        #expect(d.displaysAsImage == false)
+        d.refresh(origin: ClipboardSnapshot(plainText: nil, richRTFD: nil, imagePNG: png))
+        #expect(d.displaysAsImage)
+    }
 }

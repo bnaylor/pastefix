@@ -18,6 +18,16 @@ public struct ClipboardSnapshot: Sendable {
     /// pasteboard image type; without that rule every rich paste from a web page would become an
     /// image session (spec, Decisions).
     public let imagePNG: Data?
+    /// The pixel count of a standalone image this snapshot *declined* to carry, or nil when there
+    /// was nothing to decline.
+    ///
+    /// Only one thing sets it today: a non-PNG image over `ImageBytes.maxConvertiblePixels`, which
+    /// `ClipboardBridge.snapshot` will not decode synchronously on the summon path. `imagePNG` is
+    /// nil in that case — and an image silently becoming no image is the failure this codebase
+    /// treats as a defect, so the panel says so instead (a 30 MP photo copied out of Preview is
+    /// enough to hit it). It is a number rather than a flag so the message can quote the size in
+    /// the unit the limit is expressed in.
+    public let refusedImagePixels: Int?
     /// `NSPasteboard.changeCount` at the instant this was captured, or nil when the snapshot did
     /// not come from a pasteboard at all (a history item re-opened into the panel, a test).
     ///
@@ -28,16 +38,20 @@ public struct ClipboardSnapshot: Sendable {
     /// a reason *not* to claim the clipboard as the source.
     public let changeCount: Int?
 
-    public init(plainText: String?, richRTFD: Data?, imagePNG: Data? = nil, changeCount: Int? = nil) {
+    public init(plainText: String?, richRTFD: Data?, imagePNG: Data? = nil,
+                refusedImagePixels: Int? = nil, changeCount: Int? = nil) {
         self.plainText = plainText
         self.richRTFD = richRTFD
         self.imagePNG = imagePNG
+        self.refusedImagePixels = refusedImagePixels
         self.changeCount = changeCount
     }
 
-    public init(plainText: String?, rich: NSAttributedString?, imagePNG: Data? = nil, changeCount: Int? = nil) {
+    public init(plainText: String?, rich: NSAttributedString?, imagePNG: Data? = nil,
+                refusedImagePixels: Int? = nil, changeCount: Int? = nil) {
         self.plainText = plainText
         self.imagePNG = imagePNG
+        self.refusedImagePixels = refusedImagePixels
         self.changeCount = changeCount
         self.richRTFD = rich.flatMap { attributed in
             try? attributed.data(

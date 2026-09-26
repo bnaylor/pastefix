@@ -30,6 +30,8 @@ public struct PasteDocument: Sendable {
         self.history = [origin.plainText ?? ""]
         self.cursor = 0
         self.outputMode = .plain
+        self.displaysAsImage = origin.imagePNG != nil
+            && (origin.plainText ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     public var working: String { history[cursor] }
@@ -40,17 +42,28 @@ public struct PasteDocument: Sendable {
     /// displays as, so an image-aware action reaches it even from a text session.
     public var imagePNG: Data? { origin.imagePNG }
 
-    /// True when this session should render as an image rather than the editor: an image is
-    /// present and there is no real text.
+    /// True when this session renders as an image rather than the editor: the origin carried an
+    /// image and carried no real text.
+    ///
+    /// **Decided once, at init, and sticky for the session** — it is a `let`, and deliberately not
+    /// derived from `working`. A live derivation is what the spec originally asked for and it is
+    /// unshippable: `setWorking` pushes no history, so in a *mixed* session (image + text) ⌘A then
+    /// Delete would blank `working`, flip this true on that keystroke, and replace the `TextEditor`
+    /// with the image view — with `canUndo` false, so ⌘Z could not bring the editor back and the
+    /// user could not type again for the rest of the session. Clearing the text in a mixed session
+    /// leaves you in the editor.
+    ///
+    /// Sticky in both directions, and the other one costs nothing: an image session has no editor
+    /// to type into and no transform that accepts an image, so `working` cannot gain text.
+    ///
+    /// A new origin is a new decision, not a mutation of this one: `refresh(origin:)` replaces the
+    /// whole document, so ⌘R re-derives this from the clipboard it just read.
     ///
     /// "No real text" is blank-once-trimmed, which is the rule `PendingImage.resolve` and
     /// `HistoryStore.record` already use. Reusing it rather than writing a second one is the
     /// point: a capture path and a session path that disagree about whether a buffer has text
     /// give two different answers for one clipboard, and nobody notices until they do.
-    public var displaysAsImage: Bool {
-        guard origin.imagePNG != nil else { return false }
-        return working.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    }
+    public let displaysAsImage: Bool
 
     /// True when nothing has happened to this document since it was captured: no transform
     /// pushed, nothing typed, nothing to redo, and no output mode armed.
