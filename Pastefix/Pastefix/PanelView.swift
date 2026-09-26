@@ -116,6 +116,17 @@ struct PanelView: View {
                             // No padding here: the text view carries its own 8 pt
                             // `textContainerInset`, which matches the editor's gutter.
                             MarkdownPreviewView(text: previewText)
+                        } else if let document = model.document, document.displaysAsImage,
+                                  let imagePNG = document.imagePNG {
+                            // An image session shows the image where the editor would be, and
+                            // nothing else about the panel changes: same toolbar, action bar,
+                            // footer and overlays. `.id` on the session generation because the
+                            // view holds a decoded bitmap in `@State` — a new summon or a loaded
+                            // history item must start it over rather than inherit the last
+                            // session's image (the view keeps its place in the hierarchy, so
+                            // SwiftUI would otherwise keep its state too).
+                            ImageSessionView(imagePNG: imagePNG, revision: document.detectionRevision)
+                                .id(model.sessionGeneration)
                         } else {
                             TextEditor(text: workingBinding, selection: selectionBinding)
                                 .font(.system(.body, design: .monospaced))

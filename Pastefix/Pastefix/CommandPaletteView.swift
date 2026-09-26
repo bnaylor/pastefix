@@ -66,7 +66,7 @@ struct CommandPaletteView: View {
             .padding(12)
             Divider()
             if items.isEmpty {
-                Text("No matching transforms").foregroundStyle(.secondary).padding(16)
+                Text(emptyMessage).foregroundStyle(.secondary).padding(16)
             } else {
                 ScrollViewReader { proxy in
                     List(Array(items.enumerated()), id: \.element.id) { index, result in
@@ -114,6 +114,19 @@ struct CommandPaletteView: View {
         // `PanelView` only inserts this view `if isPaletteOpen`, so `onAppear` fires exactly once
         // per open and `@State` resets on the next one.
         .onAppear { kindsSnapshot = model.document?.detectedKinds ?? [] }
+    }
+
+    /// Why the list is empty, which is two different things.
+    ///
+    /// In an image session it is not a failed search: no transform accepts an image
+    /// (`Transformer.acceptedForms`), and this increment deliberately ships none that do. The
+    /// palette opens, the field takes focus, and every keystroke would keep saying "no matching
+    /// transforms" — which reads as a broken panel rather than as an answer. Say the real reason
+    /// instead, whatever is typed.
+    private var emptyMessage: String {
+        model.document?.displaysAsImage == true
+            ? "No transforms apply to an image"
+            : "No matching transforms"
     }
 
     private func row(_ result: SearchResult, isSelected: Bool) -> some View {

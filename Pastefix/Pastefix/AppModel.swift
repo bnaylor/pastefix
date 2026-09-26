@@ -274,13 +274,29 @@ final class AppModel: ObservableObject {
             }
             do {
                 let rich = try RichOutputRenderer.render(markdown: doc.working)
-                ClipboardBridge.writeRich(text: doc.working, html: rich.html, rtf: rich.rtf)
+                // The image rides along here too: arming Markdown → Rich Text is a statement
+                // about how the *text* is written, not permission to drop an image the session
+                // was handed and the user never touched.
+                ClipboardBridge.writeRich(text: doc.working, html: rich.html, rtf: rich.rtf,
+                                          imagePNG: doc.imagePNG)
             } catch {
                 // Keep the session open and the mode armed: the user can read the error and
                 // either fix the Markdown or disarm the badge and save plain text instead.
                 errorMessage = "Couldn't render Markdown: \(error.localizedDescription)"
                 return
             }
+        } else if let image = doc.imagePNG {
+            // Save never writes less than it was given. A mixed session whose text was edited
+            // writes the edited text *and* the original image; an image session writes the image
+            // back unchanged, which is the whole point of being able to open one.
+            //
+            // The text is nil rather than "" when the buffer is empty — the image-only case.
+            // Declaring an empty `.string` alongside the image would offer a text target nothing
+            // where it could otherwise have taken the picture. Any real text, whitespace
+            // included, is written verbatim: this is not the place to decide a user's buffer is
+            // not worth keeping.
+            ClipboardBridge.write(text: doc.working.isEmpty ? nil : doc.working,
+                                  richRTFD: nil, imagePNG: image)
         } else {
             ClipboardBridge.writePlain(doc.working)
         }
@@ -300,16 +316,21 @@ final class AppModel: ObservableObject {
 
     func cancel() { endSession() }
 
-    /// Starts a new session from a history item (rich data attached when present).
+    /// Starts a new session from a history item (rich data and image attached when present).
+    ///
+    /// Every item opens into a session now, image-only ones included: the snapshot carries the
+    /// image, `PasteDocument.displaysAsImage` makes the panel show it, and Save writes it back —
+    /// so an image-only item is an image session rather than something a session would discard.
+    /// An item with both text and an image opens as a text session that still carries the image
+    /// through to Save.
     func load(_ item: HistoryItem) {
-        // An image-only item has no text to edit; opening a session would silently discard the
-        // image. Put it straight back on the clipboard instead of opening an empty editor.
-        guard item.hasText else { copyBack(item); return }
         errorMessage = nil
         resetSecretSelection()
         abandonInFlightWork()
         sessionGeneration &+= 1
-        document = PasteDocument(origin: ClipboardSnapshot(plainText: item.plainText ?? "", richRTFD: history.richRTFD(for: item)))
+        document = PasteDocument(origin: ClipboardSnapshot(plainText: item.plainText ?? "",
+                                                          richRTFD: history.richRTFD(for: item),
+                                                          imagePNG: history.imagePNG(for: item)))
         requestDetection()
     }
 

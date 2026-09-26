@@ -1,4 +1,6 @@
 import AppKit
+import ImageIO
+import UniformTypeIdentifiers
 import PastefixAppCore
 
 enum ClipboardBridge {
@@ -23,10 +25,59 @@ enum ClipboardBridge {
         } else {
             rich = nil
         }
+        // A standalone pasteboard image, on the same footing as the text reads above: it is
+        // content, so it comes after the count. The three "no image" rules live in
+        // `ClipboardImageRead` — see there for why nil is never `Data()`.
+        let image = ClipboardImageRead.imagePNG(
+            // PNG first, and the order is the point: `availableType(from:)` answers with the
+            // earliest match, so a pasteboard offering both (most screenshot sources do) is read
+            // as the PNG it already holds instead of paying a TIFF decode to arrive at one.
+            available: { types in
+                let ordered = [ClipboardImageRead.pngType, ClipboardImageRead.tiffType]
+                    .filter { types.contains($0) }
+                    .map { NSPasteboard.PasteboardType(rawValue: $0) }
+                return pasteboard.availableType(from: ordered)?.rawValue
+            },
+            data: { pasteboard.data(forType: NSPasteboard.PasteboardType(rawValue: $0)) },
+            decodePNG: { normalisedPNG($0) }
+        )
         // Stored with the snapshot: it is what later tells a summon whether the buffer it is
         // holding is older than the clipboard.
-        return ClipboardSnapshot(plainText: plain, rich: rich, changeCount: changeCount)
+        return ClipboardSnapshot(plainText: plain, rich: rich, imagePNG: image, changeCount: changeCount)
     }
+
+    /// PNG bytes for pasteboard image bytes, or nil when they are not a usable image.
+    ///
+    /// Sniffs the content rather than trusting the declared type, which makes a pasteboard that
+    /// lies about what it holds harmless in both directions, and:
+    ///
+    /// - **Already a PNG: the bytes come back untouched.** Validation is a header read, the same
+    ///   `CGImageSource` route `PasteboardMonitor.read` uses to size-gate without decoding. A
+    ///   decode-and-re-encode here would cost a full second on a screenshot-sized PNG — on the
+    ///   main actor, on the summon path, every ⌘⇧V — and would hand `Save` different bytes than
+    ///   the user copied (#32 is the same lesson from the capture path).
+    /// - **A TIFF is converted** through `NSBitmapImageRep`, the one decode route this app has.
+    ///   Gated at the same 25M-pixel ceiling the capture path uses, for the same reason and with
+    ///   one difference worth stating: capture hands that conversion to `TIFFConversionSlot` off
+    ///   the main actor, and `snapshot` cannot — it is synchronous and its result seeds the
+    ///   document the panel is about to show. So the ceiling is the whole bound here, and an
+    ///   image above it opens as an ordinary (empty) text session rather than freezing the summon.
+    ///   Only a TIFF-only clipboard can reach the conversion at all; a PNG is free.
+    private static func normalisedPNG(_ bytes: Data) -> Data? {
+        guard let source = CGImageSourceCreateWithData(bytes as CFData, nil),
+              CGImageSourceGetCount(source) > 0,
+              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+              let width = properties[kCGImagePropertyPixelWidth] as? Int,
+              let height = properties[kCGImagePropertyPixelHeight] as? Int,
+              width > 0, height > 0 else { return nil }
+        if CGImageSourceGetType(source) as String? == UTType.png.identifier { return bytes }
+        guard width * height <= maxConvertiblePixels else { return nil }
+        return NSBitmapImageRep(data: bytes)?.representation(using: .png, properties: [:])
+    }
+
+    /// The pixel ceiling on a TIFF this path will decode, matching `PasteboardMonitor.read`'s.
+    /// 25M px covers any real display grab (a 6K Pro Display XDR is ~20M px).
+    private static let maxConvertiblePixels = 25_000_000
 
     static func writePlain(_ text: String, to pasteboard: NSPasteboard = .general) {
         write(text: text, richRTFD: nil, imagePNG: nil, to: pasteboard)
@@ -68,11 +119,18 @@ enum ClipboardBridge {
     }
 
     /// Armed-Markdown save: formatted targets take HTML/RTF, plain targets get the Markdown source.
-    static func writeRich(text: String, html: String, rtf: Data?, to pasteboard: NSPasteboard = .general) {
+    ///
+    /// `imagePNG` is here for the same reason it is on `write`: a session can carry a standalone
+    /// image alongside text (a copy that put both on the clipboard), and arming Markdown → Rich
+    /// Text must not be the one save path that silently drops it. Save never writes less than it
+    /// was given.
+    static func writeRich(text: String, html: String, rtf: Data?, imagePNG: Data? = nil,
+                          to pasteboard: NSPasteboard = .general) {
         beginWrite(pasteboard)
         pasteboard.setString(text, forType: .string)
         pasteboard.setString(html, forType: .html)
         if let rtf { pasteboard.setData(rtf, forType: .rtf) }
+        if let imagePNG { pasteboard.setData(imagePNG, forType: .png) }
     }
 
     /// Writes every representation we have for one item. Empty inputs write nothing for that type.
