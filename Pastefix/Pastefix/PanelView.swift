@@ -144,6 +144,12 @@ struct PanelView: View {
                         }
                         if let error = model.errorMessage {
                             errorBanner(error)
+                        } else if let notice = model.noticeMessage {
+                            // A separate banner from `errorBanner`, not just a recolor of it: a
+                            // notice (currently only the refused-image message) reports that
+                            // nothing was lost, and the red-and-white treatment below said the
+                            // opposite — see `AppModel.noticeMessage`.
+                            noticeBanner(notice)
                         }
                     }
                     if settings.showSidebar {
@@ -221,7 +227,7 @@ struct PanelView: View {
         // is no editor to focus.
         .onChange(of: model.isApplying) { _, applying in
             if !applying && !isPaletteOpen && !isHistoryOpen && !isUploadOpen && !isPreviewing {
-                editorFocused = true
+                focusEditorUnlessRefusedImage()
             }
         }
         // Transforms, undo/redo and typing all land here; the debounce keeps a fast-changing
@@ -241,7 +247,7 @@ struct PanelView: View {
             guard let requested else { return }
             if !isPaletteOpen && !isHistoryOpen && !isUploadOpen && !isPreviewing {
                 editorSelection = requested
-                editorFocused = true
+                focusEditorUnlessRefusedImage()
             }
             model.requestedSelection = nil
         }
@@ -496,7 +502,7 @@ struct PanelView: View {
         previewTask?.cancel()
         // Unlike the overlays, the editor does not exist yet at this point — it comes back on
         // the next render — so the focus request has to wait a turn or it lands on nothing.
-        Task { @MainActor in editorFocused = true }
+        Task { @MainActor in focusEditorUnlessRefusedImage() }
     }
 
     /// Esc: close whichever overlay is open, then the preview, otherwise end the session.
@@ -516,16 +522,27 @@ struct PanelView: View {
 
     private func closePalette() {
         isPaletteOpen = false
-        editorFocused = true
+        focusEditorUnlessRefusedImage()
     }
 
     private func closeHistory() {
         isHistoryOpen = false
-        editorFocused = true
+        focusEditorUnlessRefusedImage()
     }
 
     private func closeUpload() {
         isUploadOpen = false
+        focusEditorUnlessRefusedImage()
+    }
+
+    /// Requests focus for the editor, except in a refused-image session, where it is empty and
+    /// on screen only beneath the notice telling the user their picture is still on the
+    /// clipboard. A blinking caret there invites the one keystroke `save()` deliberately allows
+    /// to overwrite that image (typing is a deliberate act, so `save()` does not block it) — this
+    /// just stops inviting it. The editor stays reachable by click for anyone who does mean to
+    /// type over the image.
+    private func focusEditorUnlessRefusedImage() {
+        guard model.document?.origin.refusedImagePixels == nil else { return }
         editorFocused = true
     }
 
@@ -560,5 +577,21 @@ struct PanelView: View {
         .foregroundStyle(.white)
         .padding(8)
         .background(Color.red.opacity(0.85))
+    }
+
+    /// Amber, not red-and-white: a notice (currently only the refused-image message) reports
+    /// that a refusal happened and nothing was lost, not that something failed. `errorBanner`
+    /// above stays exactly as it was — real errors still get the solid red strip and the
+    /// warning triangle.
+    private func noticeBanner(_ text: String) -> some View {
+        HStack {
+            Image(systemName: "info.circle.fill")
+            Text(text).lineLimit(2)
+            Spacer()
+        }
+        .font(.callout)
+        .foregroundStyle(.primary)
+        .padding(8)
+        .background(Color.orange.opacity(0.18))
     }
 }

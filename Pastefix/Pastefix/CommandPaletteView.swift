@@ -86,8 +86,13 @@ struct CommandPaletteView: View {
             }
             Divider()
             HStack(spacing: 16) {
-                Label("Apply", systemImage: "return")
-                Label("Choose", systemImage: "arrow.up.arrow.down")
+                // Apply/Choose hint keys that do nothing: an image session has no results to
+                // apply or choose among (see `emptyMessage`), so showing them would advertise
+                // keys the list can never act on. Esc still closes the palette either way.
+                if model.document?.displaysAsImage != true {
+                    Label("Apply", systemImage: "return")
+                    Label("Choose", systemImage: "arrow.up.arrow.down")
+                }
                 Text("esc Close")
                 Spacer()
             }

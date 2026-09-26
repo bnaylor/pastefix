@@ -9,6 +9,11 @@ import PastefixAppCore
 final class AppModel: ObservableObject {
     @Published private(set) var document: PasteDocument?
     @Published var errorMessage: String?
+    /// Separate from `errorMessage` on purpose: an error reports that something failed, a notice
+    /// reports a refusal in which nothing was lost (the clipboard is untouched). Conflating them
+    /// (as `noteRefusedImage` used to, through `errorMessage`) taught a user that an intact
+    /// clipboard looks exactly like a broken one — same red strip, same warning triangle.
+    @Published var noticeMessage: String?
     @Published private(set) var isApplying = false
     @Published private(set) var transformers: [any Transformer] = []
     @Published private(set) var allTransformers: [any Transformer] = []
@@ -114,6 +119,7 @@ final class AppModel: ObservableObject {
 
     func summon() {
         errorMessage = nil
+        noticeMessage = nil
         resetSecretSelection()
         abandonInFlightWork()
         sessionGeneration &+= 1
@@ -139,7 +145,7 @@ final class AppModel: ObservableObject {
     /// what disappears. The megapixel figures are the expendable half; "paste it directly" is not.
     private func noteRefusedImage(_ origin: ClipboardSnapshot) {
         guard let pixels = origin.refusedImagePixels else { return }
-        errorMessage = "That image is too large to open — paste it directly, it's still on your clipboard. (\(ImageBytes.megapixelLabel(pixels)); limit \(ImageBytes.megapixelLabel(ImageBytes.maxConvertiblePixels)))"
+        noticeMessage = "That image is too large to open — paste it directly, it's still on your clipboard. (\(ImageBytes.megapixelLabel(pixels)); limit \(ImageBytes.megapixelLabel(ImageBytes.maxConvertiblePixels)))"
     }
 
     /// Palette list: enabled transforms in the user's order, with those applicable to the
@@ -267,6 +273,7 @@ final class AppModel: ObservableObject {
         document = doc
         requestDetection()
         errorMessage = nil
+        noticeMessage = nil
         // After the clear, not before: a refused image is news about the buffer that was just
         // installed, and clearing afterwards would throw it away.
         noteRefusedImage(origin)
@@ -361,6 +368,7 @@ final class AppModel: ObservableObject {
     /// through to Save.
     func load(_ item: HistoryItem) {
         errorMessage = nil
+        noticeMessage = nil
         resetSecretSelection()
         abandonInFlightWork()
         sessionGeneration &+= 1
@@ -434,6 +442,7 @@ final class AppModel: ObservableObject {
         abandonInFlightWork()
         document = nil
         errorMessage = nil
+        noticeMessage = nil
         resetSecretSelection()
         sessionGeneration &+= 1
         onEndSession?()
