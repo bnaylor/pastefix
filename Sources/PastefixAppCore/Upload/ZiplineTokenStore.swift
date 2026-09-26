@@ -59,9 +59,11 @@ public enum TokenStoreError: Error, Equatable {
 /// - A **Developer ID release** build reads it silently, across versions: the signing identity
 ///   is stable, so the ACL keeps matching.
 /// - An **ad-hoc Debug rebuild** changes the cdhash every build, so the ACL no longer matches
-///   the caller: `token()` can prompt for permission, or fail with `errSecAuthFailed`. Re-signing
-///   the Debug build (`docs/gui-automation.md`, the same step the Accessibility grant needs)
-///   makes it stable again.
+///   the caller: `token()` can prompt for permission — denying any such Keychain prompt reads
+///   back as `errSecUserCanceled` (-128), not `errSecAuthFailed`, which this comment used to
+///   claim — or fail outright without prompting, depending on the session. Re-signing the Debug
+///   build (`docs/gui-automation.md`, the same step the Accessibility grant needs) makes it
+///   stable again.
 ///
 /// That second case is a *read failure*, not "no token", and the surfaces that ask must say so —
 /// see `TokenStoreError.keychainDetail` and the upload overlay's configure state.

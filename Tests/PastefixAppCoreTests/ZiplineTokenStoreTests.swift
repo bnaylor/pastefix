@@ -39,14 +39,16 @@ struct ZiplineTokenStoreTests {
     func keychainDetailNamesTheStatus() {
         // The distinction the upload overlay's third configure sentence rests on: "couldn't read
         // the token" has to be able to say *why*, and two different failures must not render the
-        // same. `errSecAuthFailed` is the one an ad-hoc Debug rebuild produces (the item's ACL is
-        // bound to the signature that created it); `errSecInteractionNotAllowed` is a locked
-        // keychain.
-        let authFailed = TokenStoreError.keychain(errSecAuthFailed).keychainDetail
+        // same. `errSecUserCanceled` is what denying a Keychain permission prompt reads back as —
+        // whether the prompt appeared because an ad-hoc Debug rebuild's signature no longer
+        // matches the item's ACL, or because the login keychain is locked, both of which can also
+        // fail outright as `errSecInteractionNotAllowed` without ever prompting. (This test used
+        // to assert `errSecAuthFailed` for the former; that was never what denial produces.)
+        let userCanceled = TokenStoreError.keychain(errSecUserCanceled).keychainDetail
         let locked = TokenStoreError.keychain(errSecInteractionNotAllowed).keychainDetail
-        #expect(!authFailed.isEmpty)
+        #expect(!userCanceled.isEmpty)
         #expect(!locked.isEmpty)
-        #expect(authFailed != locked)
+        #expect(userCanceled != locked)
     }
 
     @Test("an unknown status still produces something showable")

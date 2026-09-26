@@ -903,10 +903,11 @@ struct UploadOverlayView: View {
         "No Zipline API token is stored. Add one in Settings to upload."
 
     /// The third sentence. A keychain read can fail for reasons that are not "no token" — a
-    /// locked keychain, a denied ACL, `errSecAuthFailed` after an ad-hoc Debug rebuild changed
-    /// the signature the item's ACL is bound to (see `KeychainTokenStore`) — and these used to
-    /// collapse into `noTokenMessage`. Same door, wrong wall: the user re-enters a token that is
-    /// already stored, and `setToken` then fails for the same underlying reason with a different
+    /// locked keychain, or a denied ACL prompt (`errSecUserCanceled`, not `errSecAuthFailed` as
+    /// this comment used to claim) after an ad-hoc Debug rebuild changed the signature the
+    /// item's ACL is bound to (see `KeychainTokenStore`) — and these used to collapse into
+    /// `noTokenMessage`. Same door, wrong wall: the user re-enters a token that is already
+    /// stored, and `setToken` then fails for the same underlying reason with a different
     /// message. This says which it was; the Security framework's own text carries the specifics,
     /// and the payload is an `OSStatus`, never the token.
     private static func unreadableTokenMessage(_ detail: String) -> String {
