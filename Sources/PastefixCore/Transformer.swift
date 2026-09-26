@@ -13,6 +13,17 @@ public struct TransformInput: Sendable {
     }
 }
 
+/// What a transform can run on.
+///
+/// Deliberately separate from `ContentKind`: kinds drive detection-based *promotion* (what sorts
+/// first in the palette), while a form is *applicability* (what can run at all). Collapsing them
+/// would make "promoted" and "possible" one axis, and they are not — a JSON transform is promoted
+/// for JSON and still applicable to any text.
+public enum ContentForm: Sendable, Hashable {
+    case text
+    case image
+}
+
 public enum TransformerSource: Sendable, Equatable {
     case builtin
     case shell(URL)
@@ -60,6 +71,11 @@ public protocol Transformer: Identifiable, Sendable {
     /// Content kinds this transform is meant for. `nil` (the default) means always
     /// applicable. The palette lists matching transforms first; nothing is hidden.
     var applicableKinds: Set<ContentKind>? { get }
+    /// Which content forms this transform can run on. Defaults to `[.text]`.
+    ///
+    /// The default is text and it is deliberate: every transform that predates image sessions
+    /// declares nothing, and a new one must not claim it handles images by omission.
+    var acceptedForms: Set<ContentForm> { get }
     /// Display group for browsing UIs (sidebar sections, palette subtitles). `nil` means
     /// uncategorised; scripts without a `category` header are shown under "Scripts".
     var category: String? { get }
@@ -76,6 +92,7 @@ public protocol Transformer: Identifiable, Sendable {
 
 public extension Transformer {
     var applicableKinds: Set<ContentKind>? { nil }
+    var acceptedForms: Set<ContentForm> { [.text] }
     var category: String? { nil }
     var maxInputBytes: Int { TransformLimits.defaultMaxInputBytes }
     var timeout: TimeInterval { TransformLimits.defaultTimeout }

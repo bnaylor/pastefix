@@ -9,6 +9,12 @@ public enum TransformOutcome: Sendable, Equatable {
 
 public enum TransformCoordinator {
     public static func isEnabled(_ transformer: any Transformer, for document: PasteDocument) -> Bool {
+        // Two independent gates. Form asks whether this transform can run on what the session is
+        // showing at all; rich input asks whether the original clipboard carried rich content.
+        // An image session fails the first for a text transform and the second for a rich one,
+        // for different reasons, and neither subsumes the other.
+        let form: ContentForm = document.displaysAsImage ? .image : .text
+        guard transformer.acceptedForms.contains(form) else { return false }
         if transformer.requiresRichInput { return document.origin.hasRichContent }
         return true
     }
