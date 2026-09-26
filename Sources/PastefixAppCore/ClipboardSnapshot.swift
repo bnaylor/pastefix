@@ -7,6 +7,17 @@ import AppKit
 public struct ClipboardSnapshot: Sendable {
     public let plainText: String?
     public let richRTFD: Data?
+    /// A standalone pasteboard image, normalised to PNG.
+    ///
+    /// Nil covers three different "no image" cases deliberately, because none of them should
+    /// become an empty `Data`: the pasteboard had no image type; it advertised one whose provider
+    /// never materialised the promised data; or the bytes did not decode. An empty `Data` here
+    /// would be written back over the user's clipboard as a zero-byte image by `Save`.
+    ///
+    /// An image embedded inside `richRTFD` is **not** this. This field means a standalone
+    /// pasteboard image type; without that rule every rich paste from a web page would become an
+    /// image session (spec, Decisions).
+    public let imagePNG: Data?
     /// `NSPasteboard.changeCount` at the instant this was captured, or nil when the snapshot did
     /// not come from a pasteboard at all (a history item re-opened into the panel, a test).
     ///
@@ -17,14 +28,16 @@ public struct ClipboardSnapshot: Sendable {
     /// a reason *not* to claim the clipboard as the source.
     public let changeCount: Int?
 
-    public init(plainText: String?, richRTFD: Data?, changeCount: Int? = nil) {
+    public init(plainText: String?, richRTFD: Data?, imagePNG: Data? = nil, changeCount: Int? = nil) {
         self.plainText = plainText
         self.richRTFD = richRTFD
+        self.imagePNG = imagePNG
         self.changeCount = changeCount
     }
 
-    public init(plainText: String?, rich: NSAttributedString?, changeCount: Int? = nil) {
+    public init(plainText: String?, rich: NSAttributedString?, imagePNG: Data? = nil, changeCount: Int? = nil) {
         self.plainText = plainText
+        self.imagePNG = imagePNG
         self.changeCount = changeCount
         self.richRTFD = rich.flatMap { attributed in
             try? attributed.data(
