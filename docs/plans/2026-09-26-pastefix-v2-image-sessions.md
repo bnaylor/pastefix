@@ -578,9 +578,10 @@ The spec says plainly that this increment's visible half is verified by a GUI pa
 - [ ] **Step 1: The checks**
 
 1. `pb png 800 600`, then ⌘⇧C — the panel shows the image, not an empty editor.
-2. ⌘↵ — the clipboard holds the image again (`pb types` shows an image type).
+2. ⌘S — the clipboard holds the image again (`pb types` shows an image type). **Save is ⌘S, not ⌘↵** — an earlier draft of this step had it wrong.
 3. `pb text 'hello'`, ⌘⇧C — the editor opens as before. **No regression is the point of this one.**
-4. A clipboard with an image *and* text — the editor opens, and the image survives Save: edit the text, ⌘↵, then confirm `pb types` still shows both.
+4. A clipboard with an image *and* text — the editor opens, and the image survives Save: edit the text, ⌘S, then confirm `pb types` still shows both.
+9. **In that same mixed session, select all and delete.** The editor must stay — it must not be replaced by the image view, because there would be no way back (`canUndo` is false). This is the trap the Task 4 review found; the display form is sticky per session, not derived per keystroke.
 5. ⌘K in an image session — says no transforms apply, rather than an empty list.
 6. An image row in ⌘⇧V, ↵ — opens into a session. ⌘↵ on the same row — copies back.
 7. `pb png 4000 4000` (over history's 5 MB) — viewable, and absent from history.
