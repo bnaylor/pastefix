@@ -131,10 +131,15 @@ final class AppModel: ObservableObject {
     /// anti-pattern (the upload overlay's "image, not supported yet" exists for the same reason).
     ///
     /// The clipboard is untouched, which the message says, because "too large" invites the
-    /// assumption that something was lost.
+    /// assumption that something was lost — and `save()` refuses to write over it, so that half of
+    /// the sentence is a guarantee rather than a hope.
+    ///
+    /// Kept short, and ordered so the instruction comes before the numbers: the banner is
+    /// `.lineLimit(2)` at `.callout` in a 560 pt panel, so at larger Dynamic Type sizes the tail is
+    /// what disappears. The megapixel figures are the expendable half; "paste it directly" is not.
     private func noteRefusedImage(_ origin: ClipboardSnapshot) {
         guard let pixels = origin.refusedImagePixels else { return }
-        errorMessage = "That image is too large to open here — \(ImageBytes.megapixelLabel(pixels)), and the limit is \(ImageBytes.megapixelLabel(ImageBytes.maxConvertiblePixels)). It's still on your clipboard: paste it straight into the app you wanted it in."
+        errorMessage = "That image is too large to open — paste it directly, it's still on your clipboard. (\(ImageBytes.megapixelLabel(pixels)); limit \(ImageBytes.megapixelLabel(ImageBytes.maxConvertiblePixels)))"
     }
 
     /// Palette list: enabled transforms in the user's order, with those applicable to the
@@ -283,6 +288,17 @@ final class AppModel: ObservableObject {
 
     func save() {
         guard let doc = document else { endSession(); return }
+        // Nothing to write, and writing anyway is pure loss. The clipboard holds an image this
+        // session refused to open (`ImageBytes.maxConvertiblePixels`), so there is no `imagePNG` to
+        // carry and `writePlain` below would `clearContents()` and put an empty string where the
+        // picture was — destroying it while the banner on screen says it is safe there. `isUnedited`
+        // is the whole condition: an unedited buffer means the clipboard already holds everything
+        // this session has, so the best possible write is a no-op and the worst is that wipe.
+        //
+        // Typed something? Then Save writes it, as it always would. Losing the image is a
+        // consequence of an action the user took deliberately, not one ⌘S inflicted on them for
+        // summoning the panel.
+        if doc.origin.refusedImagePixels != nil, doc.isUnedited { endSession(); return }
         if doc.outputMode == .renderedMarkdown {
             // MarkdownToRich's own cap only bounds arming (the transform ran against a buffer at
             // or under it), but the buffer can grow afterwards — further edits, or a preset that

@@ -48,9 +48,20 @@ struct UploadOverlayView: View {
     /// `init`, like `source` and `sourceIsClipboard`, though it no longer has to be: the display
     /// form is fixed when a session opens.
     ///
-    /// A refused oversize image counts as well. There is no `imagePNG` in that case, but the
-    /// clipboard did hold a picture and "empty" would still be the wrong word for it.
-    @State private var sessionShowsUnsupportedImage: Bool
+    /// A refused oversize image counts as well, and is a *different* case rather than the same one:
+    /// there is no `imagePNG`, nothing is on screen, and a message claiming the session is showing
+    /// an image would be describing a panel the user can see is empty. Hence two cases, not a Bool.
+    @State private var unsupportedImage: UnsupportedImage?
+
+    /// Why `source` is empty, when an image is why.
+    private enum UnsupportedImage {
+        /// The session is displaying an image; upload is #48.
+        case showing
+        /// The clipboard held an image `ClipboardBridge.snapshot` declined to open, so this session
+        /// has no image either — but "empty" is still the wrong word for that clipboard.
+        case refused
+    }
+
     @State private var phase: Phase
     @State private var scanState: ScanState = .scanning
     /// `source` with its findings redacted, measured in bytes — nil until the scan lands, and nil
@@ -223,9 +234,10 @@ struct UploadOverlayView: View {
         _sourceIsClipboard = State(initialValue: sourceIsClipboard)
         // Free, and no pasteboard read at all: the session already carries this. Image upload is
         // still #48 — what changed is only how this overlay learns there is an image to decline.
-        _sessionShowsUnsupportedImage = State(initialValue: text.isEmpty && {
-            guard let document = model.document else { return false }
-            return document.displaysAsImage || document.origin.refusedImagePixels != nil
+        _unsupportedImage = State(initialValue: { () -> UnsupportedImage? in
+            guard text.isEmpty, let document = model.document else { return nil }
+            if document.displaysAsImage { return .showing }
+            return document.origin.refusedImagePixels != nil ? .refused : nil
         }())
         // Only the server-URL half of "configured?" is decided here. Parsing a string costs
         // nothing and touches no Keychain, so the very first frame already knows whether there is
@@ -439,8 +451,8 @@ struct UploadOverlayView: View {
         let origin = sourceIsClipboard ? "the clipboard" : "the panel buffer"
         guard !source.isEmpty else {
             // "empty" is the wrong word for a clipboard that holds an image — there is something
-            // there, just nothing this overlay can send yet. See `sessionShowsUnsupportedImage`.
-            return sessionShowsUnsupportedImage ? "\(origin) — image, not supported yet" : "\(origin) — empty"
+            // there, just nothing this overlay can send yet. See `unsupportedImage`.
+            return unsupportedImage != nil ? "\(origin) — image, not supported yet" : "\(origin) — empty"
         }
         return "\(origin) · \(HistoryFormatting.byteLabel(payloadByteCount))"
     }
@@ -663,13 +675,19 @@ struct UploadOverlayView: View {
             // Under the delay: nothing at all. A row that appears and is replaced within a frame
             // or two is a flicker, and an empty row is not a claim about the text either way.
         case .clean:
-            if sessionShowsUnsupportedImage {
+            if let unsupportedImage {
                 // Correct that there is nothing to send; the generic empty-buffer line below is
-                // wrong about *why* here — the buffer is empty because this session is an image,
-                // and image upload is simply not built yet (#48, out of scope for this feature).
-                // "This session" rather than "the clipboard": the image can have come from a
-                // history item, in which case the clipboard holds something else entirely.
-                Label("This session is showing an image. Image upload isn't supported yet — that's #48.",
+                // wrong about *why* here — the buffer is empty because of an image, and image
+                // upload is simply not built yet (#48, out of scope for this feature).
+                //
+                // Two sentences because they are two situations. "This session is showing an image"
+                // rather than "the clipboard holds one", because the image can have come from a
+                // history item and the clipboard hold something else entirely — and it must not be
+                // said at all of a refused image, where the session shows nothing and the user is
+                // looking at the empty panel it would be describing.
+                Label(unsupportedImage == .showing
+                        ? "This session is showing an image. Image upload isn't supported yet — that's #48."
+                        : "The clipboard holds an image too large to open here. Image upload isn't supported yet either — that's #48.",
                       systemImage: "photo")
                     .font(.callout)
                     .foregroundStyle(.secondary)
