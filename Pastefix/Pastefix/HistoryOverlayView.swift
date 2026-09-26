@@ -312,15 +312,14 @@ struct HistoryOverlayView: View {
                     Text(title).fontWeight(.semibold).lineLimit(1)
                 }
                 Text(highlightedPreview(result)).lineLimit(rowTitle(for: item) == nil ? 2 : 1)
+                // No per-row "↵ copies" hint for images any more: ↵ opens every row the same
+                // way now (see `open(_ item:)`), so a kind-specific hint here would be stale.
                 HStack(spacing: 6) {
                     if item.kind == .richText {
                         Text("rich")
                             .font(.caption2)
                             .padding(.horizontal, 4)
                             .background(.quaternary, in: Capsule())
-                    }
-                    if item.kind == .image {
-                        Text("↵ copies").font(.caption2).foregroundStyle(.secondary)
                     }
                 }
             }
@@ -483,15 +482,16 @@ struct HistoryOverlayView: View {
         open(items[index].item)
     }
 
-    /// Text and rich text load into the editor; an image has nothing to edit, so ↵ puts it
-    /// straight back on the clipboard.
+    /// Every row loads into the editor now, images included: `AppModel.load` attaches the image
+    /// to the session and the panel displays it, so ↵ no longer needs a copy-back special case
+    /// for `.kind == .image`. ⌘↵ (`copyBackSelection`) is the copy-without-opening path and is
+    /// untouched by this.
     ///
-    /// Closes first, like `CommandPaletteView.apply`: `copyBack` ends the session and orders the
-    /// panel out synchronously, so the overlay must not be left relying on `PanelView`'s
-    /// session-ended `onChange` running while the window is hidden.
+    /// Closes first, like `CommandPaletteView.apply`, so the overlay is never left relying on
+    /// `PanelView`'s session-ended `onChange` running while the window is hidden.
     private func open(_ item: HistoryItem) {
         onClose()
-        if item.kind == .image { model.copyBack(item) } else { model.load(item) }
+        model.load(item)
     }
 
     private func copyBackSelection() {
