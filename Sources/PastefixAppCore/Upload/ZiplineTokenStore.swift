@@ -9,6 +9,20 @@ public protocol ZiplineTokenStore: Sendable {
     func clearToken() throws
 }
 
+/// Wraps a Keychain-detail string in parentheses, closed with exactly one full stop whether or
+/// not the string supplies its own. `SecCopyErrorMessageString`'s text (what `keychainDetail`
+/// returns) almost always ends in one — "User canceled the operation." — and the two surfaces
+/// that show it (`UploadSettingsView.message(for:)` and the upload overlay's
+/// `unreadableTokenMessage`) each used to append their own after the closing paren regardless,
+/// producing a doubled stop: "(...operation.).". Not a blind `dropLast`: a detail with no
+/// trailing punctuation — `error.localizedDescription` on something other than a
+/// `TokenStoreError`, or the plain "status \(status)" fallback below — still needs its own, so
+/// this checks rather than assumes. One place decides, so the two surfaces cannot drift apart on
+/// it again.
+public func parenthesizedKeychainDetail(_ detail: String) -> String {
+    detail.hasSuffix(".") ? "(\(detail))" : "(\(detail))."
+}
+
 /// Carries only the raw status code — never the token itself, which must not be logged,
 /// printed, or surfaced in an error message anywhere in this pipeline.
 public enum TokenStoreError: Error, Equatable {

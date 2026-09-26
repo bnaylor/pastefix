@@ -910,9 +910,16 @@ struct UploadOverlayView: View {
     /// stored, and `setToken` then fails for the same underlying reason with a different
     /// message. This says which it was; the Security framework's own text carries the specifics,
     /// and the payload is an `OSStatus`, never the token.
+    ///
+    /// One full stop, not two: `detail` is usually `SecCopyErrorMessageString`'s own text, which
+    /// already ends in a period ("User canceled the operation."), so closing the parenthetical
+    /// with another produced "(...operation.)." — `parenthesizedKeychainDetail` is the one place
+    /// that decides whether to add one, shared with `UploadSettingsView.message(for:)` so the two
+    /// surfaces that show this text cannot drift apart on it again.
     private static func unreadableTokenMessage(_ detail: String) -> String {
-        "Pastefix couldn't read the Zipline API token from the Keychain (\(detail)). "
-            + "A token may still be stored — open Settings to check or set it again."
+        "Pastefix couldn't read the Zipline API token from the Keychain "
+            + parenthesizedKeychainDetail(detail)
+            + " A token may still be stored — open Settings to check or set it again."
     }
 
     /// The three answers a token read can give, kept apart because they are three different

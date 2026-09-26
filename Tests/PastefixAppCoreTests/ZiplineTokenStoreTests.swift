@@ -68,4 +68,22 @@ struct ZiplineTokenStoreTests {
         try store.setToken("")
         #expect(try store.token() == nil)
     }
+
+    @Test("a detail that already ends in a full stop is not given a second")
+    func parenthesizedKeychainDetailDoesNotDoubleAnExistingStop() {
+        // `SecCopyErrorMessageString`'s own text for a cancelled prompt ends this way — "User
+        // canceled the operation." — and the bug this guards was appending another period after
+        // the closing paren regardless, producing "(...operation.).".
+        let wrapped = parenthesizedKeychainDetail("User canceled the operation.")
+        #expect(wrapped == "(User canceled the operation.)")
+        #expect(!wrapped.contains(".)."))
+    }
+
+    @Test("a detail with no trailing punctuation still gets exactly one full stop")
+    func parenthesizedKeychainDetailAddsAMissingStop() {
+        // Not every detail is a full sentence — the "status \(status)" fallback and an arbitrary
+        // `localizedDescription` are not — so this must not blindly assume one is already there.
+        let wrapped = parenthesizedKeychainDetail("status -128")
+        #expect(wrapped == "(status -128).")
+    }
 }

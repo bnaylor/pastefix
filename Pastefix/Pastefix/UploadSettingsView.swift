@@ -245,10 +245,16 @@ struct UploadSettingsView: View {
 
     /// `TokenStoreError` carries only an `OSStatus` — never the token — so every message this
     /// produces is safe to show. Nothing else in this view builds an error message at all.
+    ///
+    /// `parenthesizedKeychainDetail` decides the punctuation rather than a bare `"(\(detail))."`
+    /// interpolation: `keychainDetail` is usually `SecCopyErrorMessageString`'s own sentence,
+    /// which already ends in a period, and appending another here produced a doubled stop — the
+    /// same fix the upload overlay's `unreadableTokenMessage` needed, from the one place both
+    /// now share.
     private static func message(for error: any Error) -> String {
         guard let tokenStoreError = error as? TokenStoreError else {
             return "Couldn't reach the Keychain."
         }
-        return "Couldn't reach the Keychain (\(tokenStoreError.keychainDetail))."
+        return "Couldn't reach the Keychain \(parenthesizedKeychainDetail(tokenStoreError.keychainDetail))"
     }
 }
