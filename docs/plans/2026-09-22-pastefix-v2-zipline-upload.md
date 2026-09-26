@@ -1286,7 +1286,7 @@ EOF
 The three angle-bracket lines are the only things left to fill, and they take
 real output — not a summary of it.
 
-- [ ] **Step 4: After merge — the docs-only stamping PR**
+- [ ] **Step 4: After merge — the docs-only stamping PR** *(retired as of PR #61: stamp in the feature PR instead, identified by PR number, no separate PR and no SHA. Left here because this plan is a historical record.)*
 
 Repo convention (PR #45, #47): a separate `docs/` branch flipping the plan banner to ✅, the spec frontmatter `status:` to `implemented`, and the AGENTS.md table row to merged with the PR number and commit. Also strike the notification bullet from issue #14's body, which this plan deliberately does not implement.
 
