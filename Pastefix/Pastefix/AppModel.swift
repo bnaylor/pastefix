@@ -117,8 +117,24 @@ final class AppModel: ObservableObject {
         resetSecretSelection()
         abandonInFlightWork()
         sessionGeneration &+= 1
-        document = PasteDocument(origin: ClipboardBridge.snapshot())
+        let origin = ClipboardBridge.snapshot()
+        document = PasteDocument(origin: origin)
+        noteRefusedImage(origin)
         requestDetection()
+    }
+
+    /// Says so when the clipboard held an image the snapshot declined to open.
+    ///
+    /// Without this the panel comes up as an empty text session and nothing anywhere says why —
+    /// the user copied a picture and got a blank editor. A 30 MP photo out of Preview is enough to
+    /// hit the ceiling, so this is a path real people reach, and silence on it is the house
+    /// anti-pattern (the upload overlay's "image, not supported yet" exists for the same reason).
+    ///
+    /// The clipboard is untouched, which the message says, because "too large" invites the
+    /// assumption that something was lost.
+    private func noteRefusedImage(_ origin: ClipboardSnapshot) {
+        guard let pixels = origin.refusedImagePixels else { return }
+        errorMessage = "That image is too large to open here — \(ImageBytes.megapixelLabel(pixels)), and the limit is \(ImageBytes.megapixelLabel(ImageBytes.maxConvertiblePixels)). It's still on your clipboard: paste it straight into the app you wanted it in."
     }
 
     /// Palette list: enabled transforms in the user's order, with those applicable to the
@@ -241,10 +257,14 @@ final class AppModel: ObservableObject {
 
     func refresh() {
         guard var doc = document else { return }
-        doc.refresh(origin: ClipboardBridge.snapshot())
+        let origin = ClipboardBridge.snapshot()
+        doc.refresh(origin: origin)
         document = doc
         requestDetection()
         errorMessage = nil
+        // After the clear, not before: a refused image is news about the buffer that was just
+        // installed, and clearing afterwards would throw it away.
+        noteRefusedImage(origin)
         resetSecretSelection()
     }
 

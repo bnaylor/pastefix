@@ -1,5 +1,4 @@
 import AppKit
-import ImageIO
 import os
 import PastefixAppCore
 
@@ -269,17 +268,15 @@ final class PasteboardMonitor {
         if let png = pb.data(forType: .png) {
             // Size before decode: a header-only read gives pixel dimensions without decoding an
             // image the store is about to reject anyway.
-            if png.count <= maxImageBytes, let size = pixelSize(of: png) {
+            if png.count <= maxImageBytes, let size = ImageBytes.pixelSize(of: png) {
                 c.imagePNG = png; c.imagePixelWidth = size.width; c.imagePixelHeight = size.height
             }
-        } else if let tiff = pb.data(forType: .tiff), let size = pixelSize(of: tiff),
-                  // Header-only pixel gate, not a byte-size heuristic: a full-screen Retina grab
-                  // is ~81 MB as raw TIFF but only 2-6 MB once PNG-compressed, so gating on TIFF
-                  // byte size rejects exactly the images it should keep. 25M px still covers any
-                  // real display (a 6K Pro Display XDR grab is ~20M px) while bounding the
-                  // decode + re-encode this branch has to pay — cheap first line, off the main
-                  // actor or not; the store's byte cap on the PNG result still applies.
-                  size.width * size.height <= 25_000_000 {
+        } else if let tiff = pb.data(forType: .tiff), let size = ImageBytes.pixelSize(of: tiff),
+                  // Header-only pixel gate, not a byte-size heuristic, and the ceiling itself is
+                  // `ImageBytes`' — shared with the session path so the two cannot drift. See
+                  // there for why pixels and not bytes. The store's byte cap on the PNG result
+                  // still applies on top of it.
+                  size.width * size.height <= ImageBytes.maxConvertiblePixels {
             pendingTIFF = tiff; pendingWidth = size.width; pendingHeight = size.height
         }
         guard c.plainText != nil || c.imagePNG != nil || pendingTIFF != nil else { return nil }
@@ -287,16 +284,6 @@ final class PasteboardMonitor {
                            imagePixelWidth: pendingWidth, imagePixelHeight: pendingHeight)
     }
 
-    /// Pixel dimensions from the image header alone (no decode) — used both to size-gate a TIFF
-    /// before paying for a full decode + PNG re-encode, and to fill `imagePixelWidth/Height`
-    /// without constructing an `NSBitmapImageRep` just to read them.
-    private static func pixelSize(of data: Data) -> (width: Int, height: Int)? {
-        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
-              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
-              let width = properties[kCGImagePropertyPixelWidth] as? Int,
-              let height = properties[kCGImagePropertyPixelHeight] as? Int else { return nil }
-        return (width, height)
-    }
 }
 
 /// The one lane TIFF→PNG conversions run down: at most one decode at a time, at most one other
@@ -394,11 +381,13 @@ nonisolated private final class TIFFConversionSlot: @unchecked Sendable {
             lock.unlock()
             // `next` — and with it the only source TIFF this lane is holding besides whatever
             // arrives to wait — dies at the end of each iteration.
-            guard next.generation == current, let rep = NSBitmapImageRep(data: next.tiff) else {
+            guard next.generation == current else {
                 next.continuation.resume(returning: nil)
                 continue
             }
-            next.continuation.resume(returning: rep.representation(using: .png, properties: [:]))
+            // The shared route, so the session path and this lane convert identically; what stays
+            // local is *where* it runs, which is the whole point of this class.
+            next.continuation.resume(returning: ImageBytes.convertedToPNG(next.tiff))
         }
     }
 }

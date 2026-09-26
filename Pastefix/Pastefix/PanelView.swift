@@ -206,6 +206,16 @@ struct PanelView: View {
             previewTask?.cancel()
             previewText = NSAttributedString()
         }
+        // Refresh (⌘R) can turn a text session into an image session *without* a new session
+        // generation, so the reset above does not cover it. The preview is a view of the buffer
+        // that just went away, and leaving it on would draw a blank preview over the image with
+        // the ⌘⇧M that turns it off now disabled — a dead end reachable in two keystrokes.
+        .onChange(of: model.document?.displaysAsImage) { _, displaysAsImage in
+            guard displaysAsImage == true, isPreviewing else { return }
+            isPreviewing = false
+            previewTask?.cancel()
+            previewText = NSAttributedString()
+        }
         // Hand focus back to the editor once a transform finishes, unless the user has an
         // overlay open and is picking the next thing — or is reading the preview, where there
         // is no editor to focus.
@@ -300,11 +310,16 @@ struct PanelView: View {
             }
             .help(isPreviewing ? "Back to the editor (⌘⇧M)" : "Preview as Markdown (⌘⇧M)")
             .accessibilityLabel(isPreviewing ? "Back to the editor" : "Preview as Markdown")
-            // Tinted, not gated: anything can be previewed, detection only makes it a suggestion.
+            // Tinted, not gated: any *text* can be previewed, detection only makes it a suggestion.
             .tint(model.document?.detectedKinds.contains(.markdown) == true ? Color.accentColor : nil)
             // Same one-binding rule as ⌘K/⌘Y: nothing owns ⌘⇧M while an overlay is up.
             .keyboardShortcut(isPaletteOpen || isHistoryOpen || isUploadOpen ? nil : KeyboardShortcut("m", modifiers: [.command, .shift]))
-            .disabled(model.document == nil || model.isApplying)
+            // Gated in an image session, which is the one thing there is no text to preview of:
+            // the buffer is blank, so ⌘⇧M would draw an empty preview over the image and the way
+            // back would be a shortcut the user has to guess. Disabled rather than reordering the
+            // branches below it — a lit button that silently does nothing is the worse failure.
+            .disabled(model.document == nil || model.isApplying
+                      || model.document?.displaysAsImage == true)
             Spacer()
             Button { toggleHistory() } label: {
                 Image(systemName: "clock.arrow.circlepath")

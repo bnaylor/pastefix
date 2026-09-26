@@ -34,16 +34,23 @@ struct UploadOverlayView: View {
     /// clipboard the bytes below it no longer came from. It is the header's claim about what is
     /// about to be scanned and sent, so it has to be pinned to the same instant as the bytes.
     @State private var sourceIsClipboard: Bool
-    /// Whether `source` is empty **because** the clipboard holds only an image — `.tiff` or
-    /// `.png`, the two types `PasteboardMonitor` and `HistoryStore` already treat as one. Decided
-    /// once in `init`, from the same snapshot instant as `source` and `sourceIsClipboard`: only
-    /// `NSPasteboard.general.types` is read, never image bytes, matching `ClipboardBridge.snapshot()`
-    /// itself never reading them (image upload is #48, out of scope here).
+    /// Whether `source` is empty **because** this session is showing an image.
     ///
-    /// Gated on `sourceIsClipboard` so an edited panel buffer that happens to be empty — the
-    /// user's own choice, nothing to do with whatever the clipboard currently holds — never
-    /// borrows this explanation. See `ZiplinePasteboardImage`.
-    @State private var clipboardHasUnsupportedImage: Bool
+    /// Asked of the document rather than of `NSPasteboard.general.types`, which is what this used
+    /// to poke: `ClipboardBridge.snapshot()` now reads a standalone image on every summon, so the
+    /// session itself knows — and knows it for a history item loaded into the panel too, where a
+    /// pasteboard read gave the wrong answer twice over (the clipboard has moved on, and the type
+    /// list describes bytes this buffer never came from). That case reported a plain "empty".
+    ///
+    /// `displaysAsImage` and not `imagePNG != nil`, so a *mixed* session whose text the user
+    /// deleted is not handed this explanation for an empty buffer the user emptied themselves —
+    /// the same line the old `sourceIsClipboard` gate was drawing. And it is decided once in
+    /// `init`, like `source` and `sourceIsClipboard`, though it no longer has to be: the display
+    /// form is fixed when a session opens.
+    ///
+    /// A refused oversize image counts as well. There is no `imagePNG` in that case, but the
+    /// clipboard did hold a picture and "empty" would still be the wrong word for it.
+    @State private var sessionShowsUnsupportedImage: Bool
     @State private var phase: Phase
     @State private var scanState: ScanState = .scanning
     /// `source` with its findings redacted, measured in bytes — nil until the scan lands, and nil
@@ -214,12 +221,12 @@ struct UploadOverlayView: View {
         // here means the buffer really is the panel's own — edited, or loaded from history.
         let sourceIsClipboard = model.document?.matchesPasteboard(changeCount: NSPasteboard.general.changeCount) ?? false
         _sourceIsClipboard = State(initialValue: sourceIsClipboard)
-        // Cheap on purpose: `NSPasteboard.general.types` is a type-list read, the same cost
-        // `PasteboardMonitor`'s own gate pays before touching content, and nothing here decodes
-        // or even fetches the image data the upload path deliberately never reads.
-        _clipboardHasUnsupportedImage = State(initialValue:
-            text.isEmpty && sourceIsClipboard
-                && ZiplinePasteboardImage.typesIndicateImage(NSPasteboard.general.types ?? []))
+        // Free, and no pasteboard read at all: the session already carries this. Image upload is
+        // still #48 — what changed is only how this overlay learns there is an image to decline.
+        _sessionShowsUnsupportedImage = State(initialValue: text.isEmpty && {
+            guard let document = model.document else { return false }
+            return document.displaysAsImage || document.origin.refusedImagePixels != nil
+        }())
         // Only the server-URL half of "configured?" is decided here. Parsing a string costs
         // nothing and touches no Keychain, so the very first frame already knows whether there is
         // anywhere to send to — a user with no server configured never sees a flash of controls
@@ -432,8 +439,8 @@ struct UploadOverlayView: View {
         let origin = sourceIsClipboard ? "the clipboard" : "the panel buffer"
         guard !source.isEmpty else {
             // "empty" is the wrong word for a clipboard that holds an image — there is something
-            // there, just nothing this overlay can send yet. See `clipboardHasUnsupportedImage`.
-            return clipboardHasUnsupportedImage ? "\(origin) — image, not supported yet" : "\(origin) — empty"
+            // there, just nothing this overlay can send yet. See `sessionShowsUnsupportedImage`.
+            return sessionShowsUnsupportedImage ? "\(origin) — image, not supported yet" : "\(origin) — empty"
         }
         return "\(origin) · \(HistoryFormatting.byteLabel(payloadByteCount))"
     }
@@ -656,12 +663,13 @@ struct UploadOverlayView: View {
             // Under the delay: nothing at all. A row that appears and is replaced within a frame
             // or two is a flicker, and an empty row is not a claim about the text either way.
         case .clean:
-            if clipboardHasUnsupportedImage {
+            if sessionShowsUnsupportedImage {
                 // Correct that there is nothing to send; the generic empty-buffer line below is
-                // wrong about *why* here — the clipboard is not empty, it holds an image, and
-                // image upload is simply not built yet (#48, out of scope for this feature). See
-                // `ZiplinePasteboardImage`.
-                Label("The clipboard holds an image. Image upload isn't supported yet — that's #48.",
+                // wrong about *why* here — the buffer is empty because this session is an image,
+                // and image upload is simply not built yet (#48, out of scope for this feature).
+                // "This session" rather than "the clipboard": the image can have come from a
+                // history item, in which case the clipboard holds something else entirely.
+                Label("This session is showing an image. Image upload isn't supported yet — that's #48.",
                       systemImage: "photo")
                     .font(.callout)
                     .foregroundStyle(.secondary)

@@ -157,8 +157,13 @@ struct ImageSessionView: View {
               let width = properties[kCGImagePropertyPixelWidth] as? Int,
               let height = properties[kCGImagePropertyPixelHeight] as? Int else { return nil }
         // `…FromImageAlways` with a max above the image's own size returns it at full size rather
-        // than upscaling, so a small image is not blown up into a blurry bitmap here — SwiftUI
-        // scales it to the panel instead.
+        // than upscaling, so no bitmap bigger than the image is ever allocated.
+        //
+        // What that does *not* do is stop a small image being drawn large: `.resizable()
+        // .scaledToFit()` in `preview` scales a 16×16 favicon up to fill the panel, blurrily. The
+        // footer states the real pixel size, so the view does not lie about what it has — but
+        // drawing a small image at its own size instead is an open question, deliberately left for
+        // review rather than decided here.
         let options = [
             kCGImageSourceCreateThumbnailFromImageAlways: true,
             kCGImageSourceCreateThumbnailWithTransform: true,
