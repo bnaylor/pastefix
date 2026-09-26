@@ -1,6 +1,6 @@
 # Pastefix v2 Zipline Upload (Plan 13) — Implementation Plan
 
-> ## 🟡 STATUS: IN PROGRESS — branch `feat/zipline-upload`
+> ## ✅ STATUS: COMPLETE — merged to `main` via PR #59 (`c353f9e`, 2026-09-26)
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 >
