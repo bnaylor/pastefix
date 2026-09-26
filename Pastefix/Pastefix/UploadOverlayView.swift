@@ -1033,18 +1033,31 @@ struct UploadOverlayView: View {
     /// used to cite — action row's bottom at 298 of 384 of content, card's lowest text at 332,
     /// i.e. ~40pt more compact than the budget claims — was taken against the *previous* layout,
     /// before `411a4c7` moved the verdict and the radio group out of the scroll region and added
-    /// `findingsChromeHeight` (112) to the pinned budget. The pinned height changed in precisely
-    /// the case that gets floored (findings + banner at the 380pt minimum), so that case has not
-    /// been measured since, and neither has the over-cap refusal row (`refusalRowHeight`, 70)
-    /// added after it. Everything above is re-derived arithmetic, not a measurement of what ships.
+    /// `findingsChromeHeight` (112) to the pinned budget, and the over-cap refusal row
+    /// (`refusalRowHeight`, 70) came later still.
     ///
-    /// The budget stays pessimistic on purpose — it is the number that cannot be optimistic — but
-    /// pessimism is not evidence, and the claim that used to stand here ("the measurement is why
-    /// the floored case is safe rather than hoped-for") no longer has a measurement behind it. The
-    /// AX pass this owes: at `PanelMetrics.minContentHeight` (380), in a `.failed` phase with
-    /// findings, and again with `scanState == .refusedTooLarge`, confirm the verdict block and
-    /// both action-row buttons are fully on screen. Until that lands, this case is unverified —
-    /// do not re-derive the arithmetic and call it measured.
+    /// **Both of those cases have now been measured**, by an Accessibility pass at
+    /// `PanelMetrics.minContentHeight` (380) in the `.failed` phase with findings and again with
+    /// `scanState == .refusedTooLarge`. Results, y offsets from the window's top edge (640x412 =
+    /// 380 content + 32 title bar):
+    ///
+    /// - Floored failed phase: scroll region 103..147 (44, the floor), verdict 160..175, the
+    ///   disposition rows 181..220, caption 226..239, banner 247..277, action row 285..309,
+    ///   footer 330..343, card bottom ~355. **Every one of those rows is identical between a
+    ///   two-kind and a seven-kind buffer** — which is the property this structure exists for, so
+    ///   it is the assertion worth re-running if any of this changes. A taller findings list only
+    ///   makes the scroll content taller; it never reaches the pinned side.
+    /// - Over-cap: scroll region 131..220 (89, no floor), refusal 233..248, caption 252..265,
+    ///   action row 273..297, footer 318..331. Upload is drawn dimmed and a click on it is inert.
+    ///
+    /// **The correction that matters: the reserve is fat, not thin.** The card ends at ~355 of the
+    /// 412pt window — about 323 of 380 content — where this arithmetic puts it at 381, i.e. 1pt
+    /// *past* the budget. So the over-reserve is roughly 58pt in the floored case, not the ~7pt
+    /// the terms above imply, and the "1pt over, absorbed by the bottom margin" worry that shaped
+    /// this comment was never real. Chrome added here has more headroom than these numbers suggest
+    /// — but re-derive against the constants rather than against that 58, because it is the slack
+    /// between a deliberately pessimistic budget and what AppKit actually lays out, and every term
+    /// that gets tightened spends some of it.
     ///
     /// The `ScrollView` takes a *definite* height from this, so it will not compress to take up
     /// the slack on its own; if this number is too big, the card simply grows past the panel.
