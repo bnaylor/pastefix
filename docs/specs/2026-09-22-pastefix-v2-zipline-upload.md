@@ -1,6 +1,6 @@
 ---
 type: spec
-status: approved
+status: implemented
 id: 2026-09-22-pastefix-v2-zipline-upload
 title: Pastefix v2 — Zipline Upload (Plan 13)
 description: ⌘⇧U uploads the working text to a self-hosted Zipline v4 instance and replaces the clipboard with the short URL. One overlay owns the flow — expiration, burn-on-read, file extension, and an inline secret-detector verdict with a redact-or-send choice. Token in the Keychain, server URL in settings.

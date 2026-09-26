@@ -374,6 +374,8 @@ When you **significantly expand the project** — a new target, subsystem, scrip
 
 **Increment status** — each plan under `docs/plans/` carries a status banner at the top; trust the banner and the git log, not the checkboxes inside it.
 
+**Stamp a finished increment in its own feature PR, not a follow-up one.** Flip the plan's banner to ✅, the spec's frontmatter `status:` to `implemented`, and this table's row to merged, all in the same branch as the code. Identify the increment by **PR number only** — no merge-commit SHA. The SHA is the sole reason the old convention needed a second, docs-only PR after merge (#45, #47, #57, #61 were all that and nothing else), and it buys nothing a PR number does not: a PR number leads you to the commit, while a commit does not lead you back to the PR. Rows written before this change keep their SHAs — they are accurate history, and rewriting them would be churn. Do not "normalise" them.
+
 | Plan | Scope | Status |
 |---|---|---|
 | Transform Engine | `PastefixCore` | ✅ merged, PR #1 (`9fc68ee`) |
@@ -390,7 +392,7 @@ When you **significantly expand the project** — a new target, subsystem, scrip
 | 10 — Markdown preview | MarkdownPreview, MarkdownPreviewView, ⌘⇧M toggle | ✅ merged — PR #40 (`c98cca8`) — [spec](docs/specs/2026-09-21-pastefix-v2-markdown-preview.md), [plan](docs/plans/2026-09-21-pastefix-v2-markdown-preview.md) |
 | 11 — Secret detector | SecretDetector, Redact Secrets, secrets badge, history flag | ✅ merged — PR #42 (`85d7fd7`) — [spec](docs/specs/2026-09-21-pastefix-v2-secret-detector.md), [plan](docs/plans/2026-09-21-pastefix-v2-secret-detector.md) |
 | 12 — Regex presets | RegexPreset, RegexPresetTransformer, Presets tab | ✅ merged — PR #44 (`955f01b`) — [spec](docs/specs/2026-09-21-pastefix-v2-regex-presets.md), [plan](docs/plans/2026-09-21-pastefix-v2-regex-presets.md) |
-| 13 — Zipline upload | ZiplineClient, upload overlay, Keychain token, Upload tab | 🟡 in progress, branch `feat/zipline-upload` — [spec](docs/specs/2026-09-22-pastefix-v2-zipline-upload.md), [plan](docs/plans/2026-09-22-pastefix-v2-zipline-upload.md) |
+| 13 — Zipline upload | ZiplineClient, upload overlay, Keychain token, Upload tab | ✅ merged — PR #59 (`c353f9e`) — [spec](docs/specs/2026-09-22-pastefix-v2-zipline-upload.md), [plan](docs/plans/2026-09-22-pastefix-v2-zipline-upload.md) |
 | 14 — Large-buffer safety | DetectionScheduler, Deadline.run, maxInputBytes/timeout, URLFinder cap | ✅ merged — PR #53 (`7bd250c`) — [spec](docs/specs/2026-09-23-pastefix-v2-large-buffer-safety.md), [plan](docs/plans/2026-09-23-pastefix-v2-large-buffer-safety.md) |
 
 Historical reference material for the 2007 and 2019 incarnations is vendored under [`docs/inputs/legacy/`](docs/inputs/legacy/).
