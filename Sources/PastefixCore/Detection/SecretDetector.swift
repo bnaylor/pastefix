@@ -130,8 +130,19 @@ public enum SecretDetector {
     /// `HistoryItem.containsSecret == nil` are the four places that distinction is kept.
     public static func isScannable(_ text: String) -> Bool { text.utf8.count <= maxBytes }
 
-    public static func scan(_ text: String) -> [SecretMatch] {
-        guard isScannable(text), !text.isEmpty else { return [] }
+    /// Scans without the size cap.
+    ///
+    /// `scan(_:)`'s cap is a policy for the paths that run on every summon and
+    /// every capture, where an unbounded scan would be a main-actor stall. It is
+    /// not a property of the scanner. A deliberate, one-off, off-main scan — the
+    /// upload path (#14) is the only one today — needs the whole buffer examined,
+    /// because "not scanned" must never reach a user as "no secrets found"
+    /// (Plan 11's rule, applied to the one place where the text then leaves the
+    /// machine).
+    ///
+    /// Callers on the main actor must keep using `scan(_:)`.
+    public static func scanIgnoringSizeCap(_ text: String) -> [SecretMatch] {
+        guard !text.isEmpty else { return [] }
         let ns = text as NSString
         let full = NSRange(location: 0, length: ns.length)
         var found: [(range: NSRange, kind: SecretKind)] = []
@@ -162,6 +173,11 @@ public enum SecretDetector {
             out.append(SecretMatch(kind: kind, range: range)); cursor = NSMaxRange(r)
         }
         return out
+    }
+
+    public static func scan(_ text: String) -> [SecretMatch] {
+        guard isScannable(text) else { return [] }
+        return scanIgnoringSizeCap(text)
     }
 
     // MARK: - JWTs

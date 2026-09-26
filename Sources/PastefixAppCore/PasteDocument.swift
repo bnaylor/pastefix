@@ -36,6 +36,48 @@ public struct PasteDocument: Sendable {
     public var canUndo: Bool { cursor > 0 }
     public var canRedo: Bool { cursor < history.count - 1 }
 
+    /// True when nothing has happened to this document since it was captured: no transform
+    /// pushed, nothing typed, nothing to redo, and no output mode armed.
+    ///
+    /// Deliberately stricter than `working == origin.plainText`, and every extra clause is a way
+    /// a user action can leave the text alone:
+    /// - An applied-then-undone transform sits at cursor 0 with the same text, but still holds
+    ///   that transform in `history` as a redo.
+    /// - An armed output mode (`MarkdownToRich`) changes how Save writes the buffer and not the
+    ///   buffer itself, so `pushState` no-ops and `history.count` stays 1. Without this clause a
+    ///   re-snapshot would silently disarm it.
+    ///
+    /// Both callers below ask "may I replace this document?", where a false negative costs a
+    /// re-snapshot that does not happen and a false positive costs the user something they did.
+    public var isUnedited: Bool {
+        history.count == 1 && cursor == 0 && history[0] == (origin.plainText ?? "") && outputMode == .plain
+    }
+
+    /// Whether this document should be thrown away and re-captured from a pasteboard now holding
+    /// `changeCount`.
+    ///
+    /// Two conditions, and both matter. The buffer has to be *older than the clipboard*, because
+    /// someone who copies and then presses a global hotkey means the thing they just copied —
+    /// scanning and uploading the previous buffer instead reports a verdict about text nobody
+    /// asked about. And it has to be *unedited*, because the only thing worse than uploading the
+    /// wrong text is silently discarding text the user typed; an edited document is kept however
+    /// stale it is, and the surface that opens says which one it got.
+    ///
+    /// An origin with no `changeCount` (a history item loaded into the panel) is never stale: it
+    /// was never a copy of the clipboard, so "the clipboard moved on" says nothing about it, and
+    /// the user chose it explicitly.
+    public func isStale(comparedToPasteboardChangeCount changeCount: Int) -> Bool {
+        guard let captured = origin.changeCount else { return false }
+        return captured != changeCount && isUnedited
+    }
+
+    /// True when `working` is exactly what a pasteboard at `changeCount` holds — i.e. the panel
+    /// is showing the current clipboard, untouched. What the upload overlay uses to name its
+    /// source honestly: anything else is the panel's own buffer, not the clipboard.
+    public func matchesPasteboard(changeCount: Int) -> Bool {
+        origin.changeCount == changeCount && isUnedited
+    }
+
     /// Append a new state (e.g. a transform result). Leaves `history`/`cursor` untouched if
     /// unchanged, but still invalidates detection: a push is a discrete event even when it lands
     /// on text a prior `setWorking` already coalesced in, so the scheduler resyncs to what's

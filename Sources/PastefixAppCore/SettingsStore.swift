@@ -25,6 +25,16 @@ public final class SettingsStore: ObservableObject {
     @Published public var historyExcludedBundleIDs: [String] { didSet { Self.writeJSON(historyExcludedBundleIDs, to: defaults, key: Key.historyExcluded) } }
     @Published public var regexPresets: [RegexPreset] { didSet { Self.writeJSON(regexPresets, to: defaults, key: Key.regexPresets) } }
 
+    /// The Zipline instance to upload to. Not a secret, so it lives here with
+    /// everything else; the token is in the Keychain (`KeychainTokenStore`).
+    @Published public var ziplineServerURL: String { didSet { defaults.set(ziplineServerURL, forKey: Key.ziplineServer) } }
+    /// Stored as the raw string ("never", "1h", "1d", "7d") rather than an
+    /// encoded enum, so the settings file stays readable and adding a case
+    /// later cannot fail to decode an old value.
+    @Published public var ziplineDefaultExpiry: String { didSet { defaults.set(ziplineDefaultExpiry, forKey: Key.ziplineExpiry) } }
+    @Published public var ziplineDefaultBurnOnRead: Bool { didSet { defaults.set(ziplineDefaultBurnOnRead, forKey: Key.ziplineBurn) } }
+    @Published public var ziplineDefaultExtension: String { didSet { defaults.set(ziplineDefaultExtension, forKey: Key.ziplineExtension) } }
+
     public init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         self.wrapWidth = (defaults.object(forKey: Key.wrapWidth) as? Int) ?? 400
@@ -40,6 +50,10 @@ public final class SettingsStore: ObservableObject {
         // fail-open for a privacy feature — where falling back to the seeds is fail-safe.
         self.historyExcludedBundleIDs = Self.readJSON([String].self, from: defaults, key: Key.historyExcluded) ?? ExclusionSeeds.passwordManagers
         self.regexPresets = Self.readLossyArray(RegexPreset.self, from: defaults, key: Key.regexPresets) ?? []
+        self.ziplineServerURL = defaults.string(forKey: Key.ziplineServer) ?? ""
+        self.ziplineDefaultExpiry = defaults.string(forKey: Key.ziplineExpiry) ?? "1d"
+        self.ziplineDefaultBurnOnRead = (defaults.object(forKey: Key.ziplineBurn) as? Bool) ?? false
+        self.ziplineDefaultExtension = defaults.string(forKey: Key.ziplineExtension) ?? "txt"
     }
 
     public var scriptsDirectoryURL: URL {
@@ -81,6 +95,17 @@ public final class SettingsStore: ObservableObject {
         transformOrder.removeValue(forKey: transformerID)
     }
 
+    /// Raw setting → the request value. An unrecognised string falls back to
+    /// the default expiry, never to `.never`: a corrupted setting must not
+    /// quietly make uploads permanent.
+    public static func expiry(fromRaw raw: String) -> ZiplineExpiry {
+        switch raw {
+        case "never": return .never
+        case "1h", "1d", "7d": return .relative(raw)
+        default: return .relative("1d")
+        }
+    }
+
     private static func trimmingName(_ preset: RegexPreset) -> RegexPreset {
         var trimmed = preset
         trimmed.name = preset.name.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -103,6 +128,10 @@ public final class SettingsStore: ObservableObject {
         static let historyMaxItems = "pastefix.historyMaxItems"
         static let historyExcluded = "pastefix.historyExcludedBundleIDs"
         static let regexPresets = "pastefix.regexPresets"
+        static let ziplineServer = "pastefix.zipline.serverURL"
+        static let ziplineExpiry = "pastefix.zipline.defaultExpiry"
+        static let ziplineBurn = "pastefix.zipline.defaultBurnOnRead"
+        static let ziplineExtension = "pastefix.zipline.defaultExtension"
     }
 
     private static func writeJSON<T: Encodable>(_ value: T, to defaults: UserDefaults, key: String) {

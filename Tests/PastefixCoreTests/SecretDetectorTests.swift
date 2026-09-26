@@ -142,6 +142,48 @@ import Testing
         #expect(SecretDetector.scan("AKIAIOSFODNN7EXAMPLE") == SecretDetector.scan("AKIAIOSFODNN7EXAMPLE"))
         #expect(!SecretDetector.scan("AKIAIOSFODNN7EXAMPLE").isEmpty)          // same key, under the cap
     }
+    /// `scanIgnoringSizeCap` was extracted out of `scan` for the upload path, and the claim was
+    /// that `scan` is byte-for-byte unchanged — a claim that until now rested on reading the
+    /// code. This is the assertion: for a buffer *under* the cap the two entry points must agree
+    /// exactly, because the cap is supposed to be the only difference between them.
+    ///
+    /// Not two empty arrays agreeing: the fixture carries seven kinds, two sites where two rules
+    /// match the same text (so the location/length/kind tie-break runs), and three matches
+    /// separated only by a single space (so the `r.location >= cursor` sweep runs).
+    @Test("under the cap, scan and scanIgnoringSizeCap agree exactly")
+    func cappedAndUncappedAgreeUnderTheCap() {
+        let fixture = """
+        db_url=postgres://svc:Tr0ub4dor&3xKcd-9zQ@db.internal:5432/app
+        password: hunter2!SuperSecret99
+        access_key = AKIAIOSFODNN7EXAMPLE
+        AKIAIOSFODNN7EXAMPLE AKIAIOSFODNN7EXAMPLE
+        token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk
+        ghp_1234567890abcdefghijklmnopqrstuvwxyz sk-ant-api03-abcdefghijklmnopqrstuvwxyz0123456789
+        -----BEGIN RSA PRIVATE KEY-----
+        MIIBOgIBAAJBAKj34GkxFhD90vcNLYLInFEX6Ppy1tPf9Cnzj4p4WGeKLs1Pt8Qu
+        -----END RSA PRIVATE KEY-----
+        """
+        #expect(fixture.utf8.count <= SecretDetector.maxBytes)
+
+        let capped = SecretDetector.scan(fixture)
+        let uncapped = SecretDetector.scanIgnoringSizeCap(fixture)
+        #expect(capped == uncapped)
+
+        // The fixture is doing the work it claims to: several kinds, and the overlap sites
+        // resolved to one match each rather than two stacked on the same bytes.
+        #expect(Set(capped.map(\.kind)).count >= 6)
+        #expect(capped.filter { $0.kind == .awsAccessKey }.count == 3)
+        #expect(capped.filter { fixture[$0.range].hasPrefix("eyJ") }.count == 1)
+        // `access_key = AKIA…` is matched by both `awsAccessKey` and `genericAssignment`; the
+        // dedup keeps one, and both entry points keep the same one.
+        #expect(capped.filter { fixture[$0.range] == "AKIAIOSFODNN7EXAMPLE" }.allSatisfy { $0.kind == .awsAccessKey })
+
+        // The output invariant the sweep is there to produce: ascending and non-overlapping.
+        for (earlier, later) in zip(capped, capped.dropFirst()) {
+            #expect(earlier.range.upperBound <= later.range.lowerBound)
+        }
+    }
+
     @Test func manyRealJWTsAreAllFound() {
         // The JWT validation budget is a cost cap, not a content cap: a buffer packed with real
         // JWTs stays well under it, because a real one runs to hundreds of characters.

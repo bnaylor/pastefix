@@ -10,5 +10,27 @@
 	<true/>
 	<key>SUScheduledCheckInterval</key>
 	<integer>86400</integer>
+	<!-- The Zipline upload is the one feature here that opens a socket to a host the user
+	     names, and a self-hosted Zipline is normally on a LAN or Tailscale address over
+	     plain http. NSAllowsLocalNetworking is the scoped exception for exactly that: it
+	     permits insecure loads to local-network destinations and changes nothing about
+	     public ones. NSAllowsArbitraryLoads is deliberately NOT set — this app uploads the
+	     user's clipboard and an API token, and turning transport security off globally to
+	     make one deployment convenient is the wrong trade.
+
+	     Measured on macOS 26.3.1 (a signed .app with and without this key, http GETs to
+	     each destination): the stock default ALREADY permits http to an IP literal
+	     (10.x, 100.x Tailscale CGNAT, 127.0.0.1) and to a `.local` name, and BOTH settings
+	     refuse http to a dotted public-looking FQDN — a Tailscale MagicDNS name
+	     (host.tailnet.ts.net) included — with NSURLErrorAppTransportSecurityRequires-
+	     SecureConnection (-1022). So this key buys nothing observable on this OS version;
+	     it is here to state the intent explicitly and to keep the local case working if the
+	     implicit exemptions ever tighten. It does NOT make a MagicDNS name work over http,
+	     and the Upload settings tab says so rather than promising otherwise. -->
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
 </dict>
 </plist>
