@@ -299,9 +299,12 @@ case "legacy":
 case "tiff":
     guard let w = Int(arg(2, "W H")), let h = Int(arg(3, "W H")), w > 0, h > 0 else { fail("usage: pb tiff W H", 1) }
     requirePass()
-    let img = NSImage(size: NSSize(width: w, height: h))
-    img.lockFocus(); NSColor.systemTeal.setFill(); NSRect(x: 0, y: 0, width: w, height: h).fill(); img.unlockFocus()
-    guard let tiff = img.tiffRepresentation else { fail("could not render TIFF", 1) }
+    // An explicit bitmap rep, not NSImage + lockFocus: lockFocus picks up the display's backing
+    // scale, so on Retina "tiff 8 6" came out 16x12 and a pixel-ceiling fixture's size depended
+    // on which screen the helper ran on. This is exactly W x H pixels, uncompressed.
+    guard let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: w, pixelsHigh: h, bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: w * 4, bitsPerPixel: 32), let px = rep.bitmapData else { fail("could not allocate bitmap", 1) }
+    for i in stride(from: 0, to: w * h * 4, by: 4) { px[i] = 48; px[i + 1] = 176; px[i + 2] = 199; px[i + 3] = 255 }
+    guard let tiff = rep.tiffRepresentation else { fail("could not render TIFF", 1) }
     pb.clearContents(); pb.setData(tiff, forType: .tiff)
 case "png":
     guard let w = Int(arg(2, "W H")), let h = Int(arg(3, "W H")), w > 0, h > 0 else { fail("usage: pb png W H", 1) }
