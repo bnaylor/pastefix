@@ -231,14 +231,22 @@ struct UploadOverlayView: View {
         // and `init` runs whenever `PanelView` re-renders — while this overlay is open, on every
         // `AppModel` or `SettingsStore` publish. A same-process `SecItemCopyMatching` was assumed
         // cheap on the strength of that "rare" alone. Measured wrong, on a rendered GUI pass: a
-        // read that needs the user's permission — which can happen because an ad-hoc Debug
-        // rebuild's signature no longer matches the stored item's ACL, or because the login
-        // keychain is locked; both produce the same blocking prompt, and which one was live during
-        // that pass is not established — opens a `SecurityAgent` prompt that freezes the main
-        // thread until answered, and denial does not stop the next one: one ⌘⇧U, with the read
-        // living here, produced two such prompts — one per re-render — and with auto-hide on, the
-        // prompt's focus steal hid the panel entirely. A render-path read was a prompt loop, not a
-        // cheap call.
+        // read the user must authorise opens a `SecurityAgent` prompt that freezes the main thread
+        // until answered, and denial does not stop the next one. One ⌘⇧U, with the read living
+        // here, produced two such prompts — one per re-render — and with auto-hide on the prompt's
+        // focus steal hid the panel entirely, so the very sentence explaining the failure could not
+        // be read. A render-path read was a prompt loop, not a cheap call.
+        //
+        // What that pass established, and what it did not. The prompt was an **ACL confirmation**,
+        // not a keychain unlock: the dialog named the item ("…your confidential information stored
+        // in "net.scromp.Pastefix.zipline"…") and offered Always Allow / Deny / Allow, and the
+        // screen was unlocked throughout. It was provoked deliberately, by planting the item with
+        // `security add-generic-password` *without* `-A`, so a restrictive ACL was the input rather
+        // than a discovery. What remains inferred is the route an ordinary developer takes to the
+        // same state: an ad-hoc Debug rebuild changes the cdhash the ACL is bound to (the reason
+        // `docs/gui-automation.md` tells you to re-sign), which *should* land here but has not been
+        // measured doing so. Treat "a mismatched ACL loops prompts" as fact and "a rebuild produces
+        // a mismatched ACL" as the likely cause it has not yet been shown to be.
         //
         // So the token read moves to `.onAppear` (see that handler), which fires once per
         // appearance rather than once per render — same fix, same reasoning, as
@@ -949,7 +957,8 @@ struct UploadOverlayView: View {
         "No Zipline API token is stored. Add one in Settings to upload."
 
     /// The third sentence. A keychain read can fail for reasons that are not "no token" — a
-    /// locked keychain, or a denied ACL prompt (`errSecUserCanceled`, not `errSecAuthFailed` as
+    /// locked keychain, or a denied ACL prompt (`errSecUserCanceled` — measured, not
+    /// `errSecAuthFailed` as
     /// this comment used to claim) after an ad-hoc Debug rebuild changed the signature the
     /// item's ACL is bound to (see `KeychainTokenStore`) — and these used to collapse into
     /// `noTokenMessage`. Same door, wrong wall: the user re-enters a token that is already
