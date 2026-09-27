@@ -145,86 +145,6 @@ struct UploadOverlayView: View {
         case fileExtension
     }
 
-    /// Whitespace above the card, and the **first thing given up under height pressure**: it is
-    /// the only term in the whole budget with nothing inside it. See
-    /// `cardTopPadding(forPanelHeight:)`, which walks it down to `minCardTopPadding` before
-    /// anything with content in it is squeezed.
-    private static let cardTopPadding: CGFloat = 40
-    /// How close to the panel's top edge the card is allowed to get. Not zero: a card flush
-    /// against the edge reads as a sheet that failed to lay out rather than a floating card.
-    private static let minCardTopPadding: CGFloat = 12
-    /// Kept clear below the card so it never sits flush against the panel's bottom edge — and,
-    /// more to the point, so the height budget below stops short of it. Given up second, after
-    /// the top padding: also whitespace, but whitespace at the edge the buttons are nearest.
-    private static let cardBottomMargin: CGFloat = 24
-    /// Header block (46 for the title row, plus 18 for the source line under it — a `.caption` is
-    /// 10pt on macOS, so ~13pt of line box plus the 2pt `VStack` spacing, reserved at 18 so this
-    /// errs towards over-reserving like every other term here), three dividers (3), footer (30).
-    private static let cardChromeHeight: CGFloat = 97
-    /// The action row and its padding (12 above, 12 below, a ~22pt button between: ~46pt
-    /// measured, budgeted at 60). Pinned below the scroll region, never inside it: an Upload or
-    /// Cancel button that can be scrolled out of reach is the one thing a height budget must not
-    /// produce. The failure banner shares this block and is budgeted separately below — it used
-    /// to be exempt from the budget entirely, which was a bug; see `scrollHeight(forPanelHeight:)`.
-    private static let actionBlockHeight: CGFloat = 60
-    /// What the failure banner adds to the action block when there is one. `errorBanner` is
-    /// `.callout` at `lineLimit(3)` — ~16pt a line, so 48 at worst — plus the 8pt `VStack`
-    /// spacing between it and the action row.
-    ///
-    /// Budgeted at the worst case rather than measured per message, so the estimate can only
-    /// over-reserve. Over-reserving on a one-line banner leaves ~32pt of panel unused below the
-    /// card, which nobody can see; under-reserving pushes Retry and Cancel past the window's
-    /// bottom edge, which is exactly what this constant exists to stop.
-    private static let bannerBlockHeight: CGFloat = 56
-    /// The three option rows, their spacings, and the scroll region's own 12pt padding top and
-    /// bottom. No divider term any more: the one that used to sit between the options and the
-    /// secret block moved above the per-kind lines, and is only present when there are any
-    /// (`findingKindsGap`). These rows are what the region gives up first, because they are the
-    /// only thing in the card that can be changed again at any time.
-    private static let optionsHeight: CGFloat = 122
-    /// One "Checking for secrets…" / "No secrets found" line, plus the 8pt spacing below it — the
-    /// pinned verdict's whole height in those two states.
-    private static let scanRowHeight: CGFloat = 28
-    /// The pinned verdict when findings exist: the "N possible secrets" label, the disposition
-    /// radio group, its caption, their spacings, and the 8pt gap to the banner/action row below.
-    /// Independent of how many kinds were found — that part lives in the scroll region — which is
-    /// the property that makes this safe to pin at all.
-    private static let findingsChromeHeight: CGFloat = 112
-    /// The over-cap refusal: a two-line `.callout` label (~16pt a line) over a two-line
-    /// `.caption` (~13pt), plus the 4pt spacing between them and the 8pt gap to the action row
-    /// below. Budgeted at both lines of each, like `bannerBlockHeight`, so the estimate can only
-    /// over-reserve — this row is pinned, and the one thing it must never do is push the action
-    /// row off a short panel.
-    private static let refusalRowHeight: CGFloat = 70
-    /// One per-kind line in the scroll region, and the "Found:" caption above them.
-    private static let findingLineHeight: CGFloat = 16
-    /// The divider and spacings between the per-kind lines and the option rows under them.
-    private static let findingKindsGap: CGFloat = 11
-    /// The floor on the scroll region: about one option row plus enough height to be scrollable.
-    ///
-    /// Reaching it means the card is taller than the budget wanted, and at the panel's 380pt
-    /// minimum with findings *and* a failure banner it is reached (19pt available against this 44).
-    /// That is the deliberate outcome: the option rows become something to scroll to rather than
-    /// something to read at a glance, and the verdict, the choice and the buttons are untouched.
-    /// It must stay big enough to scroll — a region of zero height cannot be scrolled, and the
-    /// expiry control is precisely what a `1001 bad options[deletes-at]` failure needs the user to
-    /// reach. It exists at all so the arithmetic cannot produce a negative height.
-    private static let minScrollHeight: CGFloat = 44
-    /// The image card's scroll region: Expires and Burn, no "File type" row. Two ~26pt rows, the
-    /// 10pt spacing between them and the region's 12pt padding top and bottom (86), rounded up —
-    /// derived the same way as `optionsHeight`'s three rows.
-    private static let imageOptionsHeight: CGFloat = 88
-    /// One pinned image row: a `.callout` `Label` (~16pt, a symbol can make it 17) plus the 6pt
-    /// `VStack` spacing. Also what "This image contains text" adds when it is shown.
-    private static let imageRowHeight: CGFloat = 22
-    /// The preparing block: the not-checked verdict and the spinner row (a small `ProgressView`
-    /// is 16pt), each a row, plus the 8pt gap: 52.
-    private static let imagePreparingHeight: CGFloat = 52
-    /// The ready block without the text escalation: the not-checked verdict and the "removed"
-    /// line (a row each), the size caption (~13pt), and the 8pt gap to the banner/action row.
-    /// 65 by that sum, budgeted at 72 so it errs towards over-reserving like every other term.
-    private static let imageReadyHeight: CGFloat = 72
-
     /// The overlay's whole state, in the order it can be entered.
     ///
     /// `configure` is first for a reason: asking someone to pick an expiry and a filename and
@@ -833,12 +753,12 @@ struct UploadOverlayView: View {
             Text("Found:")
                 .font(.caption)
                 .foregroundStyle(.secondary)
-                .frame(height: Self.findingLineHeight, alignment: .leading)
+                .frame(height: UploadCardLayout.findingLineHeight, alignment: .leading)
             ForEach(Self.summaries(of: matches), id: \.self) { line in
                 Text(line)
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                    .frame(height: Self.findingLineHeight, alignment: .leading)
+                    .frame(height: UploadCardLayout.findingLineHeight, alignment: .leading)
             }
         }
     }
@@ -866,8 +786,8 @@ struct UploadOverlayView: View {
     /// The image card: the text card's layout — options in the budgeted scroll region, the
     /// verdict and the buttons pinned below it — with none of its text-shaped state. The option
     /// rows are the same views (expiry and burn apply to any upload); the "File type" row and the
-    /// redact-or-send choice are **absent**, not greyed: an image's extension is `png`, fixed by
-    /// `ZiplineUpload(image:)`, and there is nothing to redact. An inapplicable control implies a
+    /// redact-or-send choice are **absent**, not greyed: an image's extension is its format's
+    /// (`png` or `jpg`), fixed by `ZiplineUpload(image:)`, and there is nothing to redact. An inapplicable control implies a
     /// capability.
     private func imageComposingState(scrollHeight: CGFloat) -> some View {
         VStack(spacing: 0) {
@@ -913,7 +833,7 @@ struct UploadOverlayView: View {
                 }
                 .font(.callout)
             }
-        case .ready(let image, let hasText):
+        case .ready(let prepared, let hasText):
             VStack(alignment: .leading, spacing: 6) {
                 notCheckedRow
                 // Escalates; its absence is never a reassurance. `hasText == false` means Vision
@@ -929,10 +849,32 @@ struct UploadOverlayView: View {
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
-                Text(ImageUploadCard.sizeLine(bytes: image.png.count))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
+                // #21: which format goes, with its size and the other's, and the one-click escape
+                // when the PNG also fits. It **replaces** the size line (budgeted as
+                // `imageFormatRowHeight` instead of `imageSizeLineHeight`) — both at once is what
+                // pushed the worst case past a 380pt panel.
+                if let line = ImageUploadCard.formatLine(for: prepared) {
+                    HStack(spacing: 8) {
+                        Text(line)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                        Spacer(minLength: 0)
+                        if let title = ImageUploadCard.formatSwitchTitle(for: prepared) {
+                            // Switches which `SanitizedImage` Upload sends; both came from the
+                            // same strip. Inert while the bytes are on the wire.
+                            Button(title) { imageState.toggleFormat() }
+                                .buttonStyle(.link)
+                                .font(.caption)
+                                .disabled(phase == .uploading)
+                        }
+                    }
+                } else {
+                    Text(ImageUploadCard.sizeLine(bytes: prepared.toSend.data.count))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
             }
         case .refused(let refusal):
             imageRefusal(ImageUploadCard.refusal(refusal))
@@ -1290,7 +1232,7 @@ struct UploadOverlayView: View {
     ///
     /// The arithmetic, re-derived from the constants — do not trust a remembered figure over this:
     ///
-    ///     card     = cardChromeHeight(97) + scrollHeight + verdictHeight(0|28|70|112)
+    ///     card     = cardChromeHeight(97) + scrollHeight + verdictHeight(0|28|70|96)
     ///                  + actionBlockHeight(60) + banner(0|56)
     ///     on panel = topPadding(12…40) + card + cardBottomMargin(24)
     ///     fits when scrollHeight <= panelHeight - 181 - topPadding - verdict - banner
@@ -1298,27 +1240,35 @@ struct UploadOverlayView: View {
     /// At `PanelMetrics.minContentHeight` (380), with the top padding walked down where needed:
     ///
     ///     clean, no banner    → padding 40, 131 available, 122 wanted → no scroll
-    ///     findings, no banner → padding 40, 47 available, 181 wanted (2 kinds) → options scroll;
+    ///     findings, no banner → padding 40, 63 available, 181 wanted (2 kinds) → options scroll;
     ///                           card bottom at 356, the 24pt margin exactly honoured
-    ///     findings + banner   → padding 12, 19 available → floored at `minScrollHeight` (44), so
-    ///                           the card ends at 381: 1pt past the budget, having spent the margin
+    ///     findings + banner   → padding 12, 35 available → floored at `minScrollHeight` (44), so
+    ///                           the card ends at 365: 15pt clear, 3pt more than
+    ///                           `UploadCardLayout.minCardBottomMargin` (the text card's worst)
     ///
-    /// Only that last case is over budget, and by 1pt — the adaptive top padding is what pays for
-    /// it, which is the whole reason it is adaptive.
+    /// Until #93's review `findingsChromeHeight` was 112 and that last case ended at 381, 1pt
+    /// past the panel; it is now 96, from the measurement below. `UploadCardLayoutTests` sums
+    /// every text- and image-card combination against 380, so this cannot drift back silently.
     ///
     /// The image card (#48) swaps two terms: options are `imageOptionsHeight` (88, no "File type"
-    /// row) and the verdict is `imageVerdictHeight` (preparing 52, ready 72, ready with text 94,
-    /// refused 70). At 380:
+    /// row) and the verdict is `UploadCardLayout.imageVerdictHeight` — preparing 52; ready 53
+    /// plus the size line (19) *or*, for any JPEG or PNG fallback, the format row (24) in its
+    /// place; +22 with text detected; refused 70. At 380:
     ///
     ///     preparing            → padding 40, 107 available, 88 wanted → no scroll
     ///     ready, no text       → padding 40, 87 available → options scroll by 1pt
     ///     ready + text         → padding 40, 65 available → options scroll
-    ///     ready + text + banner → padding 12, 37 available → floored at 44; card ends at 363,
-    ///                            7pt into the bottom margin, inside the panel
+    ///     ready + text + JPEG + banner (the worst) → padding 12, 13 available → floored at 44;
+    ///                            card ends at 368 — 12pt clear of the panel's bottom, exactly
+    ///                            `UploadCardLayout.minCardBottomMargin`, pinned by
+    ///                            `UploadCardLayoutTests` (before #93's review, the format row
+    ///                            was added *beside* the size line and this case ended at 387)
     ///     refused              → padding 40, 89 available → no scroll
     ///
-    /// **None of the image rows has been measured on screen yet**; these are the constants' own
-    /// arithmetic, and the GUI pass is what confirms them.
+    /// A GUI pass (2026-09-27, before the size line was dropped under the format row) confirmed
+    /// these constants against the real layout for the reachable combinations: with text and the
+    /// JPEG row at minimum height, the footer hint ended 27pt above the transform bar — where the
+    /// arithmetic put the card's bottom 24pt clear. The budget over-reserves; it does not under.
     ///
     /// **What was measured, and what has not been.** The Accessibility-automation pass this file
     /// used to cite — action row's bottom at 298 of 384 of content, card's lowest text at 332,
@@ -1342,8 +1292,8 @@ struct UploadOverlayView: View {
     ///   action row 273..297, footer 318..331. Upload is drawn dimmed and a click on it is inert.
     ///
     /// **The correction that matters: the reserve is fat, not thin.** The card ends at ~355 of the
-    /// 412pt window — about 323 of 380 content — where this arithmetic puts it at 381, i.e. 1pt
-    /// *past* the budget. So the over-reserve is roughly 58pt in the floored case, not the ~7pt
+    /// 412pt window — about 323 of 380 content — where this arithmetic then put it at 381, i.e. 1pt
+    /// *past* the budget (365 since `findingsChromeHeight` came down to 96). So the over-reserve is roughly 58pt in the floored case, not the ~7pt
     /// the terms above imply, and the "1pt over, absorbed by the bottom margin" worry that shaped
     /// this comment was never real. Chrome added here has more headroom than these numbers suggest
     /// — but re-derive against the constants rather than against that 58, because it is the slack
@@ -1353,25 +1303,20 @@ struct UploadOverlayView: View {
     /// The `ScrollView` takes a *definite* height from this, so it will not compress to take up
     /// the slack on its own; if this number is too big, the card simply grows past the panel.
     private func scrollHeight(forPanelHeight panelHeight: CGFloat) -> CGFloat {
-        let available = max(Self.minScrollHeight,
-                            panelHeight - cardTopPadding(forPanelHeight: panelHeight)
-                                - Self.cardBottomMargin - Self.cardChromeHeight
-                                - verdictHeight - Self.actionBlockHeight - bannerHeight)
-        let options = imageSource != nil ? Self.imageOptionsHeight : Self.optionsHeight
-        return min(options + findingKindsHeight, available)
+        let content = imageSource != nil ? UploadCardLayout.imageOptionsHeight
+                                         : UploadCardLayout.textContentHeight(for: textVerdict)
+        return UploadCardLayout.scrollHeight(panelHeight: panelHeight, verdictHeight: verdictHeight,
+                                             bannerHeight: bannerHeight, contentHeight: content)
     }
 
-    /// Whitespace above the card, surrendered before anything with content in it. Full
-    /// `cardTopPadding` whenever the pinned blocks plus a floor-height region fit under it,
-    /// otherwise as little as `minCardTopPadding`.
+    /// Whitespace above the card, surrendered before anything with content in it
+    /// (`UploadCardLayout.cardTopPadding`).
     ///
     /// Written as its own function so `body` and `scrollHeight(forPanelHeight:)` cannot disagree
     /// about it: they are the two readers, and a card positioned by one number and measured by
     /// another is how a budget starts lying.
     private func cardTopPadding(forPanelHeight panelHeight: CGFloat) -> CGFloat {
-        let pinned = Self.cardChromeHeight + Self.minScrollHeight + verdictHeight
-            + Self.actionBlockHeight + bannerHeight + Self.cardBottomMargin
-        return min(Self.cardTopPadding, max(Self.minCardTopPadding, panelHeight - pinned))
+        UploadCardLayout.cardTopPadding(panelHeight: panelHeight, verdictHeight: verdictHeight, bannerHeight: bannerHeight)
     }
 
     /// What the pinned verdict block takes out of the budget: nothing while the scan is still
@@ -1381,45 +1326,34 @@ struct UploadOverlayView: View {
     private var verdictHeight: CGFloat {
         // The image card's pinned block, which replaces the text verdict outright (#48).
         if imageSource != nil { return imageVerdictHeight }
+        return UploadCardLayout.textVerdictHeight(for: textVerdict)
+    }
+
+    /// The text card's verdict as the budget sees it — the one mapping from `scanState` to
+    /// `UploadCardLayout`, so the arithmetic and `verdict` cannot disagree about which rows exist.
+    private var textVerdict: UploadCardLayout.TextVerdict {
         switch scanState {
         // Nothing is drawn under the 150ms delay, so nothing is budgeted for it — the card grows
         // by a row when the progress line appears, which is the same movement the row itself is.
-        case .scanning: return showScanProgress ? Self.scanRowHeight : 0
-        case .clean: return Self.scanRowHeight
-        case .found: return Self.findingsChromeHeight
-        case .refusedTooLarge: return Self.refusalRowHeight
+        case .scanning: return showScanProgress ? .scanRow : .quiet
+        case .clean: return .scanRow
+        case .found(let matches): return .findings(kinds: Self.summaries(of: matches).count)
+        case .refusedTooLarge: return .refusedTooLarge
         }
     }
 
     /// What `imageVerdict` renders, row for row. `scanState` stays `.scanning` for an image and
-    /// `findingKindsHeight` stays 0, so this and `imageOptionsHeight` are the image card's only
+    /// the text card's scroll content is not used, so this and `imageOptionsHeight` are the image card's only
     /// terms in the budget.
     private var imageVerdictHeight: CGFloat {
-        switch imageState {
-        case .preparing: return Self.imagePreparingHeight
-        case .ready(_, let hasText):
-            return Self.imageReadyHeight + (hasText ? Self.imageRowHeight : 0)
-        // Same layout as the text path's over-cap refusal: a two-line callout over a caption.
-        case .refused, .superseded: return Self.refusalRowHeight
-        }
+        UploadCardLayout.imageVerdictHeight(for: imageState)
     }
 
     /// The banner is drawn only in a `.failed` phase, and `bannerMessage` is also nil when the
     /// failure is one already shown inline against a control — so this asks the same question the
     /// view does rather than a looser "are we failed?", and the budget matches what is rendered.
     private var bannerHeight: CGFloat {
-        bannerMessage == nil ? 0 : Self.bannerBlockHeight
-    }
-
-    /// What the per-kind lines add to the scroll region's content. An estimate, and only has to be
-    /// roughly right in the safe direction: too large leaves a few points of slack at the bottom of
-    /// the region, too small makes it scroll slightly sooner than it needed to. Neither hides
-    /// anything, because everything that must not be hidden is pinned outside the region.
-    private var findingKindsHeight: CGFloat {
-        guard case .found(let matches) = scanState else { return 0 }
-        // +1 line for the "Found:" caption above them.
-        return CGFloat(Self.summaries(of: matches).count + 1) * Self.findingLineHeight
-            + Self.findingKindsGap
+        UploadCardLayout.bannerHeight(shown: bannerMessage != nil)
     }
 
     // MARK: Actions (every one reads live state)

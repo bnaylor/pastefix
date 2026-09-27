@@ -22,7 +22,7 @@ public enum ImageUploadCard {
         /// The strip, byte cap and text-region detection have not resolved yet.
         case preparing
         /// `hasText` escalates the wording; it never quiets it.
-        case ready(SanitizedImage, hasText: Bool)
+        case ready(PreparedImage, hasText: Bool)
         case refused(ImageUploadPreparation.Refusal)
         /// The process-wide lane skipped this preparation before it started, because a newer
         /// image's preparation replaced it. Only reachable when the session's image changed while
@@ -38,11 +38,25 @@ public enum ImageUploadCard {
             }
         }
 
-        /// The only bytes an image upload can send. There is deliberately no path from `State`
-        /// to the session's original `imagePNG`.
+        /// The only bytes an image upload can send — the chosen format, or the PNG after "Send as
+        /// PNG instead". There is deliberately no path from `State` to the session's original
+        /// `imagePNG`.
         public var sanitized: SanitizedImage? {
-            if case .ready(let image, _) = self { return image }
+            if case .ready(let prepared, _) = self { return prepared.toSend }
             return nil
+        }
+
+        public var prepared: PreparedImage? {
+            if case .ready(let prepared, _) = self { return prepared }
+            return nil
+        }
+
+        /// "Send as PNG instead" and back (#21). Changes which `SanitizedImage` `sanitized`
+        /// returns; nothing outside a ready state with a PNG alternative is affected.
+        public mutating func toggleFormat() {
+            guard case .ready(var prepared, let hasText) = self else { return }
+            prepared.toggleFormat()
+            self = .ready(prepared, hasText: hasText)
         }
 
         public var hasText: Bool {
@@ -92,7 +106,37 @@ public enum ImageUploadCard {
     /// prepared bytes to measure, because the header states what Upload will send.
     public static func headerDetail(for state: State) -> String {
         guard let image = state.sanitized else { return "image" }
-        return "image · \(HistoryFormatting.byteLabel(image.png.count))"
+        return "image · \(HistoryFormatting.byteLabel(image.data.count))"
+    }
+
+    /// What the card says about the format (#21), or nil for a plain PNG — the case that has
+    /// nothing to explain. A format change the user cannot see would be a second silent
+    /// transformation, so every JPEG says so, with the PNG's size beside it. When shown, it
+    /// replaces the size line (it carries the size itself), which is what keeps the worst case
+    /// inside the panel (`UploadCardLayout`).
+    public static func formatLine(for prepared: PreparedImage,
+                                  maxBytes: Int = UploadLimits.maxPayloadBytes) -> String? {
+        let png = HistoryFormatting.byteLabel(prepared.pngByteCount)
+        let jpeg = HistoryFormatting.byteLabel(prepared.chosen.data.count)
+        switch prepared.choice {
+        case .jpegWithPNGEscape:
+            return prepared.sendsPNGInstead
+                ? "Sending as PNG (\(png); as JPEG it would be \(jpeg))"
+                : "Sending as JPEG (\(jpeg); as PNG it would be \(png))"
+        case .jpegForcedByCap:
+            return "Sending as JPEG (\(jpeg)). As PNG it would be \(png), over the \(ByteLimit.describe(maxBytes)) limit"
+        case .png where prepared.jpegEncodeFailed:
+            // Neutral: the JPEG failed, which says nothing about the image — no transparency claim.
+            return "Sending as PNG (\(png))"
+        case .png, .refused:
+            return nil
+        }
+    }
+
+    /// The escape's title, or nil when there is no escape (a PNG, or a JPEG forced by the cap).
+    public static func formatSwitchTitle(for prepared: PreparedImage) -> String? {
+        guard prepared.choice.offersPNGEscape else { return nil }
+        return prepared.sendsPNGInstead ? "Send as JPEG instead" : "Send as PNG instead"
     }
 
     public static func sendTitle(hasText: Bool, isRetry: Bool) -> String {
@@ -110,8 +154,14 @@ public enum ImageUploadCard {
         switch refusal {
         case .tooManyPixels(let pixels):
             return "Too large to upload — \(ImageBytes.megapixelLabel(pixels)); the limit is \(ImageBytes.megapixelLabel(maxPixels))."
-        case .tooManyBytes(let bytes):
-            return "\(HistoryFormatting.byteLabel(bytes)) after preparing; the limit is \(ByteLimit.describe(maxBytes)). Uploading as JPEG (#21) would be smaller."
+        case .tooManyBytes(let bytes, .pngWithTransparency):
+            // Only for `JPEGCandidate.notOpaque`: a pixel really is not opaque.
+            return "\(HistoryFormatting.byteLabel(bytes)) after preparing; the limit is \(ByteLimit.describe(maxBytes)). It has transparency, so it can't be sent as JPEG."
+        case .tooManyBytes(let bytes, .pngWithoutJPEG):
+            // The JPEG could not be made. Nothing is known about the image, so nothing is said.
+            return "\(HistoryFormatting.byteLabel(bytes)) as PNG; the limit is \(ByteLimit.describe(maxBytes)). It couldn't also be prepared as JPEG."
+        case .tooManyBytes(let bytes, .jpeg):
+            return "\(HistoryFormatting.byteLabel(bytes)) even as JPEG; the limit is \(ByteLimit.describe(maxBytes))."
         case .unusable:
             return "This image couldn't be prepared for upload."
         }

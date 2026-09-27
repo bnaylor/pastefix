@@ -18,7 +18,7 @@ struct ImageSanitizerTests {
         #expect(Fixture.exif(before)["DateTimeOriginal"] != nil)
         #expect(before["{IPTC}"] != nil)
 
-        let out = try #require(ImageSanitizer.stripped(input)).png
+        let out = try #require(ImageSanitizer.stripped(input)).data
         let after = try #require(Fixture.properties(out))
         #expect(after["{GPS}"] == nil)
         #expect(after["{IPTC}"] == nil)
@@ -32,7 +32,7 @@ struct ImageSanitizerTests {
         let input = try #require(Fixture.image(as: format, orientation: 6))
         #expect(Fixture.properties(input)?["Orientation"] as? Int == 6)
 
-        let out = try #require(ImageSanitizer.stripped(input)).png
+        let out = try #require(ImageSanitizer.stripped(input)).data
         let props = try #require(Fixture.properties(out))
         #expect(props["PixelWidth"] as? Int == Fixture.height)   // stored 60x40, displayed 40x60
         #expect(props["PixelHeight"] as? Int == Fixture.width)
@@ -48,18 +48,18 @@ struct ImageSanitizerTests {
     func keepsProfile(format: String) throws {
         let input = try #require(Fixture.image(as: format))
         #expect(Fixture.properties(input)?["ProfileName"] as? String == "Display P3")
-        let out = try #require(ImageSanitizer.stripped(input)).png
+        let out = try #require(ImageSanitizer.stripped(input)).data
         #expect(Fixture.properties(out)?["ProfileName"] as? String == "Display P3")
     }
 
     @Test("output is PNG, never the input bytes, and stripping twice changes nothing more")
     func pngAndIdempotent() throws {
         let input = try #require(Fixture.image(as: "public.png"))
-        let once = try #require(ImageSanitizer.stripped(input)).png
+        let once = try #require(ImageSanitizer.stripped(input)).data
         #expect(once != input)
         let onceSource = try #require(CGImageSourceCreateWithData(once as CFData, nil))
         #expect(CGImageSourceGetType(onceSource) as String? == "public.png")
-        let twice = try #require(ImageSanitizer.stripped(once)).png
+        let twice = try #require(ImageSanitizer.stripped(once)).data
         let p1 = try #require(Fixture.properties(once)), p2 = try #require(Fixture.properties(twice))
         #expect(p1["PixelWidth"] as? Int == p2["PixelWidth"] as? Int)
         #expect(p1["PixelHeight"] as? Int == p2["PixelHeight"] as? Int)
@@ -70,7 +70,7 @@ struct ImageSanitizerTests {
     func noSilentDownscale(format: String) throws {
         // The thumbnail API downscales if its max size is ever left to a default.
         let input = try #require(Fixture.image(as: format))
-        let out = try #require(ImageSanitizer.stripped(input)).png
+        let out = try #require(ImageSanitizer.stripped(input)).data
         let props = try #require(Fixture.properties(out))
         #expect(props["PixelWidth"] as? Int == Fixture.width)
         #expect(props["PixelHeight"] as? Int == Fixture.height)
@@ -87,7 +87,7 @@ struct ImageSanitizerTests {
         let inImage = try #require(Fixture.decoded(input))
         #expect(inImage.colorSpace?.name == nil)   // and it survives into the input bytes
 
-        let out = try #require(ImageSanitizer.stripped(input)).png
+        let out = try #require(ImageSanitizer.stripped(input)).data
         let outImage = try #require(Fixture.decoded(out))
         #expect(outImage.colorSpace?.name as String? == CGColorSpace.displayP3 as String)
     }
@@ -114,7 +114,7 @@ struct ImageSanitizerTests {
         let embedded = try #require(decoded.colorSpace?.copyICCData() as Data?)
         #expect(Fixture.contains(embedded, marker))                    // and really personal
 
-        let out = try #require(ImageSanitizer.stripped(input)).png
+        let out = try #require(ImageSanitizer.stripped(input)).data
         #expect(!Fixture.contains(out, marker))
         #expect(Fixture.decoded(out)?.colorSpace?.name as String? == CGColorSpace.displayP3 as String)
     }
@@ -122,7 +122,7 @@ struct ImageSanitizerTests {
     @Test("alpha is kept")
     func keepsAlpha() throws {
         let input = try #require(Fixture.image(as: "public.png", transparentRightHalf: true))
-        let out = try #require(ImageSanitizer.stripped(input)).png
+        let out = try #require(ImageSanitizer.stripped(input)).data
         let rep = try #require(NSBitmapImageRep(data: out))
         #expect(rep.hasAlpha)
         let right = try #require(rep.colorAt(x: Fixture.width - 1, y: 0))
@@ -136,7 +136,7 @@ struct ImageSanitizerTests {
         // The non-standard-profile path redraws into a new context — a second place alpha can go.
         let custom = try #require(Fixture.nonStandardColorSpace())
         let input = try #require(Fixture.image(as: "public.png", space: custom, transparentRightHalf: true))
-        let out = try #require(ImageSanitizer.stripped(input)).png
+        let out = try #require(ImageSanitizer.stripped(input)).data
         let rep = try #require(NSBitmapImageRep(data: out))
         let right = try #require(rep.colorAt(x: Fixture.width - 1, y: 0))
         #expect(rep.hasAlpha)
@@ -148,7 +148,7 @@ struct ImageSanitizerTests {
         let marker = "FixtureSoftwareMarker"
         let input = try #require(Fixture.image(as: "public.png", pngText: marker))
         #expect(input.range(of: Data(marker.utf8)) != nil)   // the chunk really is in the input
-        let out = try #require(ImageSanitizer.stripped(input)).png
+        let out = try #require(ImageSanitizer.stripped(input)).data
         #expect(out.range(of: Data(marker.utf8)) == nil)
         #expect((Fixture.properties(out)?["{PNG}"] as? [String: Any])?["Software"] == nil)
     }
