@@ -265,19 +265,29 @@ final class PasteboardMonitor {
         var pendingTIFF: Data?
         var pendingWidth: Int?
         var pendingHeight: Int?
-        if let png = pb.data(forType: .png) {
-            // Size before decode: a header-only read gives pixel dimensions without decoding an
-            // image the store is about to reject anyway.
-            if png.count <= maxImageBytes, let size = ImageBytes.pixelSize(of: png) {
-                c.imagePNG = png; c.imagePixelWidth = size.width; c.imagePixelHeight = size.height
+        // A Finder file copy puts `public.file-url` on the pasteboard alongside a `public.tiff`
+        // that is a 1024×1024 rendering of the file's *icon*, not an image the user copied.
+        // `ClipboardImageRead` (the session path) already refuses on this rule; this capture path
+        // reads the same pasteboard independently and needs its own copy of it, or the icon gets
+        // captured into history as `imagePNG`, later reopened as an image session, and Save
+        // writes it back over the file reference it displaced. Text/rich capture above is
+        // unaffected: the filename a file copy also carries as a string is correct, wanted
+        // capture — only the two image branches below are skipped.
+        if pb.availableType(from: [.fileURL]) == nil {
+            if let png = pb.data(forType: .png) {
+                // Size before decode: a header-only read gives pixel dimensions without decoding
+                // an image the store is about to reject anyway.
+                if png.count <= maxImageBytes, let size = ImageBytes.pixelSize(of: png) {
+                    c.imagePNG = png; c.imagePixelWidth = size.width; c.imagePixelHeight = size.height
+                }
+            } else if let tiff = pb.data(forType: .tiff), let size = ImageBytes.pixelSize(of: tiff),
+                      // Header-only pixel gate, not a byte-size heuristic, and the ceiling itself is
+                      // `ImageBytes`' — shared with the session path so the two cannot drift. See
+                      // there for why pixels and not bytes. The store's byte cap on the PNG result
+                      // still applies on top of it.
+                      size.width * size.height <= ImageBytes.maxConvertiblePixels {
+                pendingTIFF = tiff; pendingWidth = size.width; pendingHeight = size.height
             }
-        } else if let tiff = pb.data(forType: .tiff), let size = ImageBytes.pixelSize(of: tiff),
-                  // Header-only pixel gate, not a byte-size heuristic, and the ceiling itself is
-                  // `ImageBytes`' — shared with the session path so the two cannot drift. See
-                  // there for why pixels and not bytes. The store's byte cap on the PNG result
-                  // still applies on top of it.
-                  size.width * size.height <= ImageBytes.maxConvertiblePixels {
-            pendingTIFF = tiff; pendingWidth = size.width; pendingHeight = size.height
         }
         guard c.plainText != nil || c.imagePNG != nil || pendingTIFF != nil else { return nil }
         return PendingRead(candidate: c, pendingTIFF: pendingTIFF,
