@@ -338,11 +338,13 @@ final class AppModel: ObservableObject {
             }
             do {
                 let rich = try RichOutputRenderer.render(markdown: doc.working)
-                // The image rides along here too: arming Markdown → Rich Text is a statement
-                // about how the *text* is written, not permission to drop an image the session
-                // was handed and the user never touched.
-                ClipboardBridge.writeRich(text: doc.working, html: rich.html, rtf: rich.rtf,
-                                          imagePNG: doc.imagePNG)
+                // The same `payload` as the branch below, plus the two renderings of its text.
+                // Arming Markdown → Rich Text is a statement about how the *text* is written, not
+                // permission to drop an image the session was handed and the user never touched —
+                // and passing the payload rather than `doc.imagePNG` is what stops this branch
+                // bypassing the empty-`Data` backstop and writing a zero-byte `public.png`
+                // (see `ClipboardBridge.writeRich`).
+                ClipboardBridge.writeRich(payload, html: rich.html, rtf: rich.rtf)
             } catch {
                 // Keep the session open and the mode armed: the user can read the error and
                 // either fix the Markdown or disarm the badge and save plain text instead.

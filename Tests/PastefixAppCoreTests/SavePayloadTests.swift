@@ -160,6 +160,41 @@ struct SavePayloadTests {
         #expect(payload.isEmpty)
     }
 
+    // MARK: The armed-Markdown branch reads the same payload as every other save
+
+    @Test("an armed-Markdown save cannot emit zero-byte image data")
+    func armedMarkdownNeverWritesEmptyImageData() {
+        // The bug this replaces: `ClipboardBridge.writeRich` took a loose `imagePNG: Data?` and
+        // `save()` handed it `doc.imagePNG`, the raw origin bytes, bypassing the backstop in
+        // `SavePayload.init` — so an armed-Markdown Save over an origin with empty image bytes wrote
+        // zero bytes under `public.png`, the one write this area exists to prevent.
+        //
+        // This is the deepest level the seam allows: `writeRich` is app-target code with no test
+        // host (#68), so what a test can pin is that its *only* source of image bytes is a payload
+        // that never carries empty ones. The signature change is what makes that the only source —
+        // there is no longer a parameter to pass raw bytes through.
+        var armed = doc(text: "# heading", image: Data())
+        armed.outputMode = .renderedMarkdown
+        #expect(SavePayload(document: armed).imagePNG == nil)
+    }
+
+    @Test("arming Markdown changes the text, never the other representations")
+    func armingChangesNothingButText() {
+        // The rule in the signature, asserted on the value the signature carries: a rendered save
+        // may choose how the *text* is written (HTML and RTF are its renderings of it) and reads
+        // every other representation off the payload — so arming must leave the payload's non-text
+        // fields identical to the plain save's.
+        var plain = doc(text: "# heading", image: png)
+        var armed = plain
+        armed.outputMode = .renderedMarkdown
+        #expect(SavePayload(document: armed) == SavePayload(document: plain))
+        #expect(SavePayload(document: armed).imagePNG == png, "the origin's image, byte for byte")
+        // And the mode itself is not a representation the payload records: it decides *how* the
+        // app target renders the text, which is the exception, not a fourth field here.
+        plain.outputMode = .plain
+        #expect(SavePayload(document: plain).text == "# heading")
+    }
+
     @Test("the origin's rich content is not part of a plain save")
     func richIsNotWritten() {
         // Stating the policy rather than discovering it: putting *plain* text back is what this app

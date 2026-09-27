@@ -105,17 +105,36 @@ enum ClipboardBridge {
 
     /// Armed-Markdown save: formatted targets take HTML/RTF, plain targets get the Markdown source.
     ///
-    /// `imagePNG` is here for the same reason it is on `write`: a session can carry a standalone
-    /// image alongside text (a copy that put both on the clipboard), and arming Markdown → Rich
-    /// Text must not be the one save path that silently drops it. Save never writes less than it
-    /// was given.
-    static func writeRich(text: String, html: String, rtf: Data?, imagePNG: Data? = nil,
+    /// **Takes the `SavePayload` rather than loose representations, and that is the fix for a real
+    /// bug.** This function used to take `imagePNG: Data?`, and `save()` handed it `doc.imagePNG` —
+    /// the raw origin bytes — while the other branch passed `payload.imagePNG`. `SavePayload`'s init
+    /// is what turns an empty `Data` into nil, so this branch could put **zero bytes under
+    /// `public.png`**: the one write this whole area of the code exists to prevent, reachable on an
+    /// armed-Markdown Save over an origin with empty image data. Two callers of one rule, agreeing
+    /// only by hand — the exact shape `SavePayload` was introduced to remove, surviving in the one
+    /// branch that did not go through it.
+    ///
+    /// So the rule is in the signature now: **the rendered branch chooses how the _text_ is written
+    /// — `html` and `rtf` are its renderings of it — and every other representation comes from the
+    /// payload.** That is the only exception, and a future representation (#71's file reference)
+    /// arrives here by growing `SavePayload`, not by growing this parameter list. There is no
+    /// parameter left through which a caller can smuggle in bytes the payload did not decide.
+    ///
+    /// The image rides along for the same reason it is on `write`: a session can carry a standalone
+    /// image alongside text (a copy that put both on the clipboard), and arming Markdown → Rich Text
+    /// is a statement about how the text is written, not permission to drop it. Save never writes
+    /// less than it was given.
+    ///
+    /// One behaviour change falls out of reading `.string` from the payload too: an image session
+    /// with an empty buffer now declares no `public.string` instead of an empty one, which is what
+    /// `SavePayload.text` documents and what every other save path already did.
+    static func writeRich(_ payload: SavePayload, html: String, rtf: Data?,
                           to pasteboard: NSPasteboard = .general) {
         beginWrite(pasteboard)
-        pasteboard.setString(text, forType: .string)
+        if let text = payload.text { pasteboard.setString(text, forType: .string) }
         pasteboard.setString(html, forType: .html)
         if let rtf { pasteboard.setData(rtf, forType: .rtf) }
-        if let imagePNG { pasteboard.setData(imagePNG, forType: .png) }
+        if let imagePNG = payload.imagePNG { pasteboard.setData(imagePNG, forType: .png) }
     }
 
     /// Writes every representation we have for one item. Empty inputs write nothing for that type.

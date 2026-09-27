@@ -10,11 +10,18 @@ import Foundation
 /// #71 will grow the write (carrying a file reference back), and a hand-written emptiness test
 /// would then refuse a write that had become legitimate. Here, growing `SavePayload` grows both.
 ///
-/// **Scope, deliberately narrow.** This covers every Save but the armed-Markdown one, which
-/// renders HTML and RTF through `RichOutputRenderer` — throwing, main-actor, and able to fail
-/// after the decision is made, so it stays where it is, in the app target. That branch is
-/// unreachable for an unedited document anyway (`PasteDocument.isUnedited` requires
-/// `outputMode == .plain`), so it never meets the refusal this type decides.
+/// **Scope.** Every Save reads its representations off this value, the armed-Markdown one included:
+/// `ClipboardBridge.writeRich` takes a `SavePayload` plus the HTML and RTF renderings of its text,
+/// and the *only* exception is that text — the rendered branch chooses how to write it. Everything
+/// else comes from here. That exception is narrow because the alternative was a bug: while
+/// `writeRich` took a loose `imagePNG: Data?`, `save()` passed it `doc.imagePNG` and bypassed the
+/// empty-`Data` backstop below, so an armed-Markdown Save over an origin with empty image bytes
+/// could write a zero-byte `public.png`. One rule with two hand-written readers, again.
+///
+/// What stays in the app target is the *rendering*: `RichOutputRenderer` is throwing, main-actor,
+/// and can fail after the decision is made. The refusal this type feeds
+/// (`PasteDocument.saveWouldLoseContent`) never meets that branch anyway, since `isUnedited`
+/// requires `outputMode == .plain`.
 ///
 /// Pure and in the package on purpose: `AppModel.save()` is app-target code with no test host
 /// (#68), so the spec's one rule that "needs a test rather than a comment" — a mixed session
