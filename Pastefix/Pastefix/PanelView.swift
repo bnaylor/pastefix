@@ -327,7 +327,7 @@ struct PanelView: View {
             .accessibilityLabel(isPreviewing ? "Back to the editor" : "Preview as Markdown")
             // Tinted, not gated: any *text* can be previewed, detection only makes it a suggestion.
             .tint(model.document?.detectedKinds.contains(.markdown) == true ? Color.accentColor : nil)
-            // Same one-binding rule as ⌘K/⌘Y: nothing owns ⌘⇧M while an overlay is up.
+            // Nothing owns ⌘⇧M while an overlay is up (no overlay binds it either, so no swap).
             .keyboardShortcut(isPaletteOpen || isHistoryOpen || isUploadOpen ? nil : KeyboardShortcut("m", modifiers: [.command, .shift]))
             // Gated in an image session, which is the one thing there is no text to preview of:
             // the buffer is blank, so ⌘⇧M would draw an empty preview over the image and the way
@@ -341,9 +341,12 @@ struct PanelView: View {
             }
             .help("Clipboard History (⌘Y)")
             .accessibilityLabel("Clipboard History")
-            // Same one-binding rule as ⌘K below: while the history overlay is open its own
-            // hidden button owns ⌘Y (to close), and while the palette is open nothing does.
-            .keyboardShortcut(isPaletteOpen || isHistoryOpen || isUploadOpen ? nil : KeyboardShortcut("y", modifiers: .command))
+            // Bound while the history overlay is open, and toggles it closed: one ⌘Y, never
+            // swapped. It used to hand ⌘Y to a hidden button inside the overlay and take it back
+            // on close, and SwiftUI lost the re-added binding here — ⌘Y worked twice, then went
+            // dead until another overlay cycle (#73). A key equivalent does not care that the
+            // button is under the backdrop. Nothing owns ⌘Y while the palette or upload is open.
+            .keyboardShortcut(isPaletteOpen || isUploadOpen ? nil : KeyboardShortcut("y", modifiers: .command))
             .disabled(model.isApplying)
             Button { settings.showSidebar.toggle() } label: {
                 Image(systemName: "sidebar.right")
@@ -390,6 +393,9 @@ struct PanelView: View {
             // Only one ⌘K can exist at a time: while the palette is open this button is still
             // in the hierarchy (just under the backdrop), and the palette's own hidden button
             // takes over the shortcut to close it. Two live bindings would be ambiguous.
+            // This swap is the pattern that broke ⌘Y (#73): the re-added binding was lost when
+            // the button sat in the toolbar, and survived here in the action bar (measured). If
+            // this button moves, bind it permanently and toggle instead, as ⌘Y now does.
             .keyboardShortcut(isPaletteOpen || isHistoryOpen || isUploadOpen ? nil : KeyboardShortcut("k", modifiers: .command))
             .disabled(model.isApplying)
             .accessibilityLabel("Find a transform")
