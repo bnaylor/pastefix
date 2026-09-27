@@ -1,4 +1,5 @@
 import Foundation
+import PastefixCore
 import AppKit
 import ImageIO
 import UniformTypeIdentifiers
@@ -30,7 +31,10 @@ public enum ImageBytes {
     /// 5000×5000 noise TIFF (100 MB) on this machine — worst case for the PNG encoder, since noise
     /// cannot be compressed away. It brackets the capture path's own figures (0.4 s at 6.6 MP,
     /// 1.3 s at 20.4 MP, #32).
-    public static let maxConvertiblePixels = 25_000_000
+    ///
+    /// The value lives in `PastefixCore` (`PixelLimits`) because the upload sanitizer, which is in
+    /// Core, must apply the same ceiling — one number, not two that can drift.
+    public static let maxConvertiblePixels = PixelLimits.maxConvertiblePixels
 
     /// The pixel count reported for an image whose declared dimensions do not multiply into an
     /// `Int` (see `pixelCount`). It is a sentinel rather than an optional on `tooLarge` because a
@@ -75,8 +79,7 @@ public enum ImageBytes {
     /// nil is always **over** any ceiling a caller could set (`maxConvertiblePixels` is 25 M),
     /// so callers treat it as too large rather than needing a rule of their own for it.
     public static func pixelCount(width: Int, height: Int) -> Int? {
-        let (pixels, overflowed) = width.multipliedReportingOverflow(by: height)
-        return overflowed ? nil : pixels
+        PixelLimits.pixelCount(width: width, height: height)
     }
 
     /// The one decode-and-re-encode route in the app: bitmap in, PNG out, nil if either half
