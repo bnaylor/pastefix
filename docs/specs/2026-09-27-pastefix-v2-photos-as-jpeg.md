@@ -1,6 +1,6 @@
 ---
 type: spec
-status: draft
+status: implemented
 id: 2026-09-27-pastefix-v2-photos-as-jpeg
 title: Pastefix v2 — Upload photos as JPEG (Plan 19, #21)
 description: Image upload sends a photograph as JPEG (quality 0.85) and anything else as PNG, decided by measured compressibility rather than by guessing at content. Fixes the refusal of camera-sized photos, whose PNG exceeds the 16 MB upload cap.
