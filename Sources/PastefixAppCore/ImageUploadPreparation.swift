@@ -12,10 +12,10 @@ public enum ImageUploadPreparation {
     public enum Refusal: Equatable, Sendable {
         /// Over `PixelLimits.maxConvertiblePixels` — the figure, for "31 MP; limit 25 MP".
         case tooManyPixels(Int)
-        /// Stripped, and still over `UploadLimits.maxPayloadBytes` — the stripped size. For photos
-        /// this, not the pixel ceiling, is the binding limit (measured: a smooth 12 MP render is
-        /// already 12.5 MB as PNG); the refusal points at lossy output (#21).
-        case tooManyBytes(Int)
+        /// Stripped, and still over `UploadLimits.maxPayloadBytes` in the format that would have
+        /// been sent (`ImageFormatChoice`): the PNG for an image with a non-opaque pixel, otherwise
+        /// the JPEG — an opaque image is refused only when even its JPEG does not fit (#21).
+        case tooManyBytes(Int, format: ImageFormat)
         /// Could not be decoded or stripped.
         case unusable
     }
@@ -24,7 +24,7 @@ public enum ImageUploadPreparation {
         /// `hasText` is "text regions were detected", and `false` means **not detected** — never
         /// "no text". Measured: an 11 px line produces no regions. The card shows the not-checked
         /// verdict either way; this only escalates it.
-        case ready(SanitizedImage, hasText: Bool)
+        case ready(PreparedImage, hasText: Bool)
         case refused(Refusal)
     }
 
@@ -38,9 +38,28 @@ public enum ImageUploadPreparation {
             let pixels = PixelLimits.pixelCount(width: size.width, height: size.height) ?? ImageBytes.unmeasurablePixels
             if pixels > maxPixels { return .refused(.tooManyPixels(pixels)) }
         }
-        guard let image = ImageSanitizer.stripped(png, maxPixels: maxPixels) else { return .refused(.unusable) }
-        guard image.png.count <= maxBytes else { return .refused(.tooManyBytes(image.png.count)) }
-        return .ready(image, hasText: containsText(image.png))
+        // JPEG is encoded only when every pixel is opaque (`encodings` scans them); the cap is
+        // applied to whichever format `ImageFormatChoice` picks.
+        guard let encodings = ImageSanitizer.encodings(png, maxPixels: maxPixels) else { return .refused(.unusable) }
+        let choice = ImageFormatChoice.choose(pngBytes: encodings.png.data.count,
+                                              jpegBytes: encodings.jpeg?.data.count, maxBytes: maxBytes)
+        let prepared: PreparedImage
+        switch choice {
+        case .refused(let bytes, let format):
+            return .refused(.tooManyBytes(bytes, format: format))
+        case .png:
+            prepared = PreparedImage(choice: choice, chosen: encodings.png, pngAlternative: nil,
+                                     pngByteCount: encodings.png.data.count)
+        case .jpegWithPNGEscape, .jpegForcedByCap:
+            // `choose` answers JPEG only when given a JPEG size, so this is always present.
+            guard let jpeg = encodings.jpeg else { return .refused(.unusable) }
+            prepared = PreparedImage(choice: choice, chosen: jpeg,
+                                     pngAlternative: choice.offersPNGEscape ? encodings.png : nil,
+                                     pngByteCount: encodings.png.data.count)
+        }
+        // On the lossless PNG whichever format is sent: the same pixels, without JPEG's ringing
+        // around glyph edges.
+        return .ready(prepared, hasText: containsText(encodings.png.data))
     }
 
     /// Whether Vision finds any text region. A failed request counts as text found: this may only
@@ -53,5 +72,42 @@ public enum ImageUploadPreparation {
             return true
         }
         return !(request.results ?? []).isEmpty
+    }
+}
+
+/// A prepared image upload (#21): what the format rule chose, and — only when it chose JPEG with
+/// the PNG still under the cap — the PNG as the one-click alternative.
+///
+/// Both images are `SanitizedImage`s, so switching between them cannot reach unstripped bytes.
+/// The initialiser is internal: only `ImageUploadPreparation.prepare` makes one, so `choice`,
+/// `chosen` and `pngAlternative` always agree.
+public struct PreparedImage: Equatable, Sendable {
+    /// `.png`, `.jpegWithPNGEscape` or `.jpegForcedByCap` — never `.refused`.
+    public let choice: ImageFormatChoice
+    /// The image the rule chose.
+    public let chosen: SanitizedImage
+    /// The PNG, present exactly when `choice.offersPNGEscape`.
+    public let pngAlternative: SanitizedImage?
+    /// The PNG's size, kept even when the PNG itself is not (the card says "as PNG it would be Y").
+    public let pngByteCount: Int
+    /// Whether the user pressed "Send as PNG instead". Only ever true with a `pngAlternative`.
+    public private(set) var sendsPNGInstead = false
+
+    init(choice: ImageFormatChoice, chosen: SanitizedImage, pngAlternative: SanitizedImage?, pngByteCount: Int) {
+        self.choice = choice
+        self.chosen = chosen
+        self.pngAlternative = pngAlternative
+        self.pngByteCount = pngByteCount
+    }
+
+    /// The bytes Upload sends.
+    public var toSend: SanitizedImage {
+        sendsPNGInstead ? (pngAlternative ?? chosen) : chosen
+    }
+
+    /// The escape and its reverse. Does nothing when there is no PNG to switch to.
+    public mutating func toggleFormat() {
+        guard pngAlternative != nil else { return }
+        sendsPNGInstead.toggle()
     }
 }

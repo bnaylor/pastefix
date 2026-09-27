@@ -45,11 +45,13 @@ public struct ZiplineUpload: Sendable, Equatable {
         self.burnOnRead = burnOnRead
     }
 
-    /// An image upload: always `png`, and deliberately no extension parameter — the overlay hides
-    /// its extension control for an image, and the type agrees rather than trusting the view.
+    /// An image upload: the extension is the image's own format's (`png` or `jpg`, #21), and
+    /// deliberately there is no extension parameter — the overlay hides its extension control for
+    /// an image, and the type agrees rather than trusting the view. The extension and the bytes
+    /// cannot disagree, because both come from the one `SanitizedImage`.
     public init(image: SanitizedImage, expiry: ZiplineExpiry, burnOnRead: Bool) {
         self.body = .image(image)
-        self.fileExtension = "png"
+        self.fileExtension = image.format.fileExtension
         self.expiry = expiry
         self.burnOnRead = burnOnRead
     }
@@ -58,7 +60,7 @@ public struct ZiplineUpload: Sendable, Equatable {
     public var byteCount: Int {
         switch body {
         case .text(let text): text.utf8.count
-        case .image(let image): image.png.count
+        case .image(let image): image.data.count
         }
     }
 

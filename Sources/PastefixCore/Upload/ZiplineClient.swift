@@ -155,8 +155,8 @@ public struct URLSessionZiplineClient: ZiplineUploading {
             body.append(Data(text.utf8))
         case .image(let image):
             // Zipline serves and previews by type; text/plain would make an image download.
-            body.append("Content-Type: image/png\r\n\r\n".data(using: .utf8)!)
-            body.append(image.png)
+            body.append("Content-Type: \(image.format.contentType)\r\n\r\n".data(using: .utf8)!)
+            body.append(image.data)
         }
         body.append("\r\n--\(boundary)--\r\n".data(using: .utf8)!)
         return body

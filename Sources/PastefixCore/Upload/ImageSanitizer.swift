@@ -23,9 +23,48 @@ public enum PixelLimits {
 /// `ImageSanitizer.stripped(_:)`. Image upload (#48) accepts a `SanitizedImage`, never `Data`, so
 /// "strip, and if that fails send the original" does not compile rather than merely failing a
 /// test. The same shape `UploadPayload.text` uses for the secret gate.
+///
+/// It carries its format (#21), so the upload takes its extension and content type from the bytes
+/// it actually holds rather than from a caller's say-so.
 public struct SanitizedImage: Sendable, Equatable {
-    public let png: Data
-    fileprivate init(png: Data) { self.png = png }
+    public let format: ImageFormat
+    public let data: Data
+    fileprivate init(format: ImageFormat, data: Data) {
+        self.format = format
+        self.data = data
+    }
+}
+
+/// The two encodings an upload can send (#21).
+public enum ImageFormat: Sendable, Equatable {
+    case png
+    case jpeg
+
+    /// What `ZiplineUpload(image:)` names the file: Zipline serves by type.
+    public var fileExtension: String {
+        switch self {
+        case .png: "png"
+        case .jpeg: "jpg"
+        }
+    }
+
+    /// The multipart part's `Content-Type`.
+    public var contentType: String {
+        switch self {
+        case .png: "image/png"
+        case .jpeg: "image/jpeg"
+        }
+    }
+}
+
+/// One strip, both encodings an upload can choose between (#21). `ImageFormatChoice` decides
+/// which is sent.
+public struct SanitizedEncodings: Sendable, Equatable {
+    /// Always present: every image can go as PNG.
+    public let png: SanitizedImage
+    /// Present exactly when every pixel is opaque. JPEG has no alpha, and flattening changes what
+    /// the user sees, so an image with any non-opaque pixel is never encoded as JPEG at all.
+    public let jpeg: SanitizedImage?
 }
 
 /// Removes identifying metadata from an image before it leaves the machine (#20).
@@ -52,6 +91,8 @@ public struct SanitizedImage: Sendable, Equatable {
 /// - Removes GPS, EXIF, TIFF (make, model), IPTC, XMP and PNG text chunks. The only EXIF left is
 ///   the pixel dimensions the PNG encoder writes for itself.
 /// - Keeps alpha.
+/// - For upload, also encodes a JPEG of the same stripped pixels — only when every pixel is opaque
+///   (`encodings(_:maxPixels:)`, #21). `ImageFormatChoice` decides which one is sent.
 ///
 /// Named limits, not choices: a 16-bit source keeps its depth when its profile is standard, but
 /// the Display P3 conversion draws at 8 bits per channel, so a 16-bit image with a *non-standard*
@@ -69,7 +110,8 @@ public enum ImageSanitizer {
         CGColorSpace.extendedLinearSRGB, CGColorSpace.itur_2020,
     ].map { $0 as String }.reduce(into: []) { $0.insert($1) }
 
-    /// A stripped PNG of `data`, or nil.
+    /// A stripped PNG of `data`, or nil. (Upload wants `encodings(_:maxPixels:)`, which adds the
+    /// JPEG candidate; this is the PNG-only form.)
     ///
     /// **nil, never the input.** Every failure — empty or undecodable bytes, a pixel count over
     /// the ceiling or one that overflows, a failed conversion or encode — is nil, and the caller
@@ -81,6 +123,71 @@ public enum ImageSanitizer {
     ///
     /// A full decode and encode: callers run it off the main actor.
     public static func stripped(_ data: Data, maxPixels: Int = PixelLimits.maxConvertiblePixels) -> SanitizedImage? {
+        strippedImage(data, maxPixels: maxPixels).flatMap(encodePNG)
+    }
+
+    /// JPEG quality for uploads (#21): the usual default, and photos stay visually lossless at
+    /// about a fifth of their PNG's size.
+    public static let jpegQuality = 0.85
+
+    /// `stripped(_:maxPixels:)`'s PNG, plus a JPEG of the same stripped pixels when every pixel is
+    /// opaque — the two candidates `ImageFormatChoice` chooses between (#21). Both encodes, always,
+    /// on the full image: sampling would bias the size ratio from both sides (downscaling averages
+    /// away the sensor noise that makes a photo's PNG big, and anti-aliases the hard edges that
+    /// keep a screenshot's PNG small), and the JPEG costs ~8% on top of the PNG (measured).
+    ///
+    /// nil on every failure, as `stripped`. That includes a JPEG encode failing on an opaque
+    /// image: nil there, rather than a PNG-only answer, keeps "no JPEG" meaning exactly "has a
+    /// non-opaque pixel", which the card's wording relies on.
+    public static func encodings(_ data: Data, maxPixels: Int = PixelLimits.maxConvertiblePixels) -> SanitizedEncodings? {
+        guard let image = strippedImage(data, maxPixels: maxPixels),
+              let png = encodePNG(image) else { return nil }
+        guard isOpaque(image) else { return SanitizedEncodings(png: png, jpeg: nil) }
+        // The same bare, stripped `CGImage` the PNG was made from — never the source, and no
+        // properties but the quality (see `JPEGEncoder`).
+        guard let jpeg = JPEGEncoder.encode(image, quality: jpegQuality) else { return nil }
+        return SanitizedEncodings(png: png, jpeg: SanitizedImage(format: .jpeg, data: jpeg))
+    }
+
+    /// Whether every pixel's alpha is 255 — **a pixel test, not a question about the channel.**
+    /// `screencapture` output, and many TIFF→PNG pasteboard conversions, carry an alpha channel with
+    /// every pixel at 255; asking "has an alpha channel?" would silently turn JPEG off for all of
+    /// them. The image is drawn into an 8-bit alpha-only bitmap — the pixels' alpha and nothing
+    /// else, so no colour conversion is paid for — and each row is compared against a row of 255s
+    /// with `memcmp`. Measured at 25 MP: ~20 ms (an RGBA render with a per-pixel Swift loop was
+    /// ~0.7 s unoptimised). An image with no alpha channel draws as 255 everywhere.
+    ///
+    /// Any failure answers "not opaque": the cost of a wrong "no" is a PNG, the cost of a wrong
+    /// "yes" is a flattened image.
+    static func isOpaque(_ image: CGImage) -> Bool {
+        let width = image.width, height = image.height
+        guard width > 0, height > 0,
+              let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8,
+                                      bytesPerRow: width, space: nil as CGColorSpace?,
+                                      bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.alphaOnly.rawValue))
+        else { return false }
+        context.setBlendMode(.copy)
+        context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+        guard let base = context.data else { return false }
+        let stride = context.bytesPerRow
+        let opaqueRow = [UInt8](repeating: 255, count: width)
+        return opaqueRow.withUnsafeBytes { row in
+            guard let rowBase = row.baseAddress else { return false }
+            for y in 0..<height where memcmp(base + y * stride, rowBase, width) != 0 { return false }
+            return true
+        }
+    }
+
+    private static func encodePNG(_ image: CGImage) -> SanitizedImage? {
+        // No properties: nothing of the source's metadata is carried across. Passing the source's
+        // dictionary to an encoder — the obvious way to "preserve quality" — is the regression
+        // `ImageSanitizerTests` exists to catch. Encoded via `PNGEncoder`, not an in-memory
+        // destination: ImageIO leaks the encoder's buffers there (see `PNGEncoder`).
+        PNGEncoder.encode(image).map { SanitizedImage(format: .png, data: $0) }
+    }
+
+    /// The decoded, oriented, profile-normalised pixels both encodes start from, or nil.
+    private static func strippedImage(_ data: Data, maxPixels: Int) -> CGImage? {
         guard !data.isEmpty,
               let source = CGImageSourceCreateWithData(data as CFData, nil),
               CGImageSourceGetCount(source) > 0,
@@ -98,14 +205,8 @@ public enum ImageSanitizer {
             kCGImageSourceThumbnailMaxPixelSize: max(width, height),
             kCGImageSourceShouldCacheImmediately: true,
         ]
-        guard let oriented = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary),
-              let image = withStandardProfile(oriented) else { return nil }
-        // No properties: nothing of the source's metadata is carried across. Passing the source's
-        // dictionary to an encoder — the obvious way to "preserve quality" — is the regression
-        // `ImageSanitizerTests` exists to catch. Encoded via `PNGEncoder`, not an in-memory
-        // destination: ImageIO leaks the encoder's buffers there (see `PNGEncoder`).
-        guard let png = PNGEncoder.encode(image) else { return nil }
-        return SanitizedImage(png: png)
+        guard let oriented = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else { return nil }
+        return withStandardProfile(oriented)
     }
 
     /// `image` unchanged if its colour space is standard, otherwise redrawn into Display P3.

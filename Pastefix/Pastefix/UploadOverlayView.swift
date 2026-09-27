@@ -224,6 +224,9 @@ struct UploadOverlayView: View {
     /// line (a row each), the size caption (~13pt), and the 8pt gap to the banner/action row.
     /// 65 by that sum, budgeted at 72 so it errs towards over-reserving like every other term.
     private static let imageReadyHeight: CGFloat = 72
+    /// The format row (#21), shown for any JPEG: a `.caption` line beside a `.link` button in
+    /// `.caption` (~16pt together) plus the 6pt `VStack` spacing, budgeted at 24.
+    private static let imageFormatRowHeight: CGFloat = 24
 
     /// The overlay's whole state, in the order it can be entered.
     ///
@@ -866,8 +869,8 @@ struct UploadOverlayView: View {
     /// The image card: the text card's layout — options in the budgeted scroll region, the
     /// verdict and the buttons pinned below it — with none of its text-shaped state. The option
     /// rows are the same views (expiry and burn apply to any upload); the "File type" row and the
-    /// redact-or-send choice are **absent**, not greyed: an image's extension is `png`, fixed by
-    /// `ZiplineUpload(image:)`, and there is nothing to redact. An inapplicable control implies a
+    /// redact-or-send choice are **absent**, not greyed: an image's extension is its format's
+    /// (`png` or `jpg`), fixed by `ZiplineUpload(image:)`, and there is nothing to redact. An inapplicable control implies a
     /// capability.
     private func imageComposingState(scrollHeight: CGFloat) -> some View {
         VStack(spacing: 0) {
@@ -913,7 +916,7 @@ struct UploadOverlayView: View {
                 }
                 .font(.callout)
             }
-        case .ready(let image, let hasText):
+        case .ready(let prepared, let hasText):
             VStack(alignment: .leading, spacing: 6) {
                 notCheckedRow
                 // Escalates; its absence is never a reassurance. `hasText == false` means Vision
@@ -929,10 +932,29 @@ struct UploadOverlayView: View {
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
-                Text(ImageUploadCard.sizeLine(bytes: image.png.count))
+                Text(ImageUploadCard.sizeLine(bytes: prepared.toSend.data.count))
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
+                // #21: which format goes, with the other's size, and the one-click escape when the
+                // PNG also fits. Budgeted as `imageFormatRowHeight`.
+                if let line = ImageUploadCard.formatLine(for: prepared) {
+                    HStack(spacing: 8) {
+                        Text(line)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                        Spacer(minLength: 0)
+                        if let title = ImageUploadCard.formatSwitchTitle(for: prepared) {
+                            // Switches which `SanitizedImage` Upload sends; both came from the
+                            // same strip. Inert while the bytes are on the wire.
+                            Button(title) { imageState.toggleFormat() }
+                                .buttonStyle(.link)
+                                .font(.caption)
+                                .disabled(phase == .uploading)
+                        }
+                    }
+                }
             }
         case .refused(let refusal):
             imageRefusal(ImageUploadCard.refusal(refusal))
@@ -1308,7 +1330,7 @@ struct UploadOverlayView: View {
     ///
     /// The image card (#48) swaps two terms: options are `imageOptionsHeight` (88, no "File type"
     /// row) and the verdict is `imageVerdictHeight` (preparing 52, ready 72, ready with text 94,
-    /// refused 70). At 380:
+    /// refused 70; +24 for the JPEG format row). At 380:
     ///
     ///     preparing            → padding 40, 107 available, 88 wanted → no scroll
     ///     ready, no text       → padding 40, 87 available → options scroll by 1pt
@@ -1316,6 +1338,16 @@ struct UploadOverlayView: View {
     ///     ready + text + banner → padding 12, 37 available → floored at 44; card ends at 363,
     ///                            7pt into the bottom margin, inside the panel
     ///     refused              → padding 40, 89 available → no scroll
+    ///
+    /// A JPEG (#21) adds `imageFormatRowHeight` (24) to any ready verdict:
+    ///
+    ///     ready + JPEG                 → padding 40, 63 available → options scroll
+    ///     ready + text + JPEG          → padding 37, 44 available → exactly the floor; card ends
+    ///                                    at 356, the 24pt margin exactly honoured
+    ///     ready + text + JPEG + banner → padding 12, 13 available → floored at 44; card ends at
+    ///                                    387, **7pt past the panel by this arithmetic** — the
+    ///                                    one image case over budget. The measured over-reserve
+    ///                                    below (~58pt) is what it leans on; confirm on screen.
     ///
     /// **None of the image rows has been measured on screen yet**; these are the constants' own
     /// arithmetic, and the GUI pass is what confirms them.
@@ -1397,8 +1429,9 @@ struct UploadOverlayView: View {
     private var imageVerdictHeight: CGFloat {
         switch imageState {
         case .preparing: return Self.imagePreparingHeight
-        case .ready(_, let hasText):
+        case .ready(let prepared, let hasText):
             return Self.imageReadyHeight + (hasText ? Self.imageRowHeight : 0)
+                + (ImageUploadCard.formatLine(for: prepared) != nil ? Self.imageFormatRowHeight : 0)
         // Same layout as the text path's over-cap refusal: a two-line callout over a caption.
         case .refused, .superseded: return Self.refusalRowHeight
         }
