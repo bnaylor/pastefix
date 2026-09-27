@@ -2,6 +2,18 @@ import AppKit
 import PastefixAppCore
 
 enum ClipboardBridge {
+    /// Which of `types` the pasteboard offers, PNG first: `availableType(from:)` answers with the
+    /// earliest match, so a pasteboard offering both is read as the PNG it already holds instead of
+    /// paying a TIFF decode to arrive at one. The `available` answer for
+    /// `ClipboardImageRead.imageSource`, shared with history capture so the two readers cannot
+    /// order the types differently (#81).
+    static func offeredImageType(_ types: Set<String>, on pasteboard: NSPasteboard) -> String? {
+        let ordered = [ClipboardImageRead.pngType, ClipboardImageRead.tiffType]
+            .filter { types.contains($0) }
+            .map { NSPasteboard.PasteboardType(rawValue: $0) }
+        return pasteboard.availableType(from: ordered)?.rawValue
+    }
+
     static func snapshot(from pasteboard: NSPasteboard) -> ClipboardSnapshot {
         // Count **first**, contents second, and the order is the whole safety argument. A copy
         // landing between the two reads is recorded as count C against contents from C+1: the
@@ -45,12 +57,7 @@ enum ClipboardBridge {
             // PNG first, and the order is the point: `availableType(from:)` answers with the
             // earliest match, so a pasteboard offering both (most screenshot sources do) is read
             // as the PNG it already holds instead of paying a TIFF decode to arrive at one.
-            available: { types in
-                let ordered = [ClipboardImageRead.pngType, ClipboardImageRead.tiffType]
-                    .filter { types.contains($0) }
-                    .map { NSPasteboard.PasteboardType(rawValue: $0) }
-                return pasteboard.availableType(from: ordered)?.rawValue
-            },
+            available: { offeredImageType($0, on: pasteboard) },
             data: { pasteboard.data(forType: NSPasteboard.PasteboardType(rawValue: $0)) },
             // `ImageBytes` is shared with the capture path, ceiling and all. The refusal is
             // recorded rather than swallowed: `nil` here is the only thing `ClipboardImageRead`
