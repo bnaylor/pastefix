@@ -185,15 +185,9 @@ struct HistoryOverlayView: View {
             }
             .font(.caption).foregroundStyle(.secondary)
             .padding(.horizontal, 12).padding(.vertical, 8)
-            // ⌘Y toggles: while the overlay is open the toolbar button is under the backdrop,
-            // so the shortcut lives here instead (PanelView drops its binding for as long as we
-            // exist, so only one ⌘Y is ever registered). Zero-sized and transparent rather than
-            // `.hidden()`, which would still reserve a button's worth of layout.
-            Button("Close clipboard history", action: onClose)
-                .keyboardShortcut("y", modifiers: .command)
-                .frame(width: 0, height: 0)
-                .opacity(0)
-                .accessibilityHidden(true)
+            // No ⌘Y here: the toolbar's ⌘Y stays bound while this overlay is open and closes it
+            // (see PanelView, #73). The hidden buttons below are zero-sized and transparent rather
+            // than `.hidden()`, which would still reserve a button's worth of layout.
             // ⌘⌫ has to be a key *equivalent*, not an `onKeyPress`: the search field is first
             // responder and its field editor implements `deleteToBeginningOfLine:`, so it would
             // consume ⌘⌫ and truncate the query instead of forwarding it. `performKeyEquivalent:`
