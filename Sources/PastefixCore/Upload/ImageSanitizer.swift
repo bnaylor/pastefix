@@ -53,9 +53,10 @@ public struct SanitizedImage: Sendable, Equatable {
 ///   the pixel dimensions the PNG encoder writes for itself.
 /// - Keeps alpha.
 ///
-/// Named limits of the decoder, not choices: output is 8 bits per channel (a 16-bit or HDR source
-/// loses depth and any gain map); only the first frame is used (an animated PNG uploads its first
-/// frame; a multi-page TIFF its first page).
+/// Named limits, not choices: a 16-bit source keeps its depth when its profile is standard, but
+/// the Display P3 conversion draws at 8 bits per channel, so a 16-bit image with a *non-standard*
+/// profile loses depth (and an HDR gain map is dropped either way). Only the first frame is used:
+/// an animated PNG uploads its first frame, a multi-page TIFF its first page.
 ///
 /// Not applied on Save (Save writes back what was copied — Plan 15) or to history (local and
 /// owner-only; the harm #20 names is publication).
@@ -113,7 +114,12 @@ public enum ImageSanitizer {
 
     /// `image` unchanged if its colour space is standard, otherwise redrawn into Display P3.
     static func withStandardProfile(_ image: CGImage) -> CGImage? {
-        if let name = image.colorSpace?.name as String?, standardColorSpaces.contains(name) { return image }
+        // No colour space means an image *mask*: drawing one paints it in the fill colour, so the
+        // redraw below would turn content into a black silhouette rather than fail. Not reachable
+        // from ImageIO in any input measured (grey, indexed, 16-bit, gAMA-only, JPEG) — refused
+        // anyway, because "nil, never a wrong image" is the contract.
+        guard let space = image.colorSpace else { return nil }
+        if let name = space.name as String?, standardColorSpaces.contains(name) { return image }
         guard let p3 = CGColorSpace(name: CGColorSpace.displayP3),
               let context = CGContext(data: nil, width: image.width, height: image.height, bitsPerComponent: 8,
                                       bytesPerRow: 0, space: p3,

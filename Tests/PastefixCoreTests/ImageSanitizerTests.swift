@@ -92,6 +92,26 @@ struct ImageSanitizerTests {
         #expect(outImage.colorSpace?.name as String? == CGColorSpace.displayP3 as String)
     }
 
+    @Test("a personal description on an otherwise canonical profile does not survive")
+    func personalDescriptionNotCarried() throws {
+        // The shape a desc-only fixture was trying to be. It cannot be made through CoreGraphics'
+        // own encoder, which re-embeds the canonical profile for sRGB/P3/2020 and so launders the
+        // marker before the test starts. A third-party app writing the ICC verbatim is the real
+        // threat, so the fixture is a PNG with a hand-built iCCP chunk: Display P3's canonical
+        // profile with its description overwritten in place.
+        let marker = "PersonalBN"                 // same length as "Display P3"
+        let profile = try #require(Fixture.displayP3ProfileRenamed(to: marker))
+        let input = try #require(Fixture.pngWithRawICCP(profile))
+        let decoded = try #require(Fixture.decoded(input))
+        #expect(decoded.colorSpace?.name == nil)                       // fixture sanity: not named
+        let embedded = try #require(decoded.colorSpace?.copyICCData() as Data?)
+        #expect(Fixture.contains(embedded, marker))                    // and really personal
+
+        let out = try #require(ImageSanitizer.stripped(input)).png
+        #expect(!Fixture.contains(out, marker))
+        #expect(Fixture.decoded(out)?.colorSpace?.name as String? == CGColorSpace.displayP3 as String)
+    }
+
     @Test("alpha is kept")
     func keepsAlpha() throws {
         let input = try #require(Fixture.image(as: "public.png", transparentRightHalf: true))
@@ -192,5 +212,67 @@ enum Fixture {
         }
         for i in 84..<100 { icc[i] = 0 }
         return CGColorSpace(iccData: Data(icc) as CFData)
+    }
+
+    static func contains(_ data: Data, _ marker: String) -> Bool {
+        let ascii = Data(marker.utf8)
+        let utf16 = Data(marker.utf16.flatMap { [UInt8($0 >> 8), UInt8($0 & 0xFF)] })
+        return data.range(of: ascii) != nil || data.range(of: utf16) != nil
+    }
+
+    /// Display P3's canonical ICC with every "Display P3" (ASCII and UTF-16BE) overwritten in place.
+    static func displayP3ProfileRenamed(to marker: String) -> Data? {
+        guard var icc = CGColorSpace(name: CGColorSpace.displayP3)?.copyICCData() as Data?,
+              marker.count == "Display P3".count else { return nil }
+        for (from, to) in [(Data("Display P3".utf8), Data(marker.utf8)),
+                           (Data("Display P3".utf16.flatMap { [UInt8($0 >> 8), UInt8($0 & 0xFF)] }),
+                            Data(marker.utf16.flatMap { [UInt8($0 >> 8), UInt8($0 & 0xFF)] }))] {
+            while let r = icc.range(of: from) { icc.replaceSubrange(r, with: to) }
+        }
+        return icc
+    }
+
+    /// A small PNG whose colour profile is `profile`, embedded verbatim as an iCCP chunk — the way
+    /// an app that writes PNGs itself would, bypassing CoreGraphics' canonicalisation.
+    static func pngWithRawICCP(_ profile: Data) -> Data? {
+        guard let base = image(as: "public.png", space: CGColorSpace(name: CGColorSpace.sRGB)) else { return nil }
+        let bytes = [UInt8](base)
+        var out = Array(bytes[0..<8])
+        var i = 8
+        while i + 8 <= bytes.count {
+            let length = Int(bytes[i]) << 24 | Int(bytes[i + 1]) << 16 | Int(bytes[i + 2]) << 8 | Int(bytes[i + 3])
+            let type = String(bytes: bytes[i + 4..<i + 8], encoding: .ascii) ?? ""
+            let end = i + 12 + length
+            guard end <= bytes.count else { return nil }
+            if !["iCCP", "sRGB", "gAMA", "cHRM"].contains(type) { out += bytes[i..<end] }
+            if type == "IHDR" {
+                guard let deflated = try? (profile as NSData).compressed(using: .zlib) as Data else { return nil }
+                var z: [UInt8] = [0x78, 0x9C] + [UInt8](deflated)
+                let adler = adler32([UInt8](profile))
+                z += [UInt8(adler >> 24), UInt8(adler >> 16 & 0xFF), UInt8(adler >> 8 & 0xFF), UInt8(adler & 0xFF)]
+                out += chunk("iCCP", [UInt8]("Personal".utf8) + [0, 0] + z)
+            }
+            i = end
+        }
+        return Data(out)
+    }
+
+    static func chunk(_ type: String, _ data: [UInt8]) -> [UInt8] {
+        let n = UInt32(data.count), t = [UInt8](type.utf8), c = crc32(t + data)
+        return [UInt8(n >> 24), UInt8(n >> 16 & 0xFF), UInt8(n >> 8 & 0xFF), UInt8(n & 0xFF)] + t + data
+            + [UInt8(c >> 24), UInt8(c >> 16 & 0xFF), UInt8(c >> 8 & 0xFF), UInt8(c & 0xFF)]
+    }
+    static func crc32(_ bytes: [UInt8]) -> UInt32 {
+        var c: UInt32 = 0xFFFF_FFFF
+        for b in bytes {
+            c ^= UInt32(b)
+            for _ in 0..<8 { c = (c & 1) != 0 ? 0xEDB8_8320 ^ (c >> 1) : c >> 1 }
+        }
+        return c ^ 0xFFFF_FFFF
+    }
+    static func adler32(_ bytes: [UInt8]) -> UInt32 {
+        var a: UInt32 = 1, b: UInt32 = 0
+        for x in bytes { a = (a + UInt32(x)) % 65521; b = (b + a) % 65521 }
+        return b << 16 | a
     }
 }
