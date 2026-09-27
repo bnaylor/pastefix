@@ -100,16 +100,12 @@ public enum ImageSanitizer {
         ]
         guard let oriented = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary),
               let image = withStandardProfile(oriented) else { return nil }
-        let out = NSMutableData()
-        guard let destination = CGImageDestinationCreateWithData(out, UTType.png.identifier as CFString, 1, nil) else {
-            return nil
-        }
         // No properties: nothing of the source's metadata is carried across. Passing the source's
-        // dictionary here — the obvious way to "preserve quality" — is the regression
-        // `ImageSanitizerTests` exists to catch.
-        CGImageDestinationAddImage(destination, image, nil)
-        guard CGImageDestinationFinalize(destination), out.length > 0 else { return nil }
-        return SanitizedImage(png: out as Data)
+        // dictionary to an encoder — the obvious way to "preserve quality" — is the regression
+        // `ImageSanitizerTests` exists to catch. Encoded via `PNGEncoder`, not an in-memory
+        // destination: ImageIO leaks the encoder's buffers there (see `PNGEncoder`).
+        guard let png = PNGEncoder.encode(image) else { return nil }
+        return SanitizedImage(png: png)
     }
 
     /// `image` unchanged if its colour space is standard, otherwise redrawn into Display P3.
