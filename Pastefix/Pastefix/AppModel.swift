@@ -81,6 +81,31 @@ final class AppModel: ObservableObject {
     /// keep running for a buffer nobody can see.
     private var applyTask: Task<Void, Never>?
 
+    /// The one lane every image upload preparation runs through (#48): strip, byte cap, Vision.
+    ///
+    /// `static`, not per instance — "a per-instance lane is not a lane" (#46). A CG decode cannot
+    /// be cancelled, so the bound on concurrent ~330 MB decodes has to be one per *process*.
+    /// `nonisolated` so the work closure formed here is not main-actor isolated: the target builds
+    /// with `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor`, and a main-actor closure run on the
+    /// lane's queue would either hop back to the main thread or trap (the `TIFFConversionSlot`
+    /// trap, spelled out there).
+    nonisolated private static let imagePreparationLane =
+        SingleSlotLane<Data, ImageUploadPreparation.Outcome>(label: "net.scromp.Pastefix.upload.image-preparation") { png in
+            ImageUploadPreparation.prepare(png)
+        }
+
+    /// This session's image preparation, in flight or finished. A repeat ⌘⇧U rebuilds the upload
+    /// overlay, and the rebuilt overlay gets this same task rather than starting another decode.
+    /// Cleared at every session boundary (`abandonInFlightWork`).
+    private lazy var imagePreparations = SessionPreparationCache(lane: Self.imagePreparationLane)
+
+    /// The preparation for `png` — the upload overlay's snapshot of this session's `imagePNG` —
+    /// shared by every overlay opened on the same session and bytes. nil from the task means the
+    /// lane skipped it for a newer image.
+    func imageUploadPreparation(for png: Data) -> Task<ImageUploadPreparation.Outcome?, Never> {
+        imagePreparations.preparation(for: png, generation: sessionGeneration)
+    }
+
     /// True until the current buffer's scan lands. The Zipline upload gate (#14) must wait for
     /// this before treating an empty `secretMatches` as "no secrets". A gate should observe
     /// `$document` and re-check this rather than spin on the Bool: `document == nil` reads the
@@ -111,6 +136,9 @@ final class AppModel: ObservableObject {
         applyTask = nil
         detection.cancelAll()
         isApplying = false
+        // Every caller also bumps `sessionGeneration`, so the cached preparation is no longer
+        // anyone's; dropping it skips it on the lane if it has not started.
+        imagePreparations.clear()
     }
 
     /// Rebuild the transformer list from current settings (scripts dir, wrap
