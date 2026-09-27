@@ -67,6 +67,14 @@ public enum ImageBytes {
         return (width, height)
     }
 
+    /// Whether these bytes *are* a PNG, from their header — never from the pasteboard type they
+    /// arrived under, which a provider can get wrong. No decode. `normalise` and history capture
+    /// both ask this, so the session and history keep the same bytes for a mislabelled image (#97).
+    public static func isPNG(_ data: Data) -> Bool {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { return false }
+        return CGImageSourceGetType(source) as String? == UTType.png.identifier
+    }
+
     /// `width * height`, or nil when that product does not fit in an `Int`.
     ///
     /// Both pixel gates come here, and the reason is not shared code but a trap: these numbers are
@@ -119,7 +127,7 @@ public enum ImageBytes {
         guard let source = CGImageSourceCreateWithData(data as CFData, nil),
               CGImageSourceGetCount(source) > 0,
               let size = pixelSize(of: data), size.width > 0, size.height > 0 else { return .unusable }
-        if CGImageSourceGetType(source) as String? == UTType.png.identifier { return .png(data) }
+        if isPNG(data) { return .png(data) }
         // A header whose dimensions multiply past `Int.max` is refused rather than trapped (see
         // `pixelCount`), and refused *without* a figure: `megapixelLabel(unmeasurablePixels)` reads
         // as words, because a banner printing a 19-digit megapixel count teaches a user to distrust
