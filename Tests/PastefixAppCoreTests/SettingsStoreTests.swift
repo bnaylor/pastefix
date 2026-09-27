@@ -8,35 +8,13 @@ import PastefixCore
 // `@MainActor` bodies already cannot interleave, but the marker is what keeps that true
 // if a test ever gains an `await`.
 @Suite(.serialized) struct SettingsStoreTests {
-    /// The one defaults suite these tests use. Deliberately a fixed name rather than a
-    /// per-test UUID: a UUID suite is a new domain that `cfprefsd` flushes to
-    /// ~/Library/Preferences, so every run left another `pastefix.test.<UUID>.plist`
-    /// behind (hundreds had accumulated). One name means at most one file, and the
-    /// teardown below removes that.
-    private static let suiteName = "pastefix.test"
-
-    /// Runs `body` against an empty suite, clearing the domain before *and* after so
-    /// tests cannot see each other's writes. Safe because the tests share one suite
-    /// that is both `@MainActor` and `.serialized`, so no two of them are ever inside
-    /// this helper at once.
-    ///
-    /// Clearing the domain alone is not enough: `cfprefsd` still flushes an empty plist
-    /// to disk for a suite it has seen, so the backing file is unlinked too. Every
-    /// cleanup step is best-effort and must never fail a test. `cfprefsd` can still win
-    /// the last race and re-flush an empty `pastefix.test.plist` after the final
-    /// teardown; with a fixed name that is one reused file rather than one per test.
+    /// Runs `body` against a fresh, isolated defaults (#85): its plist lives in a private temp
+    /// folder, never ~/Library/Preferences. The earlier fixed-name suite ("pastefix.test")
+    /// shrank the leak to one reused file, but cfprefsd re-flushed it after teardown anyway.
     private func withFreshDefaults(_ body: @MainActor (UserDefaults) -> Void) {
-        let suite = Self.suiteName
-        let d = UserDefaults(suiteName: suite)!
-        d.removePersistentDomain(forName: suite)
-        defer {
-            d.removePersistentDomain(forName: suite)
-            d.synchronize()
-            UserDefaults.standard.removeSuite(named: suite)
-            let plist = URL(fileURLWithPath: NSHomeDirectory())
-                .appendingPathComponent("Library/Preferences/\(suite).plist")
-            try? FileManager.default.removeItem(at: plist)
-        }
+        let iso = IsolatedDefaults()
+        defer { iso.remove() }
+        let d = iso.defaults
         body(d)
     }
 

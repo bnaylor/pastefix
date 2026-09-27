@@ -69,7 +69,7 @@ struct CheckForUpdatesButton: View {
 /// its lifetime equals the process lifetime.
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    private(set) var settings = SettingsStore()
+    private(set) var settings = SettingsStore(defaults: .standard)
     private(set) lazy var history = HistoryStore(
         directory: Self.historyDirectory,
         limits: HistoryLimits(maxItems: settings.historyMaxItems))

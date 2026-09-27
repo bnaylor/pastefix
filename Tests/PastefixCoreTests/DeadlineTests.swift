@@ -23,6 +23,19 @@ private func blockingSleep(_ seconds: TimeInterval) {
     Thread.sleep(forTimeInterval: seconds)
 }
 
+
+/// A stubborn body's release, opened by the test only *after* the caller has returned (#89).
+/// The body blocks on it — uncancellably, as a stubborn body must — so "the caller returned while
+/// the body was still running" holds however late the deadline fires on a loaded machine. The
+/// earlier version raced a 0.75 s sleep against a 0.2 s deadline and failed whenever the deadline
+/// was scheduled >0.55 s late. `timeout` is only a safety net: a Deadline that *waits* for its
+/// body blocks until it, and then the body has finished first — which fails the test, as it should.
+private final class Gate: @unchecked Sendable {
+    private let semaphore = DispatchSemaphore(value: 0)
+    func blockUntilOpened(timeout seconds: TimeInterval = 10) { _ = semaphore.wait(timeout: .now() + seconds) }
+    func open() { semaphore.signal() }
+}
+
 @Suite struct DeadlineTests {
     @Test func fastBodyReturnsItsValue() async throws {
         let v = try await Deadline.run(seconds: 5) { 42 }
@@ -43,14 +56,16 @@ private func blockingSleep(_ seconds: TimeInterval) {
     /// regardless of how fast or slow the machine is.
     @Test func stubbornBodyDoesNotBlockTheCaller() async {
         let finished = Flag()
+        let gate = Gate()
         await #expect(throws: TransformError.timeout) {
             try await Deadline.run(seconds: 0.2) { () -> Int in
-                blockingSleep(0.75)
+                gate.blockUntilOpened()
                 finished.raise()
                 return 1
             }
         }
         #expect(!finished.value, "the caller returned while the body was still running")
+        gate.open()
         await waitFor(finished)   // don't leave the abandoned body running past the test's return
     }
 

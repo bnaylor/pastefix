@@ -216,6 +216,9 @@ before anything is touched. `PFX_HISTORY_DIR` points it at a copy for testing.
 
 ## Things that have bitten these passes
 
+- **Global hotkeys (⌘⇧C/⌘⇧U) do nothing on an ad-hoc-signed Debug build.** That
+  means you skipped the Developer ID re-sign in step 1; it is not a regression. (A
+  pass suspected #91 exactly this way.)
 - **Sparkle update dialog on the Debug build.** The Debug bundle reports
   version "1.0", the appcast has "1.0.0", so a "new version available" sheet
   can appear at launch and swallow every keystroke. Dismiss with `click $PID X Y` on

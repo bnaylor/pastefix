@@ -6,14 +6,15 @@ import Foundation
 @MainActor
 @Suite("Zipline settings")
 struct ZiplineSettingsTests {
-    private func store() -> SettingsStore {
-        let suite = "net.scromp.Pastefix.tests.\(UUID().uuidString)"
-        return SettingsStore(defaults: UserDefaults(suiteName: suite)!)
+    /// A store on isolated defaults; call `.remove()` on the second value when done (#85).
+    private func store() -> (SettingsStore, IsolatedDefaults) {
+        let iso = IsolatedDefaults()
+        return (SettingsStore(defaults: iso.defaults), iso)
     }
 
     @Test("defaults are empty server, 1d expiry, no burn, txt")
     func defaults() {
-        let s = store()
+        let (s, iso) = store(); defer { iso.remove() }
         #expect(s.ziplineServerURL.isEmpty)
         #expect(s.ziplineDefaultExpiry == "1d")
         #expect(s.ziplineDefaultBurnOnRead == false)
@@ -22,8 +23,8 @@ struct ZiplineSettingsTests {
 
     @Test("values persist across instances")
     func persists() {
-        let suite = "net.scromp.Pastefix.tests.\(UUID().uuidString)"
-        let defaults = UserDefaults(suiteName: suite)!
+        let iso = IsolatedDefaults(); defer { iso.remove() }
+        let defaults = iso.defaults
         let first = SettingsStore(defaults: defaults)
         first.ziplineServerURL = "https://zip.example.test"
         first.ziplineDefaultExpiry = "7d"
@@ -48,8 +49,8 @@ struct ZiplineSettingsTests {
 
     @Test("no settings key is token- or credential-shaped")
     func tokenIsNotInDefaults() {
-        let suite = "net.scromp.Pastefix.tests.\(UUID().uuidString)"
-        let defaults = UserDefaults(suiteName: suite)!
+        let iso = IsolatedDefaults(); defer { iso.remove() }
+        let defaults = iso.defaults
         let s = SettingsStore(defaults: defaults)
 
         // `didSet` does not fire on the assignments `SettingsStore.init` performs on itself — so
@@ -156,8 +157,8 @@ struct UploadExtensionSeedTests {
 
     @Test("the setting the store ships with is the one that lets the detector fill in")
     func defaultSettingIsTheDetectorsOpening() {
-        let suite = "net.scromp.Pastefix.tests.\(UUID().uuidString)"
-        let s = SettingsStore(defaults: UserDefaults(suiteName: suite)!)
+        let iso = IsolatedDefaults(); defer { iso.remove() }
+        let s = SettingsStore(defaults: iso.defaults)
         // Not hardcoded "txt": if the shipped default ever changes, the detector silently stops
         // filling anything in and this is the test that says so.
         let (_, complete) = pendingThenComplete(#"{"a": 1}"#)
