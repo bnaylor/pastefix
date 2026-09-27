@@ -17,8 +17,9 @@ public enum UploadCardLayout {
     /// number, so the budget cannot be checked against a panel size the app no longer uses.
     public static let minPanelHeight: CGFloat = 380
 
-    /// How much of `cardBottomMargin` the worst image-card combination must still leave clear at
-    /// `minPanelHeight` — the bottom counterpart of `minCardTopPadding`. Asserted by
+    /// How much of `cardBottomMargin` the worst combination must still leave clear at
+    /// `minPanelHeight`, text card or image card — the bottom counterpart of `minCardTopPadding`.
+    /// Asserted by
     /// `UploadCardLayoutTests`, not enforced by layout: it is the budget's promise.
     public static let minCardBottomMargin: CGFloat = 12
 
@@ -66,7 +67,12 @@ public enum UploadCardLayout {
     /// radio group, its caption, their spacings, and the 8pt gap to the banner/action row below.
     /// Independent of how many kinds were found — that part lives in the scroll region — which is
     /// the property that makes this safe to pin at all.
-    public static let findingsChromeHeight: CGFloat = 112
+    ///
+    /// **96, measured, not 112** (#93 review). The AX pass at 380pt measured this block at 79pt
+    /// (label top 160 to caption bottom 239, with two kinds and with seven — identical), so 87 with
+    /// the gap; 96 keeps 9pt of reserve. At 112 the text card's worst case (findings + banner)
+    /// ended 1pt past the panel.
+    public static let findingsChromeHeight: CGFloat = 96
     /// The over-cap refusal: a two-line `.callout` label (~16pt a line) over a two-line
     /// `.caption` (~13pt), plus the 4pt spacing between them and the 8pt gap to the action row
     /// below. Budgeted at both lines of each, like `bannerBlockHeight`, so the estimate can only
@@ -141,6 +147,36 @@ public enum UploadCardLayout {
 
     public static func bannerHeight(shown: Bool) -> CGFloat {
         shown ? bannerBlockHeight : 0
+    }
+
+    /// The text card's pinned verdict, as the budget sees it (`UploadOverlayView.textVerdict`
+    /// maps its scan state onto this).
+    public enum TextVerdict: Equatable, Sendable {
+        /// Scanning, inside the 150ms before the progress line appears: nothing drawn.
+        case quiet
+        /// "Checking for secrets…" or the all-clear line.
+        case scanRow
+        /// Findings: the pinned chrome, plus `kinds` per-kind lines in the scroll region.
+        case findings(kinds: Int)
+        /// Over the upload cap: the two-line refusal.
+        case refusedTooLarge
+    }
+
+    public static func textVerdictHeight(for verdict: TextVerdict) -> CGFloat {
+        switch verdict {
+        case .quiet: return 0
+        case .scanRow: return scanRowHeight
+        case .findings: return findingsChromeHeight
+        case .refusedTooLarge: return refusalRowHeight
+        }
+    }
+
+    /// What the text card's scroll region wants: the option rows, plus the per-kind lines and the
+    /// "Found:" caption above them when there are findings. An estimate that only has to be right
+    /// in the safe direction — everything that must not be hidden is pinned outside the region.
+    public static func textContentHeight(for verdict: TextVerdict) -> CGFloat {
+        guard case .findings(let kinds) = verdict else { return optionsHeight }
+        return optionsHeight + CGFloat(kinds + 1) * findingLineHeight + findingKindsGap
     }
 
     /// What the image card's pinned verdict renders, row for row (`UploadOverlayView.imageVerdict`).
