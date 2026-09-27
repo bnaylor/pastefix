@@ -356,10 +356,12 @@ struct UploadOverlayView: View {
         .onDisappear {
             // Cancelling the wrapper stops the *result* from landing. It does not stop the scan:
             // `SecretDetector` is a straight-line run over its rules with no suspension point, so
-            // the detached task runs to completion on its own thread whatever happens here. This
-            // is a dropped result, not a bound on the work — the same distinction #46 drew about
-            // the uninterruptible image decode, where serialising the decodes bounded how many
-            // ran at once and bounded nothing about how long one took.
+            // a scan that has started runs to completion on the lane whatever happens here, and
+            // one still waiting runs later unless a newer overlay displaces it. The bound on the
+            // work is the lane (#63): one running and one waiting, process-wide — the distinction
+            // #46 drew about the uninterruptible image decode, where serialising the decodes
+            // bounded how many ran at once and nothing about how long one took. Nothing here
+            // supersedes the scan on purpose (see `UploadTextScan.run`).
             scanTask?.cancel()
             scanProgressTask?.cancel()
             // The wrapper only. The preparation it waits on is the session's (`AppModel`), and a
@@ -1380,29 +1382,24 @@ struct UploadOverlayView: View {
             showScanProgress = true
         }
         scanTask = Task { @MainActor in
-            // Detached because the scan is synchronous and, on this path, uncapped: 0.854 s for
-            // 4 MB in the Task 1 measurement, which is a visible main-actor freeze if run inline.
-            // Only a `String` crosses.
+            // Off the main actor because the scan is synchronous and, on this path, uncapped:
+            // 0.854 s for 4 MB in the Task 1 measurement, a visible freeze if run inline. Only a
+            // `String` crosses. Through `UploadTextScan`'s process-wide lane (#63), not a detached
+            // task per overlay: the scan cannot be cancelled once started, so a dismissed
+            // overlay's scan kept running and a repeat ⌘⇧U started another beside it.
             //
-            // `scanIgnoringSizeCap`, never `scan`. `scan` refuses anything over 256 KB and
-            // returns an empty array; this overlay would draw that as "No secrets found" on a
-            // buffer nobody looked at, immediately before sending it off the machine. That false
-            // all-clear is the worst outcome this feature has, and the uncapped entry point
-            // exists for this one call site.
+            // `scanIgnoringSizeCap`, never `scan` (inside `UploadTextScan.scan`). `scan` refuses
+            // anything over 256 KB and returns an empty array; this overlay would draw that as
+            // "No secrets found" on a buffer nobody looked at, immediately before sending it off
+            // the machine. That false all-clear is the worst outcome this feature has.
             //
             // There is no cancellation point inside it, so the indeterminate spinner above is the
             // whole progress story: nothing here can report a fraction or stop early.
-            let (matches, redactedBytes) = await Task.detached(priority: .userInitiated) {
-                let matches = SecretDetector.scanIgnoringSizeCap(text)
-                // Redacted here rather than in the header: the ranges index `text` and nothing
-                // else, this thread already holds both, and the result is one `Int` — so the
-                // header can state the true upload size without either re-scanning or keeping a
-                // second copy of a large buffer alive.
-                let redactedBytes = matches.isEmpty
-                    ? nil
-                    : SecretRedactor.redact(text, matches: matches).utf8.count
-                return (matches, redactedBytes)
-            }.value
+            //
+            // nil: a newer overlay's scan displaced this one while it waited. Only a newer
+            // overlay does that, and this one is then already gone, so there is nothing to draw.
+            guard let result = await UploadTextScan.run(text) else { return }
+            let (matches, redactedBytes) = (result.matches, result.redactedBytes)
             guard !Task.isCancelled else { return }
             scanProgressTask?.cancel()
             showScanProgress = false
