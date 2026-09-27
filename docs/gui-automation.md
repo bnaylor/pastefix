@@ -228,7 +228,10 @@ before anything is touched. `PFX_HISTORY_DIR` points it at a copy for testing.
   or closing any overlay is enough. After that, typed text, Return included,
   lands in the buffer under the overlay. A human pressing the hotkey does not
   see this (#76, closed after a hand check), so it is an artefact of the pass,
-  not a bug to file. It has been mistaken for one twice. Before trusting any
+  not a bug to file. It has been mistaken for one twice. The known exception is
+  #73, which is real and reproduces on `main` without typing into any field:
+  closing the history overlay with ⌘Y leaves ⌘Y dead until another overlay
+  opens. It is a key-equivalent failure, not a focus one. Before trusting any
   keystroke sent to an overlay, read the field's `AXTextField value` back from
   the `ax` dump; to open a row or apply a transform, click the row instead of
   pressing Return.
