@@ -23,13 +23,20 @@ struct ImageUploadCardTests {
                 .superseded]
     }
 
-    @Test("Return never uploads an image, in any state")
-    func noStateDefaultsToUpload() throws {
+    @Test("Return uploads only a ready image with no text detected; nothing else defaults to Upload")
+    func returnUploadsOnlyReadyWithoutText() throws {
+        // The owner's call (2026-09-27): a best-effort helper where Return should work, and
+        // uploading a secret-bearing image is the user's responsibility when detection cannot see
+        // it. Text detected keeps Cancel on Return — that is the case where secrets are likely and
+        // the detector that decides it does work.
         for state in try Self.allStates() {
-            // `DefaultAction` has no upload case at all; this pins which of the two remain.
-            let expected: ImageUploadCard.DefaultAction = state.hasText ? .cancel : .none
-            #expect(ImageUploadCard.defaultAction(for: state) == expected)
-            #expect(!ImageUploadCard.keyHint(for: state).contains("Upload"))
+            let expected: ImageUploadCard.DefaultAction
+            switch state {
+            case .ready(_, let hasText): expected = hasText ? .cancel : .upload
+            default: expected = .none
+            }
+            #expect(ImageUploadCard.defaultAction(for: state) == expected, "\(state)")
+            #expect(ImageUploadCard.keyHint(for: state).contains("↵ Upload") == (expected == .upload))
         }
     }
 
@@ -40,11 +47,19 @@ struct ImageUploadCardTests {
         #expect(ImageUploadCard.keyHint(for: state) == "↵ Cancel   esc Close")
     }
 
-    @Test("with nothing detected there is no default action at all")
-    func noTextNoDefault() throws {
+    @Test("with nothing detected, Return uploads and the footer says so")
+    func noTextReturnUploads() throws {
         let state = ImageUploadCard.State.ready(try Self.sanitized(), hasText: false)
-        #expect(ImageUploadCard.defaultAction(for: state) == .none)
-        #expect(ImageUploadCard.keyHint(for: state) == "esc Close")
+        #expect(ImageUploadCard.defaultAction(for: state) == .upload)
+        #expect(ImageUploadCard.keyHint(for: state) == "↵ Upload   esc Close")
+    }
+
+    @Test("states that cannot upload never make Upload the default")
+    func noUploadDefaultWithoutBytes() {
+        for state: ImageUploadCard.State in [.preparing, .refused(.unusable), .superseded] {
+            #expect(ImageUploadCard.defaultAction(for: state) == .none)
+            #expect(!ImageUploadCard.canUpload(state))
+        }
     }
 
     @Test("only a ready state can upload, and only it yields bytes")

@@ -11,7 +11,11 @@ import PastefixCore
 /// - **"Not scanned" is never "clean"** (Invariant 13). The not-checked verdict is shown for every
 ///   image, and nothing here can say "no text found": `hasText == false` means *not detected*,
 ///   and an 11 px line is measured to produce no regions at all.
-/// - **Return never uploads an image.** `defaultAction(for:)` has no case that names Upload.
+/// - **Return uploads only when nothing looked like text.** The owner's decision (2026-09-27):
+///   this is a best-effort helper, Return should work, and a secret in an image that detection
+///   cannot see is the user's responsibility. With text detected, Return cancels instead — that is
+///   the case where secrets are likely, and the check that decides it works. The not-checked
+///   verdict is shown either way, so the fast path never claims the image was checked.
 public enum ImageUploadCard {
     /// The image half of the overlay's state. Shares nothing with the text card's `ScanState`.
     public enum State: Equatable, Sendable {
@@ -47,15 +51,18 @@ public enum ImageUploadCard {
         }
     }
 
-    /// Which button Return presses. There is no `.upload`: an unscanned image never gets the
-    /// affordance the text path earns by having scanned.
+    /// Which button Return presses.
     public enum DefaultAction: Equatable, Sendable {
         case none
         case cancel
+        case upload
     }
 
+    /// Upload only for a ready image with no text detected; Cancel when text was detected; nothing
+    /// in a state that cannot upload (preparing, refused, superseded).
     public static func defaultAction(for state: State) -> DefaultAction {
-        state.hasText ? .cancel : .none
+        guard case .ready(_, let hasText) = state else { return .none }
+        return hasText ? .cancel : .upload
     }
 
     public static func canUpload(_ state: State) -> Bool {
@@ -113,10 +120,11 @@ public enum ImageUploadCard {
     public static let supersededMessage =
         "The session's image changed before this one was prepared. Press ⌘⇧U again to upload the new one."
 
-    /// The footer hint while composing or after a failure. Upload is never on Return.
+    /// The footer hint while composing or after a failure.
     public static func keyHint(for state: State) -> String {
         switch defaultAction(for: state) {
         case .cancel: return "↵ Cancel   esc Close"
+        case .upload: return "↵ Upload   esc Close"
         case .none: return "esc Close"
         }
     }
