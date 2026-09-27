@@ -266,8 +266,9 @@ final class PasteboardMonitor {
         var pendingWidth: Int?
         var pendingHeight: Int?
         // A Finder file copy's only image is a 1024×1024 rendering of the file's *icon*, not an
-        // image the user copied; captured, it would reopen as an image session and Save would
-        // write the icon over the file reference. The session path asks the same question through
+        // image the user copied; captured, it would reopen from history as a session showing the
+        // icon. (An unedited Save over it would not write the icon back: since #71 the file
+        // reference alone makes that Save a no-op.) The session path asks the same question through
         // `ClipboardImageRead`, and both must ask the *same function*: two readers of one
         // pasteboard disagreeing about what an image is has bitten this rule once already.
         // A Photos.app copy carries a file-url too, but offers the photo itself — so it is
