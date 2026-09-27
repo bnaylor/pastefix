@@ -86,7 +86,12 @@ public enum ImageBytes {
     /// fails. Callers are responsible for the pixel gate (`maxConvertiblePixels`) and for deciding
     /// which thread pays for this.
     public static func convertedToPNG(_ data: Data) -> Data? {
-        NSBitmapImageRep(data: data)?.representation(using: .png, properties: [:])
+        // Decode is unchanged — `NSBitmapImageRep(data:)` applies the orientation tag, which
+        // `ConversionStripsLocationTests.conversionBakesOrientation` pins. Only the *encode* moved:
+        // `NSBitmapImageRep.representation(using: .png)` leaks the encoder's buffers on every call
+        // (measured; see `PNGEncoder`), and this runs on every TIFF capture and summon.
+        guard let image = NSBitmapImageRep(data: data)?.cgImage else { return nil }
+        return PNGEncoder.encode(image)
     }
 
     /// PNG bytes for arbitrary pasteboard image bytes.
