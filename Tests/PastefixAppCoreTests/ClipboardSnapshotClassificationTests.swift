@@ -21,7 +21,8 @@ struct ClipboardSnapshotClassificationTests {
     /// that stops testing this if it ever stops being true).
     private let snapshot = ClipboardSnapshot(plainText: "text", richRTFD: Data([0x7B]),
                                              imagePNG: Data([0x89, 0x50]),
-                                             refusedImagePixels: 30_000_000, changeCount: 7)
+                                             refusedImagePixels: 30_000_000,
+                                             fileReferenceTypes: ["public.file-url"], changeCount: 7)
 
     private var mirroredStoredProperties: Set<String> {
         Set(Mirror(reflecting: snapshot).children.compactMap(\.label))
@@ -54,13 +55,13 @@ struct ClipboardSnapshotClassificationTests {
         #expect(stale.isEmpty, "classified but no longer stored: \(stale.sorted())")
     }
 
-    @Test("Mirror sees exactly today's five properties")
+    @Test("Mirror sees exactly today's six properties")
     func todaysProperties() {
         // Pinned as a fact about the reflection, not just about the dictionary: if `Mirror` ever
         // stops reporting a stored property of this struct (a macro, a property wrapper, a move to
         // a class), the two tests above go quietly weaker and this one says so instead.
         #expect(mirroredStoredProperties == ["plainText", "richRTFD", "imagePNG",
-                                            "refusedImagePixels", "changeCount"])
+                                            "refusedImagePixels", "fileReferenceTypes", "changeCount"])
     }
 
     @Test("the four buckets are the four the predicate is written against")
@@ -192,7 +193,8 @@ struct ClipboardSnapshotLossIfPresentTests {
     /// payload that writes something (so no `.wholeClipboard`). Whatever comes back is the bucket
     /// alone.
     private let fixture = ClipboardSnapshot(plainText: nil, richRTFD: nil, imagePNG: nil,
-                                            refusedImagePixels: 30_000_000, changeCount: 7)
+                                            refusedImagePixels: 30_000_000,
+                                            fileReferenceTypes: ["public.file-url"], changeCount: 7)
 
     @Test("the fixture populates every .lossIfPresent property")
     func fixtureIsNotVacuous() {

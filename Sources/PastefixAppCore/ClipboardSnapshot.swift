@@ -37,6 +37,15 @@ public struct ClipboardSnapshot: Sendable {
     /// enough to hit it). It is a number rather than a flag so the message can quote the size in
     /// the unit the limit is expressed in.
     public let refusedImagePixels: Int?
+    /// The file-reference types the pasteboard declared (`public.file-url`, its legacy flavours),
+    /// or nil when it declared none — a Finder file copy, or a Photos.app copy (#71).
+    ///
+    /// Pastefix cannot write a file reference back, so an **unedited** Save over one would replace
+    /// the user's copied file with its name as text. Classified `.lossIfPresent`: the generic
+    /// `unreproduced(by:)` then makes that Save a no-op — the owner's decision, and what macOS
+    /// itself does. Editing the text is deliberate and still writes. Declared types only, never
+    /// the URL: nothing here reads the file or resolves the reference (Invariant 13's pointer rule).
+    public let fileReferenceTypes: [String]?
     /// `NSPasteboard.changeCount` at the instant this was captured, or nil when the snapshot did
     /// not come from a pasteboard at all (a history item re-opened into the panel, a test).
     ///
@@ -48,19 +57,21 @@ public struct ClipboardSnapshot: Sendable {
     public let changeCount: Int?
 
     public init(plainText: String?, richRTFD: Data?, imagePNG: Data? = nil,
-                refusedImagePixels: Int? = nil, changeCount: Int? = nil) {
+                refusedImagePixels: Int? = nil, fileReferenceTypes: [String]? = nil, changeCount: Int? = nil) {
         self.plainText = plainText
         self.richRTFD = richRTFD
         self.imagePNG = imagePNG
         self.refusedImagePixels = refusedImagePixels
+        self.fileReferenceTypes = fileReferenceTypes
         self.changeCount = changeCount
     }
 
     public init(plainText: String?, rich: NSAttributedString?, imagePNG: Data? = nil,
-                refusedImagePixels: Int? = nil, changeCount: Int? = nil) {
+                refusedImagePixels: Int? = nil, fileReferenceTypes: [String]? = nil, changeCount: Int? = nil) {
         self.plainText = plainText
         self.imagePNG = imagePNG
         self.refusedImagePixels = refusedImagePixels
+        self.fileReferenceTypes = fileReferenceTypes
         self.changeCount = changeCount
         self.richRTFD = rich.flatMap { attributed in
             try? attributed.data(
@@ -160,6 +171,7 @@ public struct ClipboardSnapshot: Sendable {
         "richRTFD": .droppedByPolicy,
         "imagePNG": .reproducedByPayload,
         "refusedImagePixels": .lossIfPresent,
+        "fileReferenceTypes": .lossIfPresent,
         "changeCount": .metadata,
     ]
 

@@ -64,8 +64,15 @@ enum ClipboardBridge {
         )
         // Stored with the snapshot: it is what later tells a summon whether the buffer it is
         // holding is older than the clipboard.
+        // Declared types only — a fact about what the clipboard holds, never a read of the URL or
+        // the file (Invariant 13's pointer rule). Nil when none, so the snapshot's `.lossIfPresent`
+        // classification makes an unedited Save over a copied file a no-op (#71).
+        let declared = Set(pasteboard.types?.map(\.rawValue) ?? [])
+        let fileReferences = declared.intersection(ClipboardImageRead.fileURLTypes).sorted()
         return ClipboardSnapshot(plainText: plain, rich: rich, imagePNG: image,
-                                 refusedImagePixels: refusedPixels, changeCount: changeCount)
+                                 refusedImagePixels: refusedPixels,
+                                 fileReferenceTypes: fileReferences.isEmpty ? nil : fileReferences,
+                                 changeCount: changeCount)
     }
 
     static func writePlain(_ text: String, to pasteboard: NSPasteboard) {
