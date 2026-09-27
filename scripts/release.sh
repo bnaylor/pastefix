@@ -139,6 +139,13 @@ codesign -d --entitlements - "$APP" 2>/dev/null | grep -q "com.apple.security.ap
   && die "app-sandbox entitlement present — Critical Invariant 9 violated"
 codesign -d --entitlements - "$APP" 2>/dev/null | grep -q "com.apple.security.cs.allow-jit" \
   || die "allow-jit entitlement missing — JS transforms would break under the hardened runtime"
+# A hosted test run (#68) copies libXCTestBundleInject.dylib into the host app's Frameworks.
+# scripts/test-app.sh uses private derived data so a release can never pick that app up; this
+# makes it mechanical rather than a habit.
+if find "$APP/Contents" \( -name 'libXCTest*' -o -name 'XCT*.framework' -o -name 'XCUI*.framework' \
+    -o -name 'XCUnit.framework' -o -name 'Testing.framework' -o -name '*.xctest' \) | grep -q .; then
+  die "the archived app contains XCTest artefacts — built from a test host's derived data?"
+fi
 codesign --verify --deep --strict "$APP" || die "code signature invalid"
 
 # --- notarize + staple the app -------------------------------------------------------------

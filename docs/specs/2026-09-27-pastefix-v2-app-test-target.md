@@ -1,6 +1,6 @@
 ---
 type: spec
-status: draft
+status: implemented
 id: 2026-09-27-pastefix-v2-app-test-target
 title: Pastefix v2 — A test target for the app (Plan 18, #68)
 description: A hosted unit-test target for Pastefix.app, so AppModel and ClipboardBridge can be tested, with a test-mode guard that stops a test run from touching the user's hotkeys, clipboard, history or settings. Backfills only tests that map to defects that actually shipped, each mutation-checked against the historical fix it pins.
@@ -45,6 +45,32 @@ unguarded, the app would, on the user's own machine:
 4. read and write the **real settings domain**, since the Debug build shares the bundle ID;
 5. and through `ClipboardBridge`'s `.general` defaults, **write the user's clipboard** from any
    test of Save or copy-back.
+
+## Amended during implementation (all verified)
+
+- **The guard decides at `main`, not in the delegate.** The first version put it in `applicationDidFinishLaunching`, and the `work` session's review showed that was too late. Before it runs, the delegate's property initialisers have read the real settings and built Sparkle, the MenuBarExtra is installed, and the Settings scene has touched the lazy `HistoryStore`. On top of that, `applicationWillTerminate`'s flush would construct `HistoryStore` on the real directory and run its orphan-blob sweep. Now `PastefixEntry` picks `PastefixApp` or an inert `TestHostApp`, and `AppDelegate` is never created in a test host. A hosted test asserts that.
+- **Detection accepts any of the four XCTest variables.** Measured on Xcode 26, in hosted runs on two machines: `XCTestSessionIdentifier`, `XCTestBundlePath` and `XCTestBundleInjectPath` are set. `XCTestConfigurationFilePath` is **not**, and the first version keyed on it alone, so it failed open. The decision is logged at `.notice` on every launch.
+- **Verified on a second machine with the installed release running:** the general `changeCount`, the history directory and its index hash, the prefs plist mtime, and `~/.config/pastefix/scripts` were all identical before and after.
+- The app target's `-showBuildSettings` is byte-identical before and after (Debug 588, Release 585), and the entitlements are untouched.
+- `release.sh` refuses an app containing XCTest artefacts, because the test action copies them into the host. It's checked against a real test-host app (refused) and a plain build (allowed).
+
+## Backfill: what's pinned, and how
+
+Each test is pinned by **temporarily reverting the historical fix it names**, and the test fails.
+
+| Defect | Test | Reverted fix → result |
+|---|---|---|
+| ⌘⇧U scanned a stale buffer (Plan 13, reached the user) | `UploadSnapshotTests` | "an open session always stands" → fails |
+| Pastefix's own URL write counted as a user copy | `UploadSnapshotTests` | "our write counts" → fails |
+| Zero-byte history blob became `Data()` | `SaveDefectTests` | unvalidated blob → fails |
+| Permissive Save guard destroyed a refused image | `SaveDefectTests` | "unedited && payload empty" → fails |
+| Markdown Save bypassed `SavePayload` | `SaveDefectTests` | raw origin image written → fails |
+| `ClipboardBridge` image rules rested on a one-off probe | `ClipboardBridgeImageTests` | PNG re-encoded / TIFF preferred / refusal size lost / file-copy rule off → each fails |
+| A hotkey shipped with no recorder | *structural*: `GlobalHotkey` drives recorders, registration (exhaustive `switch`) and validation | a fourth case → build fails: "switch must be exhaustive" |
+
+**Covered at package level already, so not duplicated:** the sticky display form (`PasteDocumentImageTests`) and the focus guard's predicate (`isEmptyRefusedImageSession`).
+
+**Not covered, stated:** that `PanelView` *calls* that predicate, and the upload overlay's header byte count. Both are view code, which is out of scope. The hotkey recorder has no test because a test would touch the `KeyboardShortcuts.Name` statics, which write defaults into the real settings domain inside a test host.
 
 ## Requirements
 
