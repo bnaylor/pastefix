@@ -140,7 +140,11 @@ modifiers held. If they stick, tap ⌃, ⌥ and ⌘ once each, or run `hold 0`
 **Pasteboard fixtures:** `pbcopy < file` for anything large;
 `~/.local/bin/pfx-ui/pb text "…" | concealed "…" | concealed-late "…" |
 legacy "…" | tiff W H | png W H | rich "…" | types | count` for the special
-cases (concealed/transient markers, real TIFF/PNG images, RTF + string). Each
+cases (concealed/transient markers, real TIFF/PNG images, RTF + string).
+`tiff W H` is exactly W×H pixels, uncompressed, on any display, so it suits
+pixel-count limits. `png W H` is a smooth gradient that compresses to almost
+nothing (about 0.12 MB at 30 MP), so it can never exceed a byte cap: for that,
+put a random-noise PNG on the pasteboard as `«class PNGf»` data. Each
 of those destructive subcommands refuses (exit 2) unless a fresh save from
 `pb begin` exists at `~/.local/state/pfx-ui/clipboard.json` (or
 `$PFX_PB_SAVE`) — see ground rule 2. Set `PFX_PB_FORCE=1` only when you
@@ -221,9 +225,24 @@ before anything is touched. `PFX_HISTORY_DIR` points it at a copy for testing.
   panel (#52). Capture, confirm, then type. Choose the smallest fixture that
   still crosses the threshold you are testing (100 KB, not 2 MB, to hit a
   64 KB cap).
-- **Palette focus.** After a stray click the palette can be open with focus in
-  the editor; typed text then lands in the buffer. Open the palette with ⌘K
-  from a clean panel and check the query field in a capture before Return.
+- **Overlay field focus is not reliable under System Events.** Under
+  automation Pastefix never becomes the active app (the previous app stays
+  frontmost), and in that state the ⌘K and ⌘Y search fields take focus only
+  until the editor has been focused once in the process: clicking the editor
+  or closing any overlay is enough. After that, typed text, Return included,
+  lands in the buffer under the overlay. A human pressing the hotkey does not
+  see this (#76, closed after a hand check), so it is an artefact of the pass,
+  not a bug to file. It has been mistaken for one twice. The known exception is
+  #73, which is real and reproduces on `main` without typing into any field:
+  closing the history overlay with ⌘Y leaves ⌘Y dead until another overlay
+  opens. It is a key-equivalent failure, not a focus one. Before trusting any
+  keystroke sent to an overlay, read the field's `AXTextField value` back from
+  the `ax` dump; to open a row or apply a transform, click the row instead of
+  pressing Return.
+- **The toolbar shifts while the palette is open.** With ⌘K open the toolbar
+  buttons sit about 20 pt from where they were, so a click on a coordinate
+  computed before the palette opened can land on a palette row and apply a
+  transform. Take coordinates from a fresh `ax` dump, never from an earlier one.
 - **Stale incremental builds after protocol changes** can SIGSEGV tests or
   mis-dispatch in the app: build clean when a protocol gained requirements.
 - **Fixtures land in the real history.** The Debug app shares the user's history store, so every `pb text` and every summoned fixture is recorded and persists after quit. The Zipline measurement pass left a secret-shaped fixture and two others behind; they were found by the `idx.py` listing the next day. Purge at the end of every pass with `--after "$PASS_START"`, with the app quit.
