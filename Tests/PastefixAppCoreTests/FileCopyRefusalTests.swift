@@ -108,19 +108,20 @@ struct ConversionStripsLocationTests {
         #expect((after["{TIFF}"] as? [String: Any])?["Make"] == nil)
     }
 
-    @Test("a GPS-bearing PNG keeps its GPS — the half that leaks until #20")
+    @Test("a GPS-bearing PNG keeps its GPS through the session — verbatim by design")
     func verbatimPNGKeepsGPS() throws {
         // The other half, stated so the suite does not read as "images are stripped", which is
-        // false: a PNG is kept verbatim (validated by header, never re-encoded), so any source
-        // that writes a PNG carrying GPS puts that GPS in the session — and, once #48 ships, in
-        // an upload. #20 fixes it; when it does, this known issue flips to an unexpected pass and
-        // should become a plain assertion.
+        // false: a PNG is kept verbatim (validated by header, never re-encoded), so Save writes
+        // back exactly what was copied — and a source that writes a geotagged PNG puts that GPS
+        // in the session. That is by design, not a defect: stripping belongs on the way *out*,
+        // not on Save (#20, applied by image upload #48). Pinned as a known issue rather than a
+        // plain assertion only until #20 lands and states the two halves as plain assertions.
         let png = try #require(Self.geotagged(as: "public.png"))
         #expect(Self.properties(png)?["{GPS}"] != nil)   // fixture sanity
         guard case .png(let out) = ImageBytes.normalise(png) else {
             Issue.record("a small PNG must be accepted"); return
         }
-        withKnownIssue("#20: the verbatim PNG path carries GPS through untouched") {
+        withKnownIssue("verbatim by design; stripping happens on the way out (#20)") {
             #expect(Self.properties(out)?["{GPS}"] == nil)
         }
     }

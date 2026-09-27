@@ -98,6 +98,11 @@ public enum ClipboardImageRead {
     ///    a future rename of Finder's markers cannot reopen the icon bug.
     /// 3. Otherwise → not a file copy (including every pasteboard with no file-url at all).
     ///
+    /// `public.jpeg` is an eligibility **signal**, never a **source**: no reader takes bytes from it.
+    /// A Photos copy is read through its TIFF, whose conversion strips GPS
+    /// (`ConversionStripsLocationTests`). Reading the JPEG verbatim would carry the photo's
+    /// location into the session, and from there into an upload.
+    ///
     /// Eligibility is "a real image format is **offered**", not "one we can **read**". Whether
     /// the image can be read is a separate question, already answered by `imagePNG`'s rule that
     /// no readable type means no image — so a HEIC-only copy is eligible here and still yields
