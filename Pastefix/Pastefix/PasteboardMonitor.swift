@@ -33,9 +33,8 @@ private let historyLog = Logger(subsystem: "net.scromp.Pastefix", category: "his
 ///
 /// A deferred conversion is the one exception to "tick holds the main thread throughout":
 /// converting a TIFF — or bytes mislabelled `public.png` (#97) — to PNG happens off the main
-/// actor (#32), so real time — and real activations — can
-/// pass before the capture lands. That path therefore re-checks the change count and re-runs the
-/// filters afterwards (see `convertPending`), and keeps its attribution from the sample taken
+/// actor (#32), so real time — and real activations — can pass before the capture lands. That
+/// path therefore re-checks the change count and re-runs the filters afterwards (see `convertPending`), and keeps its attribution from the sample taken
 /// before the conversion, because by the time the PNG exists the newest activation may be an app
 /// the user switched to after copying. At most one conversion runs at a time process-wide
 /// (`TIFFConversionSlot` is shared, so a monitor rebuilt mid-conversion does not add a second)
