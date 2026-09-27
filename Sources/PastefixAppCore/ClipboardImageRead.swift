@@ -9,9 +9,6 @@ public enum ClipboardImageRead {
     /// neither AppKit nor a pasteboard to be exercised.
     public static let pngType = "public.png"
     public static let tiffType = "public.tiff"
-    /// The raw value of `NSPasteboard.PasteboardType.fileURL`, spelled as a string for the same
-    /// reason `pngType`/`tiffType` are: this decision needs neither AppKit nor a pasteboard.
-    public static let fileURLType = "public.file-url"
     /// What `available` is asked about, and the only answers it may give.
     public static let imageTypes: Set<String> = [pngType, tiffType]
 
