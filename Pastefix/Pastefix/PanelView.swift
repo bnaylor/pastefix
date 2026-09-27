@@ -149,6 +149,12 @@ struct PanelView: View {
                             // notice (currently only the refused-image message) reports that
                             // nothing was lost, and the red-and-white treatment below said the
                             // opposite — see `AppModel.noticeMessage`.
+                            //
+                            // This `else if` is a priority for one banner slot, not an assumption
+                            // that only one of the two can be set: both can be non-nil at once
+                            // (see `AppModel.noticeMessage`), and a transient error outranks a
+                            // standing notice here on purpose. The notice reappears on its own
+                            // once the error clears — nothing here discards it.
                             noticeBanner(notice)
                         }
                     }

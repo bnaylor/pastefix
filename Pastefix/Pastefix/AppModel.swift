@@ -13,6 +13,20 @@ final class AppModel: ObservableObject {
     /// reports a refusal in which nothing was lost (the clipboard is untouched). Conflating them
     /// (as `noteRefusedImage` used to, through `errorMessage`) taught a user that an intact
     /// clipboard looks exactly like a broken one — same red strip, same warning triangle.
+    ///
+    /// The two channels are independent, deliberately — not lockstep. `noticeMessage` is a
+    /// standing fact about the session's *origin* ("that image is too large to open, it's still
+    /// on your clipboard") and stays true for the session's whole life; `errorMessage` reports a
+    /// transient failure (an apply, a Markdown render) that can come and go many times within
+    /// that same session. Only the four session boundaries — `summon`, `refresh` (via
+    /// `setWorking`), `load`, `endSession` — clear both together, because only there does the
+    /// standing fact itself change. Elsewhere (`237`-`238`, `315`, `328`) a failure sets
+    /// `errorMessage` without touching `noticeMessage`, so the two *can* both be non-nil at once
+    /// mid-session: a still-true notice must survive an unrelated transient error, not be wiped
+    /// out by it. `PanelView` shows only one banner at a time and picks the error when both are
+    /// set — a priority for the single slot, not evidence that both can't happen — so nothing is
+    /// lost: the notice reappears as soon as the error clears (a later successful transform sets
+    /// `errorMessage = nil`).
     @Published var noticeMessage: String?
     @Published private(set) var isApplying = false
     @Published private(set) var transformers: [any Transformer] = []
