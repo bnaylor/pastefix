@@ -33,10 +33,14 @@ enum ClipboardBridge {
         // Set by the decode closure below when the clipboard *had* an image we would not convert.
         var refusedPixels: Int?
         let image = ClipboardImageRead.imagePNG(
-            // A Finder file copy puts `public.file-url` on the pasteboard; see
-            // `ClipboardImageRead` for why that alone rules out an image regardless of what
-            // image types are also offered.
-            hasFileURL: { pasteboard.availableType(from: [.fileURL]) != nil },
+            // A Finder file copy's only image is the file's icon; a Photos copy carries a
+            // file-url too but offers the photo itself. `refusesAsFileCopy(declaredTypes:)` tells
+            // them apart from the declared types, and `PasteboardMonitor.read` asks the same
+            // function — two readers of one pasteboard must not disagree about what an image is.
+            refusesAsFileCopy: {
+                ClipboardImageRead.refusesAsFileCopy(
+                    declaredTypes: Set(pasteboard.types?.map(\.rawValue) ?? []))
+            },
             // PNG first, and the order is the point: `availableType(from:)` answers with the
             // earliest match, so a pasteboard offering both (most screenshot sources do) is read
             // as the PNG it already holds instead of paying a TIFF decode to arrive at one.

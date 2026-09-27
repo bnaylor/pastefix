@@ -12,8 +12,7 @@ public enum ClipboardImageRead {
     /// What `available` is asked about, and the only answers it may give.
     public static let imageTypes: Set<String> = [pngType, tiffType]
 
-    /// nil for: `public.file-url` present (a Finder file copy, not an image the user copied — see
-    /// below); no image type offered; a type offered whose data is nil (advertised but never
+    /// nil for: a file copy (`refusesAsFileCopy`, not an image the user copied); no image type offered; a type offered whose data is nil (advertised but never
     /// materialised by its provider); empty bytes; or bytes `decodePNG` rejects. Never an empty
     /// `Data` — that would be written back over the user's clipboard as a zero-byte image.
     ///
@@ -33,15 +32,9 @@ public enum ClipboardImageRead {
     /// in another.
     ///
     /// - Parameters:
-    ///   - hasFileURL: whether the pasteboard carries `public.file-url`. Checked first and
-    ///     unconditionally: a Finder file copy puts a `public.tiff` on the pasteboard that is a
-    ///     1024×1024 rendering of the file's *icon*, and an icon is not an image the user copied.
-    ///     Without this rule a summon-then-save round trip silently replaces the file reference
-    ///     with its icon as a PNG — text-wins only hid this by accident, because a file copy
-    ///     happens to also carry the filename as text, and that protection evaporates for any
-    ///     source that writes a TIFF with no text. `public.file-url` is a fact about the *source*
-    ///     (Finder), not about the image types on offer, so it is its own closure rather than a
-    ///     third member of `imageTypes`.
+    ///   - refusesAsFileCopy: whether the pasteboard is a *file copy* — see
+    ///     `refusesAsFileCopy(declaredTypes:)`, which both adapters call with the pasteboard's
+    ///     declared types. Checked first, before any bytes are read.
     ///   - available: which of `imageTypes` the pasteboard offers, or nil for none. It is handed
     ///     the whole set and answers with one member; preference between the two, when both are
     ///     offered, belongs to the pasteboard adapter (`NSPasteboard.availableType(from:)` takes
@@ -58,7 +51,7 @@ public enum ClipboardImageRead {
     /// is not a better answer than "this clipboard has no image we can use" — and the
     /// corrupt-PNG-beside-good-TIFF case above is the same rule costing something real.
     public static func imagePNG(
-        hasFileURL: () -> Bool,
+        refusesAsFileCopy: () -> Bool,
         available: (Set<String>) -> String?,
         data: (String) -> Data?,
         decodePNG: (Data) -> Data?
@@ -67,7 +60,7 @@ public enum ClipboardImageRead {
         // outright rather than merely low-priority against the two image types below. Scope
         // note: this only decides "no image" for the session; the pre-existing loss of
         // `file-url`/`filenames`/`noderef` on Save is #71, not this rule's job.
-        guard !hasFileURL() else { return nil }
+        guard !refusesAsFileCopy() else { return nil }
         // The "only .png and .tiff count" rule is enforced here rather than left to the adapter,
         // so it holds for every caller and is testable in one place.
         guard let offered = available(imageTypes), imageTypes.contains(offered) else { return nil }
@@ -75,5 +68,54 @@ public enum ClipboardImageRead {
         // does with zero bytes, and it is the case that must never survive as `Data()`.
         guard let bytes = data(offered), !bytes.isEmpty else { return nil }
         return decodePNG(bytes)
+    }
+
+    // MARK: File copies (#78)
+
+    /// Every spelling of "this pasteboard carries a file reference": the modern UTI and the two
+    /// legacy flavours some sources write instead of (or beside) it.
+    public static let fileURLTypes: Set<String> = [
+        "public.file-url", "CorePasteboardFlavorType 0x6675726C", "NSFilenamesPboardType",
+    ]
+    /// Finder's own markers. Only Finder was measured writing them.
+    public static let finderMarkerTypes: Set<String> = ["com.apple.icns", "com.apple.finder.noderef"]
+    /// Image formats a *photo* source offers and Finder never does. Finder writes the same 16
+    /// types for every file it copies — a JPEG, a PNG and a .txt alike — and its only image is a
+    /// `public.tiff` rendering of the file's icon; it never offers the file's own format.
+    public static let realImageFormats: Set<String> = ["public.png", "public.jpeg", "public.heic"]
+
+    /// Whether a pasteboard is a *file copy* — something whose image representation is an icon,
+    /// not a picture the user copied — decided from its declared types alone.
+    ///
+    /// `public.file-url` on its own does not decide it. Finder's copy and a Photos.app copy both
+    /// carry one; only Finder's image is an icon (1024×1024, identical for every file). Photos
+    /// offers the photograph itself as `public.jpeg` beside its file-url. So (#78, both type lists
+    /// measured and used as test fixtures):
+    ///
+    /// 1. Finder's markers (`com.apple.icns`, `com.apple.finder.noderef`) → refused. Positive
+    ///    refusal, so a false match fails safe: no image session rather than an icon in one.
+    /// 2. A file-url with no real image format offered → refused. This arm stands on its own, so
+    ///    a future rename of Finder's markers cannot reopen the icon bug.
+    /// 3. Otherwise → not a file copy (including every pasteboard with no file-url at all).
+    ///
+    /// `public.jpeg` is an eligibility **signal**, never a **source**: no reader takes bytes from it.
+    /// A Photos copy is read through its TIFF, whose conversion strips GPS
+    /// (`ConversionStripsLocationTests`). Reading the JPEG verbatim would carry the photo's
+    /// location into the session, and from there into an upload.
+    ///
+    /// Eligibility is "a real image format is **offered**", not "one we can **read**". Whether
+    /// the image can be read is a separate question, already answered by `imagePNG`'s rule that
+    /// no readable type means no image — so a HEIC-only copy is eligible here and still yields
+    /// nothing. Do not narrow `realImageFormats` to what is readable: that would fold two
+    /// questions into one and turn "cannot read it" into "it is a file copy".
+    ///
+    /// **Known residual, unmeasured:** a third-party file manager that writes a file-url plus a
+    /// **PNG of the icon** and neither Finder marker would be accepted by arm 3, and an unedited
+    /// ⌘S would then write the icon over the file copy. No such source has been observed (none
+    /// was installed to measure); recorded so it is recognised if it is.
+    public static func refusesAsFileCopy(declaredTypes types: Set<String>) -> Bool {
+        if !types.isDisjoint(with: finderMarkerTypes) { return true }
+        if types.isDisjoint(with: fileURLTypes) { return false }
+        return types.isDisjoint(with: realImageFormats)
     }
 }

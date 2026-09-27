@@ -265,15 +265,15 @@ final class PasteboardMonitor {
         var pendingTIFF: Data?
         var pendingWidth: Int?
         var pendingHeight: Int?
-        // A Finder file copy puts `public.file-url` on the pasteboard alongside a `public.tiff`
-        // that is a 1024×1024 rendering of the file's *icon*, not an image the user copied.
-        // `ClipboardImageRead` (the session path) already refuses on this rule; this capture path
-        // reads the same pasteboard independently and needs its own copy of it, or the icon gets
-        // captured into history as `imagePNG`, later reopened as an image session, and Save
-        // writes it back over the file reference it displaced. Text/rich capture above is
-        // unaffected: the filename a file copy also carries as a string is correct, wanted
-        // capture — only the two image branches below are skipped.
-        if pb.availableType(from: [.fileURL]) == nil {
+        // A Finder file copy's only image is a 1024×1024 rendering of the file's *icon*, not an
+        // image the user copied; captured, it would reopen as an image session and Save would
+        // write the icon over the file reference. The session path asks the same question through
+        // `ClipboardImageRead`, and both must ask the *same function*: two readers of one
+        // pasteboard disagreeing about what an image is has bitten this rule once already.
+        // A Photos.app copy carries a file-url too, but offers the photo itself — so it is
+        // captured (via its TIFF, whose conversion strips GPS; see `ConversionStripsLocationTests`).
+        // Text/rich capture above is unaffected either way.
+        if !ClipboardImageRead.refusesAsFileCopy(declaredTypes: Set(pb.types?.map(\.rawValue) ?? [])) {
             if let png = pb.data(forType: .png) {
                 // Size before decode: a header-only read gives pixel dimensions without decoding
                 // an image the store is about to reject anyway.
