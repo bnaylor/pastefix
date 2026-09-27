@@ -113,19 +113,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.panel?.hide()
         }
 
-        // Global summon hotkey (default ⌘⇧C, rebindable in Settings).
-        KeyboardShortcuts.onKeyUp(for: .summonPastefix) { [weak self] in
-            self?.summon()
-        }
-
-        // Clipboard history: second hotkey opens the panel straight into the overlay.
-        KeyboardShortcuts.onKeyUp(for: .summonHistory) { [weak self] in
-            self?.summonHistory()
-        }
-
-        // Zipline upload: third hotkey opens the panel straight into the upload overlay.
-        KeyboardShortcuts.onKeyUp(for: .uploadToZipline) { [weak self] in
-            self?.summonUpload()
+        // Every global hotkey, through an exhaustive switch: a new `GlobalHotkey` case does not
+        // compile until it has an action here, and gets its Settings recorder automatically (#68).
+        for hotkey in GlobalHotkey.allCases {
+            KeyboardShortcuts.onKeyUp(for: hotkey.name) { [weak self] in
+                guard let self else { return }
+                switch hotkey {
+                case .summon: self.summon()                 // ⌘⇧C by default
+                case .history: self.summonHistory()         // ⌘⇧V: straight into the history overlay
+                case .upload: self.summonUpload()           // ⌘⇧U: straight into the upload overlay
+                }
+            }
         }
         // `history` is already constructed with this cap; no need to reassert it here.
         settings.$historyMaxItems

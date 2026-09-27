@@ -249,14 +249,14 @@ struct SettingsView: View {
 
     private var shortcut: some View {
         Form {
-            KeyboardShortcuts.Recorder("Summon Pastefix:", name: .summonPastefix)
-                .shortcutValidation { validateSummon($0, recording: .summonPastefix) }
-            Text("Global hotkey to summon the panel from any app.")
-                .font(.caption).foregroundStyle(.secondary)
-            KeyboardShortcuts.Recorder("Open history:", name: .summonHistory)
-                .shortcutValidation { validateSummon($0, recording: .summonHistory) }
-            KeyboardShortcuts.Recorder("Upload to Zipline:", name: .uploadToZipline)
-                .shortcutValidation { validateSummon($0, recording: .uploadToZipline) }
+            // One recorder per `GlobalHotkey` case, so a hotkey cannot exist without one (#68).
+            ForEach(GlobalHotkey.allCases, id: \.self) { hotkey in
+                KeyboardShortcuts.Recorder("\(hotkey.label):", name: hotkey.name)
+                    .shortcutValidation { validateSummon($0, recording: hotkey.name) }
+                if let caption = hotkey.caption {
+                    Text(caption).font(.caption).foregroundStyle(.secondary)
+                }
+            }
         }
         .padding()
     }
