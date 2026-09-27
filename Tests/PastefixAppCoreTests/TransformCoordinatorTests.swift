@@ -23,6 +23,18 @@ private final class Flag: @unchecked Sendable {
     func raise() { lock.withLock { raised = true } }
 }
 
+/// A stubborn body's release, opened by the test only *after* the caller has returned (#89).
+/// The body blocks on it — uncancellably, as a stubborn body must — so "the caller returned while
+/// the body was still running" holds however late the deadline fires on a loaded machine. The
+/// earlier version raced a 0.75 s sleep against a 0.2 s deadline and failed whenever the deadline
+/// was scheduled >0.55 s late. `timeout` is only a safety net: a Deadline that *waits* for its
+/// body blocks until it, and then the body has finished first — which fails the test, as it should.
+private final class Gate: @unchecked Sendable {
+    private let semaphore = DispatchSemaphore(value: 0)
+    func blockUntilOpened(timeout seconds: TimeInterval = 10) { _ = semaphore.wait(timeout: .now() + seconds) }
+    func open() { semaphore.signal() }
+}
+
 /// `Thread.sleep(forTimeInterval:)` is `@available(*, noasync)`: calling it directly inside an
 /// async closure is an error in Swift 6 language mode. Indirecting through a synchronous function
 /// sidesteps that check without changing what the call does.
@@ -195,8 +207,9 @@ private struct FailingArming: OutputModeTransformer {
     /// the coordinator actually abandoned the body (see `DeadlineTests` for the same reasoning).
     @Test func slowTransformTimesOutAtItsOwnBudget() async {
         let finished = Flag()
+        let gate = Gate()
         var t = FakeTransformer(id: "x", name: "X", requiresRichInput: false) { i in
-            blockingSleep(0.75)
+            gate.blockUntilOpened()
             finished.raise()
             return i.text
         }
@@ -204,6 +217,7 @@ private struct FailingArming: OutputModeTransformer {
         let (_, outcome) = await TransformCoordinator.apply(t, to: doc("hi"))
         #expect(outcome == .failed("The transform timed out."))
         #expect(!finished.value, "the caller returned while the body was still running")
+        gate.open()
         let end = ContinuousClock.now + .seconds(2)
         while !finished.value, ContinuousClock.now < end { try? await Task.sleep(for: .milliseconds(10)) }
     }

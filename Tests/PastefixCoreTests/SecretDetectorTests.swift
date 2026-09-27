@@ -233,6 +233,13 @@ import Testing
         #expect(m.count == 500)
         #expect(m.allSatisfy { $0.kind == .jwt })
     }
+    /// Seconds for the fastest of three scans — the least load-disturbed sample.
+    static func bestOf3(_ s: String) -> Double {
+        (0..<3).map { _ in
+            let d = ContinuousClock().measure { _ = SecretDetector.scan(s) }
+            return Double(d.components.seconds) + Double(d.components.attoseconds) / 1e18
+        }.min()!
+    }
     @Test func weakCandidatesNeverHideARealJWT() {
         // Two halves of the same fix. (a) The pre-filter now rejects dotted source-code
         // identifiers outright: "IConfiguration" cannot close a JSON object. (b) Even for tokens
@@ -250,8 +257,15 @@ import Testing
             let m = SecretDetector.scan(buffer)
             #expect(m.map(\.kind) == [.jwt], "\(label): \(m.count) matches")
             #expect(m.map { String(buffer[$0.range]) } == [jwt])
-            let t = ContinuousClock().measure { _ = SecretDetector.scan(buffer) }
-            #expect(t < .seconds(1), "\(label) took \(t)")     // load-tolerant, as in `boundedCost`
+            // Relative, not wall-clock (#89): an absolute 1 s ceiling flaked at ~1.2 s on a loaded
+            // machine against a normal 0.05 s. Measured: this input costs ~2–3× a benign scan of
+            // the same size, the catastrophic backtracking it guards against ~1000× (10 s per
+            // 256 KB). Load slows both scans alike; only a catastrophe moves the ratio. Removing
+            // the validation budget does not move it either (0.054 → 0.060 s) — the count
+            // assertion below is what pins the budget.
+            let benign = String(repeating: "the quick brown fox jumps over the lazy dog ", count: buffer.utf8.count / 44)
+            let ratio = Self.bestOf3(buffer) / Self.bestOf3(benign)
+            #expect(ratio < 50, "\(label) cost \(ratio)× a benign scan of the same size")
         }
         #expect(5_000 > SecretDetector.maxWeakJWTCandidates)     // the budget really is exhausted
     }
