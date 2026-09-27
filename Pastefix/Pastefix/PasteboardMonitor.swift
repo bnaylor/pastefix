@@ -269,9 +269,10 @@ final class PasteboardMonitor {
         // image the user copied; captured, it would reopen from history as a session showing the
         // icon, and Save there *would* write it: a history item records no file reference, so
         // #71's no-op — which covers only a session summoned over the live file copy — does not
-        // apply. This refusal is the only thing standing in that route. The session path asks the same question through
-        // `ClipboardImageRead`, and both must ask the *same function*: two readers of one
-        // pasteboard disagreeing about what an image is has bitten this rule once already.
+        // apply. This refusal is the only thing standing in that route. The session path asks the
+        // same question through `ClipboardImageRead`, and both must ask the *same function*: two
+        // readers of one pasteboard disagreeing about what an image is has bitten this rule once
+        // already.
         // A Photos.app copy carries a file-url too, but offers the photo itself — so it is
         // captured (via its TIFF, whose conversion strips GPS; see `ConversionStripsLocationTests`).
         // Text/rich capture above is unaffected either way.
