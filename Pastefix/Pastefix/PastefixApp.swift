@@ -5,7 +5,6 @@ import KeyboardShortcuts
 import PastefixCore
 import PastefixAppCore
 
-@main
 struct PastefixApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var delegate
 
@@ -74,7 +73,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private(set) lazy var history = HistoryStore(
         directory: Self.historyDirectory,
         limits: HistoryLimits(maxItems: settings.historyMaxItems))
-    private(set) lazy var model = AppModel(settings: settings, history: history)
+    private(set) lazy var model = AppModel(settings: settings, history: history, pasteboard: .general)
     private(set) lazy var snippetHotkeys = SnippetHotkeys(history: history)
     let updater = UpdaterController()
     private var panel: PanelController?
@@ -114,19 +113,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.panel?.hide()
         }
 
-        // Global summon hotkey (default ⌘⇧C, rebindable in Settings).
-        KeyboardShortcuts.onKeyUp(for: .summonPastefix) { [weak self] in
-            self?.summon()
-        }
-
-        // Clipboard history: second hotkey opens the panel straight into the overlay.
-        KeyboardShortcuts.onKeyUp(for: .summonHistory) { [weak self] in
-            self?.summonHistory()
-        }
-
-        // Zipline upload: third hotkey opens the panel straight into the upload overlay.
-        KeyboardShortcuts.onKeyUp(for: .uploadToZipline) { [weak self] in
-            self?.summonUpload()
+        // Every global hotkey, through an exhaustive switch: a new `GlobalHotkey` case does not
+        // compile until it has an action here, and gets its Settings recorder automatically (#68).
+        for hotkey in GlobalHotkey.allCases {
+            KeyboardShortcuts.onKeyUp(for: hotkey.name) { [weak self] in
+                guard let self else { return }
+                switch hotkey {
+                case .summon: self.summon()                 // ⌘⇧C by default
+                case .history: self.summonHistory()         // ⌘⇧V: straight into the history overlay
+                case .upload: self.summonUpload()           // ⌘⇧U: straight into the upload overlay
+                }
+            }
         }
         // `history` is already constructed with this cap; no need to reassert it here.
         settings.$historyMaxItems
@@ -288,19 +285,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// the user cannot see is not one they can check. `summon()` itself is untouched, so ⌘⇧C and
     /// ⌘⇧V behave exactly as before.
     func summonUpload() {
-        // `changeCount` only — never a read of the contents, which is what would cost a macOS
-        // pasteboard-access prompt.
-        let changeCount = NSPasteboard.general.changeCount
-        // A clipboard Pastefix wrote itself is not the user copying something new. The case that
-        // matters: an upload succeeds, the short URL goes on the clipboard, and a second ⌘⇧U in
-        // the same session would otherwise re-snapshot and offer to upload that link.
-        let userCopiedSomethingNew = !ClipboardBridge.clipboardIsSelfWritten(changeCount: changeCount)
-        if let document = model.document,
-           !(userCopiedSomethingNew && document.isStale(comparedToPasteboardChangeCount: changeCount)) {
+        // The decision is `AppModel.uploadNeedsFreshSnapshot` (tested); what stays here is the
+        // panel. `changeCount` only is read — never the contents, which is what would cost a
+        // macOS pasteboard-access prompt.
+        if model.uploadNeedsFreshSnapshot() {
+            summon()
+        } else {
             lastSummonAt = Date()
             panel?.show()
-        } else {
-            summon()
         }
         model.uploadOverlayRequested = true
     }

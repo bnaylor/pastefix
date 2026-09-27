@@ -139,6 +139,15 @@ codesign -d --entitlements - "$APP" 2>/dev/null | grep -q "com.apple.security.ap
   && die "app-sandbox entitlement present — Critical Invariant 9 violated"
 codesign -d --entitlements - "$APP" 2>/dev/null | grep -q "com.apple.security.cs.allow-jit" \
   || die "allow-jit entitlement missing — JS transforms would break under the hardened runtime"
+# A hosted test run (#68) copies XCTest, Swift Testing and XCUI frameworks and dylibs into the
+# host app. scripts/test-app.sh uses private derived data so a release never picks that app up;
+# this makes it mechanical. An allowlist, not a denylist: the toolchain renames things
+# (lib_TestingInterop, libswift_Testing*), and a name we did not think of must not ship.
+frameworks=$(ls "$APP/Contents/Frameworks" 2>/dev/null | sort | tr '\n' ' ')
+[[ "$frameworks" == "Sparkle.framework " ]] \
+  || die "unexpected Contents/Frameworks: ${frameworks:-<none>}(expected exactly Sparkle.framework)"
+stray=$(find "$APP/Contents" \( -name '*.xctest' -o \( -name '*.dylib' -not -path '*/Sparkle.framework/*' \) \) -print)
+[[ -z "$stray" ]] || die "test or stray dylib artefacts in the app: $stray"
 codesign --verify --deep --strict "$APP" || die "code signature invalid"
 
 # --- notarize + staple the app -------------------------------------------------------------

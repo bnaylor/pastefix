@@ -2,7 +2,7 @@ import AppKit
 import PastefixAppCore
 
 enum ClipboardBridge {
-    static func snapshot(from pasteboard: NSPasteboard = .general) -> ClipboardSnapshot {
+    static func snapshot(from pasteboard: NSPasteboard) -> ClipboardSnapshot {
         // Count **first**, contents second, and the order is the whole safety argument. A copy
         // landing between the two reads is recorded as count C against contents from C+1: the
         // snapshot then looks *older* than it is, so ⌘⇧U re-snapshots — a wasted read of the
@@ -68,7 +68,7 @@ enum ClipboardBridge {
                                  refusedImagePixels: refusedPixels, changeCount: changeCount)
     }
 
-    static func writePlain(_ text: String, to pasteboard: NSPasteboard = .general) {
+    static func writePlain(_ text: String, to pasteboard: NSPasteboard) {
         write(text: text, richRTFD: nil, imagePNG: nil, to: pasteboard)
     }
 
@@ -84,10 +84,10 @@ enum ClipboardBridge {
         // `clearContents` is what bumps `changeCount` — the `setString`/`setData` calls that
         // follow do not — so its return value is exactly the count this write produced.
         let count = pasteboard.clearContents()
-        if pasteboard.name == .general { lastSelfWriteChangeCount = count }
+        lastSelfWriteChangeCount[pasteboard.name] = count
     }
 
-    /// The `changeCount` Pastefix's own last write to the general pasteboard produced.
+    /// The `changeCount` Pastefix's own last write to each pasteboard produced.
     ///
     /// ⌘⇧U asks "has the clipboard moved on since this buffer was captured?" and re-snapshots
     /// when it has. Without this, the app's own success write — the short URL it puts on the
@@ -95,16 +95,18 @@ enum ClipboardBridge {
     /// helpfully offer to upload the link to the thing just uploaded. A copy the user did not
     /// make is not a copy that redirects the next upload.
     ///
-    /// Only the latest write is kept, which is all the comparison needs: a chain of our own
-    /// writes (upload, then Copy Again) leaves the last one matching. Main-actor state, enforced
+    /// Only the latest write per pasteboard is kept, which is all the comparison needs: a chain of
+    /// our own writes (upload, then Copy Again) leaves the last one matching. Keyed by pasteboard
+    /// name so a test's private pasteboard (#68) is tracked like the general one without the two
+    /// ever answering for each other. Main-actor state, enforced
     /// rather than assumed: the app target builds with `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor`,
     /// so this enum is main-actor isolated without saying so, the same as `SnippetPaster`'s
     /// pending generation (which says so explicitly).
-    private(set) static var lastSelfWriteChangeCount: Int?
+    private(set) static var lastSelfWriteChangeCount: [NSPasteboard.Name: Int] = [:]
 
-    /// Whether the general pasteboard's current contents are something Pastefix itself put there.
-    static func clipboardIsSelfWritten(changeCount: Int) -> Bool {
-        changeCount == lastSelfWriteChangeCount
+    /// Whether `pasteboard`'s current contents are something Pastefix itself put there.
+    static func clipboardIsSelfWritten(changeCount: Int, on pasteboard: NSPasteboard) -> Bool {
+        changeCount == lastSelfWriteChangeCount[pasteboard.name]
     }
 
     /// Armed-Markdown save: formatted targets take HTML/RTF, plain targets get the Markdown source.
@@ -133,7 +135,7 @@ enum ClipboardBridge {
     /// with an empty buffer now declares no `public.string` instead of an empty one, which is what
     /// `SavePayload.text` documents and what every other save path already did.
     static func writeRich(_ payload: SavePayload, html: String, rtf: Data?,
-                          to pasteboard: NSPasteboard = .general) {
+                          to pasteboard: NSPasteboard) {
         beginWrite(pasteboard)
         if let text = payload.text { pasteboard.setString(text, forType: .string) }
         pasteboard.setString(html, forType: .html)
@@ -142,7 +144,7 @@ enum ClipboardBridge {
     }
 
     /// Writes every representation we have for one item. Empty inputs write nothing for that type.
-    static func write(text: String?, richRTFD: Data?, imagePNG: Data?, to pasteboard: NSPasteboard = .general) {
+    static func write(text: String?, richRTFD: Data?, imagePNG: Data?, to pasteboard: NSPasteboard) {
         beginWrite(pasteboard)
         if let text { pasteboard.setString(text, forType: .string) }
         if let richRTFD {

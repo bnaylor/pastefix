@@ -114,7 +114,12 @@ final class AppModel: ObservableObject {
     /// `secretScanSkipped` for an over-cap buffer).
     var isDetecting: Bool { document?.isDetecting ?? false }
 
-    init(settings: SettingsStore, history: HistoryStore) {
+    /// Every clipboard read and write the model makes goes through this. `.general` in the app;
+    /// a uniquely named pasteboard in tests (#68), so a test run never touches the user's clipboard.
+    let pasteboard: NSPasteboard
+
+    init(settings: SettingsStore, history: HistoryStore, pasteboard: NSPasteboard) {
+        self.pasteboard = pasteboard
         self.settings = settings
         self.history = history
         reload()
@@ -161,13 +166,32 @@ final class AppModel: ObservableObject {
         )
     }
 
+    /// ⌘⇧U's one decision: does the upload need a fresh snapshot of the clipboard, or does the
+    /// open session stand? Fresh when there is no session, or when the session is unedited and the
+    /// user has copied something since it was captured. Pastefix's own writes — the short URL an
+    /// upload puts on the clipboard — are not the user copying, or a second ⌘⇧U would offer to
+    /// upload the link to what was just uploaded. Moved here from `AppDelegate.summonUpload` so it
+    /// is testable (#68): that stale-buffer rule is the one defect of Plan 13 that reached the user.
+    func uploadNeedsFreshSnapshot() -> Bool {
+        guard let document else { return true }
+        let changeCount = pasteboard.changeCount
+        let userCopiedSomethingNew = !ClipboardBridge.clipboardIsSelfWritten(changeCount: changeCount, on: pasteboard)
+        return userCopiedSomethingNew && document.isStale(comparedToPasteboardChangeCount: changeCount)
+    }
+
     func summon() {
+        beginSession(from: ClipboardBridge.snapshot(from: pasteboard))
+    }
+
+    /// A new session over `origin`. `summon` is this over a fresh pasteboard snapshot; tests (#68)
+    /// use it directly to start from a snapshot the pasteboard path would never produce — which is
+    /// how a defect that validation upstream now hides stays pinned downstream.
+    func beginSession(from origin: ClipboardSnapshot) {
         errorMessage = nil
         noticeMessage = nil
         resetSecretSelection()
         abandonInFlightWork()
         sessionGeneration &+= 1
-        let origin = ClipboardBridge.snapshot()
         document = PasteDocument(origin: origin)
         noteRefusedImage(origin)
         requestDetection()
@@ -316,7 +340,7 @@ final class AppModel: ObservableObject {
 
     func refresh() {
         guard var doc = document else { return }
-        let origin = ClipboardBridge.snapshot()
+        let origin = ClipboardBridge.snapshot(from: pasteboard)
         doc.refresh(origin: origin)
         document = doc
         // A refresh can replace the image without a new session generation. The cache key
@@ -376,7 +400,7 @@ final class AppModel: ObservableObject {
                 // and passing the payload rather than `doc.imagePNG` is what stops this branch
                 // bypassing the empty-`Data` backstop and writing a zero-byte `public.png`
                 // (see `ClipboardBridge.writeRich`).
-                ClipboardBridge.writeRich(payload, html: rich.html, rtf: rich.rtf)
+                ClipboardBridge.writeRich(payload, html: rich.html, rtf: rich.rtf, to: pasteboard)
             } catch {
                 // Keep the session open and the mode armed: the user can read the error and
                 // either fix the Markdown or disarm the badge and save plain text instead.
@@ -395,7 +419,7 @@ final class AppModel: ObservableObject {
             // unchanged — not every representation the clipboard arrived with. Arming
             // Markdown → Rich Text is how a user asks for formatted output.
             ClipboardBridge.write(text: payload.text, richRTFD: payload.richRTFD,
-                                  imagePNG: payload.imagePNG)
+                                  imagePNG: payload.imagePNG, to: pasteboard)
         }
         endSession()
     }
@@ -486,7 +510,7 @@ final class AppModel: ObservableObject {
 
     /// Puts the whole item back on the clipboard and ends the session.
     func copyBack(_ item: HistoryItem) {
-        ClipboardBridge.write(text: item.plainText, richRTFD: history.richRTFD(for: item), imagePNG: history.imagePNG(for: item))
+        ClipboardBridge.write(text: item.plainText, richRTFD: history.richRTFD(for: item), imagePNG: history.imagePNG(for: item), to: pasteboard)
         endSession()
     }
 

@@ -93,7 +93,7 @@ enum SnippetPaster {
         // generation *after* the write, so this chain is the current one and the chains it
         // superseded stay quiet. That also covers the early returns below — a request refused
         // after this point still overwrote the clipboard.
-        ClipboardBridge.write(text: text, richRTFD: richRTFD, imagePNG: nil)
+        ClipboardBridge.write(text: text, richRTFD: richRTFD, imagePNG: nil, to: .general)
         let generation = pendingGeneration
         guard ensureTrusted() else { return .copiedOnly }
         // No resolvable "v" on this layout (an input source with no `uchr` data) means there is
