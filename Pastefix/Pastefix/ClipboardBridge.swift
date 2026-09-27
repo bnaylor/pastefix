@@ -32,15 +32,16 @@ enum ClipboardBridge {
         //
         // Set by the decode closure below when the clipboard *had* an image we would not convert.
         var refusedPixels: Int?
+        // Read once, for both questions asked of it below — the file-copy refusal and the recorded
+        // file references — so a pasteboard that changes between two reads cannot answer them
+        // differently.
+        let declared = Set(pasteboard.types?.map(\.rawValue) ?? [])
         let image = ClipboardImageRead.imagePNG(
             // A Finder file copy's only image is the file's icon; a Photos copy carries a
             // file-url too but offers the photo itself. `refusesAsFileCopy(declaredTypes:)` tells
             // them apart from the declared types, and `PasteboardMonitor.read` asks the same
             // function — two readers of one pasteboard must not disagree about what an image is.
-            refusesAsFileCopy: {
-                ClipboardImageRead.refusesAsFileCopy(
-                    declaredTypes: Set(pasteboard.types?.map(\.rawValue) ?? []))
-            },
+            refusesAsFileCopy: { ClipboardImageRead.refusesAsFileCopy(declaredTypes: declared) },
             // PNG first, and the order is the point: `availableType(from:)` answers with the
             // earliest match, so a pasteboard offering both (most screenshot sources do) is read
             // as the PNG it already holds instead of paying a TIFF decode to arrive at one.
@@ -67,7 +68,6 @@ enum ClipboardBridge {
         // Declared types only — a fact about what the clipboard holds, never a read of the URL or
         // the file (Invariant 13's pointer rule). Nil when none, so the snapshot's `.lossIfPresent`
         // classification makes an unedited Save over a copied file a no-op (#71).
-        let declared = Set(pasteboard.types?.map(\.rawValue) ?? [])
         let fileReferences = declared.intersection(ClipboardImageRead.fileURLTypes).sorted()
         return ClipboardSnapshot(plainText: plain, rich: rich, imagePNG: image,
                                  refusedImagePixels: refusedPixels,
@@ -129,7 +129,7 @@ enum ClipboardBridge {
     ///
     /// So the rule is in the signature now: **the rendered branch chooses how the _text_ is written
     /// — `html` and `rtf` are its renderings of it — and every other representation comes from the
-    /// payload.** That is the only exception, and a future representation (#71's file reference)
+    /// payload.** That is the only exception, and any future representation
     /// arrives here by growing `SavePayload`, not by growing this parameter list. There is no
     /// parameter left through which a caller can smuggle in bytes the payload did not decide.
     ///

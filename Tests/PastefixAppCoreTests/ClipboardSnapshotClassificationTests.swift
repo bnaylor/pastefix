@@ -5,8 +5,8 @@ import Foundation
 /// The test that makes `ClipboardSnapshot.storedPropertyClasses` a rule instead of a comment.
 ///
 /// The claim this replaces was that "Save is a no-op when the session cannot reproduce the
-/// clipboard" is a principle broad enough to cover #71 for free. It was false: if #71 records a
-/// file reference on `ClipboardSnapshot` and does not grow `SavePayload`, the predicate never
+/// clipboard" is a principle broad enough to cover #71 for free. It was false: had #71 recorded a
+/// file reference on `ClipboardSnapshot` without a classification or a grown `SavePayload`, the predicate never
 /// mentions the new field, the payload is non-empty, `refusedImagePixels` is nil — so Save clears
 /// the clipboard and drops the reference, silently. A principle nobody is forced to re-read when
 /// they add a field is a list of cases with better prose.
@@ -215,7 +215,7 @@ struct ClipboardSnapshotLossIfPresentTests {
     func reportedLossesAreExactlyTheClassifiedOnes() {
         // The reviewer's variant, as an assertion: the expectation is derived from the dictionary, so
         // a property classified `.lossIfPresent` and not reported fails here. Populating the fixture
-        // above is the only step #71 owes this suite; being reported is `unreproduced(by:)`'s job,
+        // above was the only step #71 owed this suite (it populates `fileReferenceTypes`); being reported is `unreproduced(by:)`'s job,
         // and it does that by reflection rather than by naming the field.
         let expected = Set(lossIfPresentProperties.map(ClipboardSnapshot.Representation.lossIfPresent))
         #expect(fixture.unreproduced(by: SavePayload(text: "notes about that photo")) == expected)
@@ -223,10 +223,10 @@ struct ClipboardSnapshotLossIfPresentTests {
 
     @Test("a property the predicate never names is reported when classified .lossIfPresent")
     func aPropertyThePredicateNeverNamesIsStillReported() {
-        // The part the test above cannot reach while the type has exactly one `.lossIfPresent` field:
-        // with one real field, "honours the bucket" and "reports refusedImagePixels" are the same
-        // assertion, and a hard-coded `refusedImagePixels != nil` satisfies both. So here the
-        // classification is injected and `changeCount` stands in for #71's file reference — a
+        // The part the test above cannot reach on its own: it can only name fields that exist, so a
+        // body that hard-codes today's `.lossIfPresent` fields (`refusedImagePixels != nil ||
+        // fileReferenceTypes != nil`) satisfies it. So here the
+        // classification is injected and `changeCount` stands in for a field nobody has added yet — a
         // property `unreproduced(by:)` has never heard of, in that bucket. A body that names fields
         // instead of reading the dictionary fails this test today, with no new field to add.
         var classes = ClipboardSnapshot.storedPropertyClasses

@@ -7,8 +7,8 @@ import Foundation
 /// agreeing with it only because someone wrote the two to agree — the shape that produced the defect
 /// this type was introduced to close, a rule enforced on one of two readers. The refusal itself is
 /// `PasteDocument.saveWouldLoseContent`, which asks this type the emptiness half of its question.
-/// #71 will grow the write (carrying a file reference back), and a hand-written emptiness test
-/// would then refuse a write that had become legitimate. Here, growing `SavePayload` grows both.
+/// Whatever the write grows to carry next, a hand-written emptiness test would then refuse a write
+/// that had become legitimate. Here, growing `SavePayload` grows both.
 ///
 /// **Scope.** Every Save reads its representations off this value, the armed-Markdown one included:
 /// `ClipboardBridge.writeRich` takes a `SavePayload` plus the HTML and RTF renderings of its text,
