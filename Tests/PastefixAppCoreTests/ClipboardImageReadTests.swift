@@ -11,10 +11,10 @@ struct ClipboardImageReadTests {
     /// Stands in for the pasteboard: a type-to-bytes table plus the adapter's decode behaviour
     /// (PNG through unchanged, TIFF converted, anything else undecodable).
     private func read(_ table: [String: Data?],
-                      hasFileURL: Bool = false,
+                      refusesAsFileCopy: Bool = false,
                       decode: ((Data) -> Data?)? = nil) -> Data? {
         ClipboardImageRead.imagePNG(
-            hasFileURL: { hasFileURL },
+            refusesAsFileCopy: { refusesAsFileCopy },
             available: { asked in asked.sorted().first(where: { table.keys.contains($0) }) },
             data: { table[$0] ?? nil },
             decodePNG: decode ?? { bytes in
@@ -80,7 +80,7 @@ struct ClipboardImageReadTests {
         // answers with something else — a JPEG, a PDF, an app's private type — is not an image
         // even if bytes exist for it.
         let out = ClipboardImageRead.imagePNG(
-            hasFileURL: { false },
+            refusesAsFileCopy: { false },
             available: { _ in "public.jpeg" },
             data: { _ in self.pngBytes },
             decodePNG: { $0 }
@@ -92,7 +92,7 @@ struct ClipboardImageReadTests {
     func asksAboutBothTypes() {
         var asked: Set<String>?
         _ = ClipboardImageRead.imagePNG(
-            hasFileURL: { false },
+            refusesAsFileCopy: { false },
             available: { types in asked = types; return nil },
             data: { _ in nil },
             decodePNG: { $0 }
@@ -106,7 +106,7 @@ struct ClipboardImageReadTests {
         // this seam should not become the exception.
         var fetched = false
         _ = ClipboardImageRead.imagePNG(
-            hasFileURL: { false },
+            refusesAsFileCopy: { false },
             available: { _ in nil },
             data: { _ in fetched = true; return nil },
             decodePNG: { $0 }
@@ -114,36 +114,36 @@ struct ClipboardImageReadTests {
         #expect(fetched == false)
     }
 
-    @Test("public.file-url present is no image, even with a valid PNG offered")
+    @Test("a file copy is no image, even with a valid PNG offered")
     func fileURLBeatsValidPNG() {
         // The rule this file exists for: a Finder file copy carries `public.file-url` alongside
         // a `public.tiff` that is a rendering of the file's icon, not an image the user copied.
-        // `hasFileURL` must win regardless of what the image-type lookup would otherwise answer.
-        let out = read([ClipboardImageRead.pngType: pngBytes], hasFileURL: true)
+        // `refusesAsFileCopy` must win regardless of what the image-type lookup would otherwise answer.
+        let out = read([ClipboardImageRead.pngType: pngBytes], refusesAsFileCopy: true)
         #expect(out == nil)
     }
 
-    @Test("public.file-url absent leaves a valid PNG untouched")
+    @Test("not a file copy leaves a valid PNG untouched")
     func noFileURLLeavesPNGIntact() {
-        let out = read([ClipboardImageRead.pngType: pngBytes], hasFileURL: false)
+        let out = read([ClipboardImageRead.pngType: pngBytes], refusesAsFileCopy: false)
         #expect(out == pngBytes)
     }
 
-    @Test("public.file-url present is no image, even with a TIFF offered — the actual bug shape")
+    @Test("a file copy is no image, even with a TIFF offered — the Finder icon shape")
     func fileURLBeatsValidTIFF() {
         // A Finder file copy offers a TIFF (the file's icon rendering), not a PNG — this is the
         // exact shape of the reported bug, unlike `fileURLBeatsValidPNG` above.
-        let out = read([ClipboardImageRead.tiffType: tiffBytes], hasFileURL: true)
+        let out = read([ClipboardImageRead.tiffType: tiffBytes], refusesAsFileCopy: true)
         #expect(out == nil)
     }
 
-    @Test("public.file-url present means no bytes are ever fetched")
+    @Test("a file copy means no bytes are ever fetched")
     func noFetchWithFileURL() {
         // Proves the guard runs before any read, not merely that it returns nil afterwards —
         // analogous to `noFetchWithoutAType` above.
         var fetched = false
         _ = ClipboardImageRead.imagePNG(
-            hasFileURL: { true },
+            refusesAsFileCopy: { true },
             available: { _ in ClipboardImageRead.pngType },
             data: { _ in fetched = true; return nil },
             decodePNG: { $0 }
