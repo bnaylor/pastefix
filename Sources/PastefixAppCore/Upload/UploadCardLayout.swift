@@ -86,7 +86,7 @@ public enum UploadCardLayout {
     /// The floor on the scroll region: about one option row plus enough height to be scrollable.
     ///
     /// Reaching it means the card is taller than the budget wanted, and at the panel's 380pt
-    /// minimum with findings *and* a failure banner it is reached (19pt available against this 44).
+    /// minimum with findings *and* a failure banner it is reached (35pt available against this 44, with findingsChromeHeight at 96).
     /// That is the deliberate outcome: the option rows become something to scroll to rather than
     /// something to read at a glance, and the verdict, the choice and the buttons are untouched.
     /// It must stay big enough to scroll — a region of zero height cannot be scrolled, and the
