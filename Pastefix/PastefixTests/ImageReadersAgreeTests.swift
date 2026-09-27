@@ -9,9 +9,13 @@ import PastefixAppCore
 /// session refused it (a provider that breaks one promise isn't trusted for its other one), and
 /// history fell through to the TIFF and captured an image the session would not open.
 ///
-/// Every shape either reader has to decide is here, not only #81's, so that the next divergence on
-/// *whether an image exists* fails too. What they may still legitimately differ on — the byte
-/// budget, and decode versus header-only validation — is kept out of these shapes.
+/// Every shape that decides *whether an image exists* is here, not only #81's, so that the next
+/// divergence on that question fails too. Out of scope, and not the same question:
+/// - the byte budget, which can only make history hold *less* than the session — never an image
+///   the session refuses, which was #81's harm;
+/// - which *bytes* each keeps. JPEG bytes under `public.png` are converted by the session and
+///   stored raw by history (header-only validation). Both say "image", so this suite passes;
+///   that divergence is tracked separately (#97).
 @MainActor
 @Suite("the session and history capture agree on whether there is an image (#81)")
 struct ImageReadersAgreeTests {
@@ -23,15 +27,34 @@ struct ImageReadersAgreeTests {
         #expect(history == expectImage, "\(label): history")
     }
 
+    /// Declares `declared`, but materialises only `materialised` — a provider that promises a type
+    /// and never delivers it.
+    private func copyDeclaring(_ f: ModelFixture, _ declared: [NSPasteboard.PasteboardType],
+                               materialised: [NSPasteboard.PasteboardType: Data]) {
+        f.pasteboard.clearContents()
+        f.pasteboard.declareTypes(declared, owner: nil)
+        for (type, data) in materialised { f.pasteboard.setData(data, forType: type) }
+        for type in declared where materialised[type] == nil {
+            #expect(f.pasteboard.data(forType: type) == nil, "fixture: \(type.rawValue) must never materialise")
+        }
+    }
+
     @Test("a declared-but-nil PNG beside a real TIFF is no image to either reader")
     func declaredButNilPNG() throws {
         let f = try ModelFixture(); defer { f.finish() }
         let tiff = try #require(Pixels.encoded(width: 20, height: 10, type: "public.tiff"))
-        f.pasteboard.clearContents()
-        f.pasteboard.declareTypes([.png, .tiff], owner: nil)
-        f.pasteboard.setData(tiff, forType: .tiff)
-        #expect(f.pasteboard.data(forType: .png) == nil, "fixture: the PNG must be declared and never materialised")
+        copyDeclaring(f, [.png, .tiff], materialised: [.tiff: tiff])
         agree(f, "declared-but-nil PNG + TIFF", expectImage: false)
+    }
+
+    @Test("a declared-but-nil TIFF alone is no image to either reader")
+    func declaredButNilTIFF() throws {
+        let f = try ModelFixture(); defer { f.finish() }
+        copyDeclaring(f, [.tiff], materialised: [:])
+        agree(f, "declared-but-nil TIFF only", expectImage: false)
+        // Not here, because it cannot be built: a PNG beside a declared, never-set TIFF. The
+        // pasteboard synthesises the TIFF from the PNG (measured: `data(forType: .tiff)` returned
+        // 3,992 bytes), so on a real pasteboard that shape is "PNG + TIFF", already covered below.
     }
 
     @Test("every other shape: both readers give the same answer")
@@ -47,6 +70,8 @@ struct ImageReadersAgreeTests {
             ("TIFF", [.tiff: tiff], true),
             ("PNG + TIFF", [.png: png, .tiff: tiff], true),
             ("empty PNG + TIFF", [.png: Data(), .tiff: tiff], false),
+            ("empty TIFF", [.tiff: Data()], false),
+            ("garbage under public.png", [.png: Data("not an image at all".utf8)], false),
             ("Finder file copy", [.tiff: tiff, .fileURL: url, icns: Data([0])], false),
             ("Photos copy", [.tiff: tiff, .fileURL: url, NSPasteboard.PasteboardType("public.jpeg"): jpeg], true),
             ("text only", [.string: Data("hello".utf8)], false),

@@ -119,6 +119,9 @@ public final class HistoryStore: ObservableObject {
             }
             // A pin holds its own place: copying it again must not drag it into the recency
             // list or refresh `capturedAt`, which would reorder the unpinned section around it.
+            // Nor its words (#70): a pin is curated content that a per-snippet hotkey pastes blind
+            // into other apps, the worst place for a passive capture to rewrite what gets typed.
+            // To take the new caption, the user unpins, or pins the new copy.
             if items[existing].pinned { return items[existing] }
             let grew = image.map { refreshWords(at: existing, text: text, rich: rich, imageBytes: $0.count) } ?? false
             if existing != 0 {
@@ -126,7 +129,9 @@ public final class HistoryStore: ObservableObject {
                 moved.capturedAt = now
                 // Keep the ORIGINAL source: re-copying an item (e.g. AppModel.copyBack) re-writes
                 // the pasteboard, which the monitor then records as coming from Pastefix itself —
-                // relabeling every reused item would erase where it actually came from.
+                // relabeling every reused item would erase where it actually came from. Accepted
+                // for a caption refresh too (#70): the new words may come from another app than
+                // the one the row still names.
                 items.insert(moved, at: 0)
                 scheduleWrite()
             }
@@ -184,7 +189,10 @@ public final class HistoryStore: ObservableObject {
             try? FileManager.default.removeItem(at: blobURL(id, ext: Self.richExtension))
             item.richRTFDFile = nil
         }
-        item.byteCount = (text?.utf8.count ?? 0) + (item.richRTFDFile != nil ? rich?.count ?? 0 : 0) + imageBytes
+        // The image counts only if it was stored: an item whose image write failed is text-only
+        // but still carries the hash, so it matches here with no image bytes on disk.
+        item.byteCount = (text?.utf8.count ?? 0) + (item.richRTFDFile != nil ? rich?.count ?? 0 : 0)
+            + (item.imageFile != nil ? imageBytes : 0)
         let grew = item.byteCount > items[i].byteCount
         if item != items[i] { items[i] = item; scheduleWrite() }
         return grew

@@ -128,6 +128,19 @@ import Foundation
             #expect(back?.id == img.id && s.items.map(\.id) == [img.id])
         }
     }
+    @Test func aRefreshCountsOnlyAnImageThatWasStored() throws {
+        try withDir { dir in
+            let s = HistoryStore(directory: dir)
+            // A read-only directory fails the image blob write: the item survives as text only,
+            // but still carries the image's hash, so the next copy of that image matches it.
+            try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: dir.path)
+            let first = s.record(CaptureCandidate(plainText: "caption", imagePNG: png(1)))
+            try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: dir.path)
+            #expect(first?.imageFile == nil && first?.imageHash != nil, "fixture: image write must fail")
+            let again = s.record(CaptureCandidate(plainText: "new caption", imagePNG: png(1)))
+            #expect(again?.id == first?.id && again?.byteCount == "new caption".utf8.count)
+        }
+    }
     @Test func aPinnedImageIgnoresANewCaption() throws {
         try withDir { dir in
             let s = HistoryStore(directory: dir)
