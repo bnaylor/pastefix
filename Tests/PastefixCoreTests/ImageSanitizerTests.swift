@@ -99,6 +99,13 @@ struct ImageSanitizerTests {
         // marker before the test starts. A third-party app writing the ICC verbatim is the real
         // threat, so the fixture is a PNG with a hand-built iCCP chunk: Display P3's canonical
         // profile with its description overwritten in place.
+        //
+        // What this does NOT test: `ImageSanitizer.withStandardProfile`. Mutation-checked — with
+        // the normalisation removed this still passes, because CoreGraphics' PNG encoder writes
+        // the canonical profile for a space colorimetrically identical to P3 even when that space
+        // has no name. So it pins the end-to-end property (a personal description does not leave)
+        // against an encoder change, and the sanitizer's own conversion is pinned by
+        // `personalProfileReplaced`, whose fixture differs in colorimetry and so is NOT laundered.
         let marker = "PersonalBN"                 // same length as "Display P3"
         let profile = try #require(Fixture.displayP3ProfileRenamed(to: marker))
         let input = try #require(Fixture.pngWithRawICCP(profile))
