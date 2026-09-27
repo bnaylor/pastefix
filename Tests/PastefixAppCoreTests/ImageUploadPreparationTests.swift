@@ -3,7 +3,7 @@ import Foundation
 import AppKit
 import ImageIO
 import UniformTypeIdentifiers
-import PastefixCore
+@testable import PastefixCore
 @testable import PastefixAppCore
 
 /// #48: what the image upload card shows is decided here, off the main actor, as a value.
@@ -70,15 +70,15 @@ struct ImageUploadPreparationTests {
     @Test("over the byte cap after stripping, even as JPEG: refused with the JPEG's size")
     func overByteCap() throws {
         let input = try #require(Self.png(width: 400, height: 300))
-        let jpeg = try #require(ImageSanitizer.encodings(input)?.jpeg)
-        #expect(ImageUploadPreparation.prepare(input, maxBytes: 10) == .refused(.tooManyBytes(jpeg.data.count, format: .jpeg)))
+        let jpeg = try #require(ImageSanitizer.encodings(input)?.jpeg.image)
+        #expect(ImageUploadPreparation.prepare(input, maxBytes: 10) == .refused(.tooManyBytes(jpeg.data.count, .jpeg)))
     }
 
     @Test("an image with transparency over the cap: refused with the PNG's size, never flattened")
     func transparentOverByteCap() throws {
         let input = try #require(PhotoFixture.png(PhotoFixture.photo(alpha: 254)))
         let png = try #require(ImageSanitizer.stripped(input))
-        #expect(ImageUploadPreparation.prepare(input, maxBytes: 10) == .refused(.tooManyBytes(png.data.count, format: .png)))
+        #expect(ImageUploadPreparation.prepare(input, maxBytes: 10) == .refused(.tooManyBytes(png.data.count, .pngWithTransparency)))
     }
 
     @Test("undecodable bytes: refused, never an upload of the original")
@@ -101,7 +101,7 @@ struct ImageUploadPreparationFormatTests {
     }
 
     static func sizes(_ input: Data) -> (png: Int, jpeg: Int)? {
-        guard let encodings = ImageSanitizer.encodings(input), let jpeg = encodings.jpeg else { return nil }
+        guard let encodings = ImageSanitizer.encodings(input), let jpeg = encodings.jpeg.image else { return nil }
         return (encodings.png.data.count, jpeg.data.count)
     }
 
@@ -183,7 +183,54 @@ struct ImageUploadPreparationFormatTests {
         let input = try #require(PhotoFixture.png(PhotoFixture.photo()))
         let (_, jpeg) = try #require(Self.sizes(input))
         #expect(Self.prepared(input, maxBytes: jpeg)?.chosen.data.count == jpeg)
-        #expect(ImageUploadPreparation.prepare(input, maxBytes: jpeg - 1) == .refused(.tooManyBytes(jpeg, format: .jpeg)))
+        #expect(ImageUploadPreparation.prepare(input, maxBytes: jpeg - 1) == .refused(.tooManyBytes(jpeg, .jpeg)))
+    }
+}
+
+/// #93 review: a JPEG that could not be made falls back to the PNG. A refusal is worse than a
+/// lossless image; and a failed encode says nothing about transparency, so nothing claims it.
+@Suite("ImageUploadPreparation JPEG failure")
+struct ImageUploadPreparationJPEGFailureTests {
+    static func prepareWithFailingJPEG(_ input: Data, maxBytes: Int = UploadLimits.maxPayloadBytes) -> ImageUploadPreparation.Outcome {
+        ImageUploadPreparation.prepare(input, maxPixels: PixelLimits.maxConvertiblePixels, maxBytes: maxBytes) { data, maxPixels in
+            ImageSanitizer.encodings(data, maxPixels: maxPixels, jpegEncoder: { _, _ in nil })
+        }
+    }
+
+    @Test("an opaque photo whose JPEG fails goes as PNG, marked as a fallback, with no escape")
+    func photoFallsBackToPNG() throws {
+        let input = try #require(PhotoFixture.png(PhotoFixture.photo()))
+        guard case .ready(let prepared, _) = Self.prepareWithFailingJPEG(input) else {
+            Issue.record("expected ready — a failed JPEG must not refuse"); return
+        }
+        #expect(prepared.choice == .png)
+        #expect(prepared.chosen.format == .png)
+        #expect(prepared.jpegEncodeFailed)
+        #expect(prepared.pngAlternative == nil)
+        let line = try #require(ImageUploadCard.formatLine(for: prepared))
+        #expect(line == "Sending as PNG (\(HistoryFormatting.byteLabel(prepared.chosen.data.count)))")
+        #expect(!line.lowercased().contains("transparen"))
+        #expect(ImageUploadCard.formatSwitchTitle(for: prepared) == nil)
+    }
+
+    @Test("PNG over the cap with a failed JPEG: refused, naming the PNG, with no transparency claim")
+    func overCapFailedJPEGRefusesNamingPNG() throws {
+        let input = try #require(PhotoFixture.png(PhotoFixture.photo()))
+        let png = try #require(ImageSanitizer.stripped(input))
+        let outcome = Self.prepareWithFailingJPEG(input, maxBytes: png.data.count - 1)
+        #expect(outcome == .refused(.tooManyBytes(png.data.count, .pngWithoutJPEG)))
+        let line = ImageUploadCard.refusal(.tooManyBytes(png.data.count, .pngWithoutJPEG))
+        #expect(!line.lowercased().contains("transparen"))
+        #expect(line.contains(HistoryFormatting.byteLabel(png.data.count)))
+    }
+
+    @Test("a transparent image over the cap is the only refusal that says transparency")
+    func transparencyWordingOnlyForNotOpaque() throws {
+        let input = try #require(PhotoFixture.png(PhotoFixture.photo(alpha: 254)))
+        let png = try #require(ImageSanitizer.stripped(input))
+        // Even with the JPEG encoder failing, a non-opaque image never reaches it: still transparency.
+        #expect(Self.prepareWithFailingJPEG(input, maxBytes: 10) == .refused(.tooManyBytes(png.data.count, .pngWithTransparency)))
+        #expect(ImageUploadCard.refusal(.tooManyBytes(png.data.count, .pngWithTransparency)).contains("transparency"))
     }
 }
 

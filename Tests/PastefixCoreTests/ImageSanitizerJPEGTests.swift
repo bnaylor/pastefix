@@ -49,7 +49,7 @@ struct ImageSanitizerJPEGTests {
         let input = try #require(Self.rgba())
         #expect(Self.hasAlphaChannel(input))
         let encodings = try #require(ImageSanitizer.encodings(input))
-        let jpeg = try #require(encodings.jpeg)
+        let jpeg = try #require(encodings.jpeg.image)
         #expect(jpeg.format == .jpeg)
         #expect(encodings.png.format == .png)
         #expect(CGImageSourceGetType(try #require(CGImageSourceCreateWithData(jpeg.data as CFData, nil))) as String? == "public.jpeg")
@@ -60,7 +60,7 @@ struct ImageSanitizerJPEGTests {
         let input = try #require(Self.rgba(oddAlpha: 254))
         #expect(Self.hasAlphaChannel(input))
         let encodings = try #require(ImageSanitizer.encodings(input))
-        #expect(encodings.jpeg == nil)
+        #expect(encodings.jpeg == .notOpaque)
         #expect(encodings.png.format == .png)
     }
 
@@ -68,14 +68,14 @@ struct ImageSanitizerJPEGTests {
     func transparentNoJPEG() throws {
         let input = try #require(Fixture.image(as: "public.png", transparentRightHalf: true))
         let encodings = try #require(ImageSanitizer.encodings(input))
-        #expect(encodings.jpeg == nil)
+        #expect(encodings.jpeg == .notOpaque)
     }
 
     @Test("an image with no alpha channel at all is opaque")
     func noChannelIsOpaque() throws {
         let input = try #require(Fixture.image(as: "public.jpeg"))
         #expect(!Self.hasAlphaChannel(input))
-        #expect(try #require(ImageSanitizer.encodings(input)).jpeg != nil)
+        #expect(try #require(ImageSanitizer.encodings(input)).jpeg.image != nil)
     }
 
     @Test("encodings' PNG is exactly what stripped makes")
@@ -92,13 +92,42 @@ struct ImageSanitizerJPEGTests {
         #expect(ImageSanitizer.encodings(input, maxPixels: Fixture.width * Fixture.height - 1) == nil)
     }
 
+    // MARK: A failed JPEG falls back to the PNG (#93 review)
+
+    @Test("a failed JPEG encode keeps the PNG and says encodeFailed — not notOpaque, not nil")
+    func failedEncodeFallsBack() throws {
+        let input = try #require(Self.rgba())
+        let encodings = try #require(ImageSanitizer.encodings(input, maxPixels: PixelLimits.maxConvertiblePixels,
+                                                               jpegEncoder: { _, _ in nil }))
+        #expect(encodings.jpeg == .encodeFailed)
+        #expect(encodings.png == ImageSanitizer.stripped(input))
+    }
+
+    @Test("an empty JPEG counts as a failed one")
+    func emptyEncodeFallsBack() throws {
+        let input = try #require(Self.rgba())
+        let encodings = try #require(ImageSanitizer.encodings(input, maxPixels: PixelLimits.maxConvertiblePixels,
+                                                               jpegEncoder: { _, _ in Data() }))
+        #expect(encodings.jpeg == .encodeFailed)
+    }
+
+    @Test("a non-opaque image never reaches the JPEG encoder, so it stays notOpaque")
+    func notOpaqueSkipsEncoder() throws {
+        let input = try #require(Self.rgba(oddAlpha: 254))
+        var called = false
+        let encodings = try #require(ImageSanitizer.encodings(input, maxPixels: PixelLimits.maxConvertiblePixels,
+                                                               jpegEncoder: { _, _ in called = true; return nil }))
+        #expect(encodings.jpeg == .notOpaque)
+        #expect(!called)
+    }
+
     // MARK: What the JPEG keeps
 
     @Test("the JPEG bakes orientation into its pixels", arguments: ImageSanitizerTests.formats)
     func jpegBakesOrientation(format: String) throws {
         let input = try #require(Fixture.image(as: format, orientation: 6))
         #expect(Fixture.properties(input)?["Orientation"] as? Int == 6)
-        let out = try #require(ImageSanitizer.encodings(input)?.jpeg).data
+        let out = try #require(ImageSanitizer.encodings(input)?.jpeg.image).data
         let props = try #require(Fixture.properties(out))
         #expect(props["PixelWidth"] as? Int == Fixture.height)
         #expect(props["PixelHeight"] as? Int == Fixture.width)
@@ -111,7 +140,7 @@ struct ImageSanitizerJPEGTests {
     @Test("the JPEG keeps Display P3, as the canonical profile", arguments: ImageSanitizerTests.formats)
     func jpegKeepsDisplayP3(format: String) throws {
         let input = try #require(Fixture.image(as: format))
-        let out = try #require(ImageSanitizer.encodings(input)?.jpeg).data
+        let out = try #require(ImageSanitizer.encodings(input)?.jpeg.image).data
         let space = try #require(Fixture.decoded(out)?.colorSpace)
         #expect(space.name as String? == CGColorSpace.displayP3 as String)
         #expect(space.copyICCData() as Data? == Self.displayP3ICC)
@@ -121,7 +150,7 @@ struct ImageSanitizerJPEGTests {
     func jpegPersonalProfileReplaced() throws {
         let custom = try #require(Fixture.nonStandardColorSpace())
         let input = try #require(Fixture.image(as: "public.png", space: custom))
-        let out = try #require(ImageSanitizer.encodings(input)?.jpeg).data
+        let out = try #require(ImageSanitizer.encodings(input)?.jpeg.image).data
         #expect(Fixture.decoded(out)?.colorSpace?.name as String? == CGColorSpace.displayP3 as String)
     }
 
@@ -134,7 +163,7 @@ struct ImageSanitizerJPEGTests {
         let before = try #require(Fixture.properties(input))
         #expect(before["{GPS}"] != nil)                   // fixture sanity: there is something to leak
         #expect(before["{IPTC}"] != nil)
-        let out = try #require(ImageSanitizer.encodings(input)?.jpeg).data
+        let out = try #require(ImageSanitizer.encodings(input)?.jpeg.image).data
         #expect(JPEGSegments.violations(in: out, expectedICC: Self.displayP3ICC) == [])
         #expect(!Fixture.contains(out, "FixtureCam"))
         #expect(!Fixture.contains(out, "Fixtureville"))
@@ -143,7 +172,7 @@ struct ImageSanitizerJPEGTests {
     @Test("the allowlist is checked on the non-standard-profile path too")
     func jpegSegmentsAllowlistedAfterRedraw() throws {
         let input = try #require(Fixture.image(as: "public.png", space: try #require(Fixture.nonStandardColorSpace())))
-        let out = try #require(ImageSanitizer.encodings(input)?.jpeg).data
+        let out = try #require(ImageSanitizer.encodings(input)?.jpeg.image).data
         #expect(JPEGSegments.violations(in: out, expectedICC: Self.displayP3ICC) == [])
     }
 

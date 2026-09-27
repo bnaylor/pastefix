@@ -19,10 +19,18 @@ struct ImageUploadCardTests {
     static func jpeg(_ choice: ImageFormatChoice) throws -> PreparedImage {
         let png = try #require(ImageUploadPreparationTests.png(width: 40, height: 20))
         let encodings = try #require(ImageSanitizer.encodings(png))
-        let jpeg = try #require(encodings.jpeg)
+        let jpeg = try #require(encodings.jpeg.image)
         return PreparedImage(choice: choice, chosen: jpeg,
                              pngAlternative: choice.offersPNGEscape ? encodings.png : nil,
                              pngByteCount: encodings.png.data.count)
+    }
+
+    /// A PNG sent because the JPEG could not be made (#93 review).
+    static func pngAfterJPEGFailed() throws -> PreparedImage {
+        let png = try #require(ImageUploadPreparationTests.png(width: 40, height: 20))
+        let image = try #require(ImageSanitizer.stripped(png))
+        return PreparedImage(choice: .png, chosen: image, pngAlternative: nil, pngByteCount: image.data.count,
+                             jpegEncodeFailed: true)
     }
 
     static func allStates() throws -> [ImageUploadCard.State] {
@@ -33,8 +41,10 @@ struct ImageUploadCardTests {
                 .refused(.tooManyPixels(31_000_000)),
                 .ready(try jpeg(.jpegWithPNGEscape), hasText: false),
                 .ready(try jpeg(.jpegForcedByCap), hasText: true),
-                .refused(.tooManyBytes(23_700_000, format: .png)),
-                .refused(.tooManyBytes(17_100_000, format: .jpeg)),
+                .refused(.tooManyBytes(23_700_000, .pngWithTransparency)),
+                .refused(.tooManyBytes(23_700_000, .pngWithoutJPEG)),
+                .refused(.tooManyBytes(17_100_000, .jpeg)),
+                .ready(try pngAfterJPEGFailed(), hasText: true),
                 .refused(.unusable),
                 .superseded]
     }
@@ -147,13 +157,13 @@ struct ImageUploadCardTests {
 
     @Test("a PNG byte refusal names the size and the limit, and says why it can't be JPEG")
     func byteRefusal() {
-        let line = ImageUploadCard.refusal(.tooManyBytes(23_697_818, format: .png))
+        let line = ImageUploadCard.refusal(.tooManyBytes(23_697_818, .pngWithTransparency))
         #expect(line == "22.6 MB after preparing; the limit is 16 MB. It has transparency, so it can't be sent as JPEG.")
     }
 
     @Test("a JPEG byte refusal names the JPEG's size")
     func jpegByteRefusal() {
-        let line = ImageUploadCard.refusal(.tooManyBytes(17_930_000, format: .jpeg))
+        let line = ImageUploadCard.refusal(.tooManyBytes(17_930_000, .jpeg))
         #expect(line == "17.1 MB even as JPEG; the limit is 16 MB.")
     }
 
@@ -240,5 +250,17 @@ struct ImageUploadCardTests {
             state.toggleFormat()
             #expect(state == original)
         }
+    }
+
+    @Test("a failed JPEG never produces transparency wording, anywhere")
+    func encodeFailedNeverSaysTransparency() throws {
+        let prepared = try Self.pngAfterJPEGFailed()
+        let lines = [ImageUploadCard.formatLine(for: prepared), ImageUploadCard.formatSwitchTitle(for: prepared),
+                     ImageUploadCard.refusal(.tooManyBytes(20_000_000, .pngWithoutJPEG)),
+                     ImageUploadCard.headerDetail(for: .ready(prepared, hasText: false))].compactMap { $0 }
+        #expect(lines.count == 3)   // no switch title: there is nothing to switch to
+        for line in lines { #expect(!line.lowercased().contains("transparen"), "\(line)") }
+        #expect(ImageUploadCard.refusal(.tooManyBytes(20_000_000, .pngWithoutJPEG))
+                == "19.1 MB as PNG; the limit is 16 MB. It couldn't also be prepared as JPEG.")
     }
 }

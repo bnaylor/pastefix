@@ -11,7 +11,8 @@ import Foundation
 /// photo, which is why a JPEG chosen by the ratio always comes with the one-click PNG escape.
 ///
 /// The rule (spec `2026-09-27-pastefix-v2-photos-as-jpeg`, "The rule"):
-/// 1. Any non-opaque pixel (`jpegBytes == nil`) → PNG; over the cap → refused, naming the PNG.
+/// 1. No JPEG (`jpegBytes == nil`: a non-opaque pixel, or — never seen — a failed JPEG encode) →
+///    PNG; over the cap → refused, naming the PNG.
 /// 2. Opaque, PNG over the cap → JPEG if it fits, **whatever the ratio**, with no escape (the PNG
 ///    could not be sent). If the JPEG does not fit either → refused, naming the **JPEG**.
 /// 3. Opaque, PNG fits, JPEG ≤ `jpegRatioThreshold` × PNG → JPEG, with the PNG escape.
@@ -26,8 +27,8 @@ public enum ImageFormatChoice: Equatable, Sendable {
     case jpegWithPNGEscape
     /// Send the JPEG; the PNG is over the cap, so there is no escape.
     case jpegForcedByCap
-    /// Neither fits (or the image is not opaque and its PNG does not): the size of the format that
-    /// would have been sent.
+    /// Neither fits (or there is no JPEG and the PNG does not): the size of the format that would
+    /// have been sent.
     case refused(bytes: Int, format: ImageFormat)
 
     /// JPEG must be at most this fraction of the PNG to be chosen when the PNG fits. Photos
@@ -47,8 +48,9 @@ public enum ImageFormatChoice: Equatable, Sendable {
 
     /// - Parameters:
     ///   - pngBytes: the stripped PNG's size.
-    ///   - jpegBytes: the stripped JPEG's size, or nil when the image has a non-opaque pixel (it
-    ///     is then never encoded as JPEG).
+    ///   - jpegBytes: the stripped JPEG's size, or nil when there is no JPEG — the image has a
+    ///     non-opaque pixel, or the JPEG encode failed. The rule treats the two alike; only the
+    ///     card's wording tells them apart (`JPEGCandidate`).
     ///   - maxBytes: the upload cap, applied to whichever format is sent.
     public static func choose(pngBytes: Int, jpegBytes: Int?, maxBytes: Int) -> ImageFormatChoice {
         guard let jpegBytes else {
@@ -58,5 +60,11 @@ public enum ImageFormatChoice: Equatable, Sendable {
             return jpegBytes <= maxBytes ? .jpegForcedByCap : .refused(bytes: jpegBytes, format: .jpeg)
         }
         return Double(jpegBytes) <= jpegRatioThreshold * Double(pngBytes) ? .jpegWithPNGEscape : .png
+    }
+
+    /// `choose(pngBytes:jpegBytes:maxBytes:)` from the sanitizer's own answer: `.encodeFailed`
+    /// decides exactly as `.notOpaque` does — PNG, or a refusal naming the PNG.
+    public static func choose(pngBytes: Int, jpeg: JPEGCandidate, maxBytes: Int) -> ImageFormatChoice {
+        choose(pngBytes: pngBytes, jpegBytes: jpeg.image?.data.count, maxBytes: maxBytes)
     }
 }

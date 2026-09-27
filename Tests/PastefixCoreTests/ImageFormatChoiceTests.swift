@@ -77,4 +77,12 @@ struct ImageFormatChoiceTests {
         #expect(ImageFormatChoice.refused(bytes: 1, format: .jpeg).format == nil)
         #expect(ImageFormatChoice.png.format == .png)
     }
+
+    @Test("encodeFailed decides exactly as notOpaque: PNG when it fits, refused naming the PNG when not",
+          arguments: [1_000_000, 16_000_000, 17_000_000, 60_000_000])
+    func encodeFailedIsNotOpaqueForTheRule(pngBytes: Int) {
+        let failed = ImageFormatChoice.choose(pngBytes: pngBytes, jpeg: .encodeFailed, maxBytes: Self.cap)
+        #expect(failed == ImageFormatChoice.choose(pngBytes: pngBytes, jpeg: .notOpaque, maxBytes: Self.cap))
+        #expect(failed == (pngBytes <= Self.cap ? .png : .refused(bytes: pngBytes, format: .png)))
+    }
 }

@@ -13,7 +13,7 @@ struct ZiplineImageUploadTests {
 
     static func sanitizedJPEG() throws -> SanitizedImage {
         let input = try #require(Fixture.image(as: "public.png"))
-        return try #require(ImageSanitizer.encodings(input)?.jpeg)
+        return try #require(ImageSanitizer.encodings(input)?.jpeg.image)
     }
 
     @Test("an image upload's extension is its format's, and the type has no way to say otherwise")

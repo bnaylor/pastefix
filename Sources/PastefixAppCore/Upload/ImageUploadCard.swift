@@ -111,7 +111,9 @@ public enum ImageUploadCard {
 
     /// What the card says about the format (#21), or nil for a plain PNG — the case that has
     /// nothing to explain. A format change the user cannot see would be a second silent
-    /// transformation, so every JPEG says so, with the PNG's size beside it.
+    /// transformation, so every JPEG says so, with the PNG's size beside it. When shown, it
+    /// replaces the size line (it carries the size itself), which is what keeps the worst case
+    /// inside the panel (`UploadCardLayout`).
     public static func formatLine(for prepared: PreparedImage,
                                   maxBytes: Int = UploadLimits.maxPayloadBytes) -> String? {
         let png = HistoryFormatting.byteLabel(prepared.pngByteCount)
@@ -123,6 +125,9 @@ public enum ImageUploadCard {
                 : "Sending as JPEG (\(jpeg); as PNG it would be \(png))"
         case .jpegForcedByCap:
             return "Sending as JPEG (\(jpeg)). As PNG it would be \(png), over the \(ByteLimit.describe(maxBytes)) limit"
+        case .png where prepared.jpegEncodeFailed:
+            // Neutral: the JPEG failed, which says nothing about the image — no transparency claim.
+            return "Sending as PNG (\(png))"
         case .png, .refused:
             return nil
         }
@@ -149,10 +154,12 @@ public enum ImageUploadCard {
         switch refusal {
         case .tooManyPixels(let pixels):
             return "Too large to upload — \(ImageBytes.megapixelLabel(pixels)); the limit is \(ImageBytes.megapixelLabel(maxPixels))."
-        case .tooManyBytes(let bytes, .png):
-            // Only an image with a non-opaque pixel is refused as PNG: an opaque one would have
-            // gone as JPEG (`ImageFormatChoice`).
+        case .tooManyBytes(let bytes, .pngWithTransparency):
+            // Only for `JPEGCandidate.notOpaque`: a pixel really is not opaque.
             return "\(HistoryFormatting.byteLabel(bytes)) after preparing; the limit is \(ByteLimit.describe(maxBytes)). It has transparency, so it can't be sent as JPEG."
+        case .tooManyBytes(let bytes, .pngWithoutJPEG):
+            // The JPEG could not be made. Nothing is known about the image, so nothing is said.
+            return "\(HistoryFormatting.byteLabel(bytes)) as PNG; the limit is \(ByteLimit.describe(maxBytes)). It couldn't also be prepared as JPEG."
         case .tooManyBytes(let bytes, .jpeg):
             return "\(HistoryFormatting.byteLabel(bytes)) even as JPEG; the limit is \(ByteLimit.describe(maxBytes))."
         case .unusable:

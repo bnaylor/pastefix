@@ -13,11 +13,23 @@ public enum ImageUploadPreparation {
         /// Over `PixelLimits.maxConvertiblePixels` — the figure, for "31 MP; limit 25 MP".
         case tooManyPixels(Int)
         /// Stripped, and still over `UploadLimits.maxPayloadBytes` in the format that would have
-        /// been sent (`ImageFormatChoice`): the PNG for an image with a non-opaque pixel, otherwise
-        /// the JPEG — an opaque image is refused only when even its JPEG does not fit (#21).
-        case tooManyBytes(Int, format: ImageFormat)
+        /// been sent (`ImageFormatChoice`), with why it was that format — the card's wording
+        /// depends on it (#21).
+        case tooManyBytes(Int, OversizeFormat)
         /// Could not be decoded or stripped.
         case unusable
+    }
+
+    /// Which format an over-cap image was measured in, and why.
+    public enum OversizeFormat: Equatable, Sendable {
+        /// The PNG, because some pixel is not opaque (`JPEGCandidate.notOpaque`). The only case
+        /// the card may call transparency.
+        case pngWithTransparency
+        /// The PNG, because the JPEG could not be made (`JPEGCandidate.encodeFailed`). Nothing
+        /// is claimed about the image.
+        case pngWithoutJPEG
+        /// Even the JPEG is over the cap.
+        case jpeg
     }
 
     public enum Outcome: Equatable, Sendable {
@@ -32,6 +44,14 @@ public enum ImageUploadPreparation {
     public static func prepare(_ png: Data,
                                maxPixels: Int = PixelLimits.maxConvertiblePixels,
                                maxBytes: Int = UploadLimits.maxPayloadBytes) -> Outcome {
+        prepare(png, maxPixels: maxPixels, maxBytes: maxBytes, encode: ImageSanitizer.encodings)
+    }
+
+    /// `prepare` with the sanitizer's encodings injectable — tests pass one whose JPEG encoder
+    /// fails. Whatever is injected still has to return `SanitizedImage`s, which only the
+    /// sanitizer can make.
+    static func prepare(_ png: Data, maxPixels: Int, maxBytes: Int,
+                        encode: (Data, Int) -> SanitizedEncodings?) -> Outcome {
         // The pixel figure is read first so a ceiling refusal can name it; the sanitizer refuses
         // the same images on its own, and would return the bare nil below without this.
         if let size = ImageBytes.pixelSize(of: png) {
@@ -40,19 +60,23 @@ public enum ImageUploadPreparation {
         }
         // JPEG is encoded only when every pixel is opaque (`encodings` scans them); the cap is
         // applied to whichever format `ImageFormatChoice` picks.
-        guard let encodings = ImageSanitizer.encodings(png, maxPixels: maxPixels) else { return .refused(.unusable) }
+        guard let encodings = encode(png, maxPixels) else { return .refused(.unusable) }
         let choice = ImageFormatChoice.choose(pngBytes: encodings.png.data.count,
-                                              jpegBytes: encodings.jpeg?.data.count, maxBytes: maxBytes)
+                                              jpeg: encodings.jpeg, maxBytes: maxBytes)
         let prepared: PreparedImage
         switch choice {
-        case .refused(let bytes, let format):
-            return .refused(.tooManyBytes(bytes, format: format))
+        case .refused(let bytes, .jpeg):
+            return .refused(.tooManyBytes(bytes, .jpeg))
+        case .refused(let bytes, .png):
+            // A failed JPEG is not transparency, and the card must not say it is.
+            return .refused(.tooManyBytes(bytes, encodings.jpeg == .notOpaque ? .pngWithTransparency : .pngWithoutJPEG))
         case .png:
             prepared = PreparedImage(choice: choice, chosen: encodings.png, pngAlternative: nil,
-                                     pngByteCount: encodings.png.data.count)
+                                     pngByteCount: encodings.png.data.count,
+                                     jpegEncodeFailed: encodings.jpeg == .encodeFailed)
         case .jpegWithPNGEscape, .jpegForcedByCap:
             // `choose` answers JPEG only when given a JPEG size, so this is always present.
-            guard let jpeg = encodings.jpeg else { return .refused(.unusable) }
+            guard let jpeg = encodings.jpeg.image else { return .refused(.unusable) }
             prepared = PreparedImage(choice: choice, chosen: jpeg,
                                      pngAlternative: choice.offersPNGEscape ? encodings.png : nil,
                                      pngByteCount: encodings.png.data.count)
@@ -92,12 +116,17 @@ public struct PreparedImage: Equatable, Sendable {
     public let pngByteCount: Int
     /// Whether the user pressed "Send as PNG instead". Only ever true with a `pngAlternative`.
     public private(set) var sendsPNGInstead = false
+    /// The PNG is sent because the JPEG could not be made (`JPEGCandidate.encodeFailed`) — never
+    /// because of anything about the image. The card says "Sending as PNG" and nothing more.
+    public let jpegEncodeFailed: Bool
 
-    init(choice: ImageFormatChoice, chosen: SanitizedImage, pngAlternative: SanitizedImage?, pngByteCount: Int) {
+    init(choice: ImageFormatChoice, chosen: SanitizedImage, pngAlternative: SanitizedImage?, pngByteCount: Int,
+         jpegEncodeFailed: Bool = false) {
         self.choice = choice
         self.chosen = chosen
         self.pngAlternative = pngAlternative
         self.pngByteCount = pngByteCount
+        self.jpegEncodeFailed = jpegEncodeFailed
     }
 
     /// The bytes Upload sends.

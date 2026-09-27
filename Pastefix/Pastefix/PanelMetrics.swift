@@ -1,4 +1,5 @@
 import CoreGraphics
+import PastefixAppCore
 
 /// Sizes shared by the SwiftUI panel views and the AppKit `PanelController`.
 ///
@@ -9,8 +10,9 @@ import CoreGraphics
 enum PanelMetrics {
     /// Narrowest content the editor alone is usable at.
     static let minContentWidth: CGFloat = 560
-    /// Shortest content the editor is usable at.
-    static let minContentHeight: CGFloat = 380
+    /// Shortest content the editor is usable at. The upload card's height budget is checked
+    /// against this same number (`UploadCardLayoutTests`).
+    static let minContentHeight: CGFloat = UploadCardLayout.minPanelHeight
     /// Width of the transforms sidebar column.
     static let sidebarWidth: CGFloat = 220
     /// Narrowest content that fits the editor *and* the sidebar.

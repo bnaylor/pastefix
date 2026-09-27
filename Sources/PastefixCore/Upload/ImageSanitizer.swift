@@ -2,6 +2,9 @@ import Foundation
 import CoreGraphics
 import ImageIO
 import UniformTypeIdentifiers
+import os
+
+private let sanitizerLog = Logger(subsystem: "net.scromp.Pastefix", category: "image-sanitizer")
 
 /// The pixel ceiling for any full decode, and overflow-safe pixel counting. Here in Core so the
 /// upload sanitizer and `PastefixAppCore.ImageBytes` share one number (`ImageBytes` forwards to
@@ -62,9 +65,27 @@ public enum ImageFormat: Sendable, Equatable {
 public struct SanitizedEncodings: Sendable, Equatable {
     /// Always present: every image can go as PNG.
     public let png: SanitizedImage
-    /// Present exactly when every pixel is opaque. JPEG has no alpha, and flattening changes what
-    /// the user sees, so an image with any non-opaque pixel is never encoded as JPEG at all.
-    public let jpeg: SanitizedImage?
+    /// Why there is or isn't a JPEG — by type, so "no JPEG" is never read as "transparent" when
+    /// the encoder failed instead.
+    public let jpeg: JPEGCandidate
+}
+
+/// The JPEG side of `SanitizedEncodings` (#21).
+public enum JPEGCandidate: Sendable, Equatable {
+    /// Some pixel has alpha < 255. JPEG has no alpha, and flattening changes what the user sees,
+    /// so such an image is never encoded as JPEG at all. The only case the card may call
+    /// "transparency".
+    case notOpaque
+    /// Every pixel may well be opaque, but no JPEG could be made: the encode failed, or the
+    /// opacity scan could not allocate its bitmap. Never observed. The upload falls back to the
+    /// PNG — a refusal is worse than a lossless image — and the card says nothing about why.
+    case encodeFailed
+    case encoded(SanitizedImage)
+
+    public var image: SanitizedImage? {
+        if case .encoded(let image) = self { return image }
+        return nil
+    }
 }
 
 /// Removes identifying metadata from an image before it leaves the machine (#20).
@@ -136,17 +157,36 @@ public enum ImageSanitizer {
     /// away the sensor noise that makes a photo's PNG big, and anti-aliases the hard edges that
     /// keep a screenshot's PNG small), and the JPEG costs ~8% on top of the PNG (measured).
     ///
-    /// nil on every failure, as `stripped`. That includes a JPEG encode failing on an opaque
-    /// image: nil there, rather than a PNG-only answer, keeps "no JPEG" meaning exactly "has a
-    /// non-opaque pixel", which the card's wording relies on.
+    /// nil on every failure of the strip or the PNG, as `stripped`. A failed JPEG is **not** a
+    /// failure of the whole: it is `.encodeFailed`, and the upload falls back to the PNG — a
+    /// refusal is worse than a lossless image (#93 review). It is logged at `.notice`, the only
+    /// trace of a path nobody has seen.
     public static func encodings(_ data: Data, maxPixels: Int = PixelLimits.maxConvertiblePixels) -> SanitizedEncodings? {
+        encodings(data, maxPixels: maxPixels, jpegEncoder: JPEGEncoder.encode)
+    }
+
+    /// `encodings(_:maxPixels:)` with the JPEG encoder injectable, so tests can make it fail. The
+    /// encoder only ever receives the stripped `CGImage`, never the input bytes.
+    static func encodings(_ data: Data, maxPixels: Int,
+                          jpegEncoder: (CGImage, Double) -> Data?) -> SanitizedEncodings? {
         guard let image = strippedImage(data, maxPixels: maxPixels),
               let png = encodePNG(image) else { return nil }
-        guard isOpaque(image) else { return SanitizedEncodings(png: png, jpeg: nil) }
+        switch isOpaque(image) {
+        case false?:
+            return SanitizedEncodings(png: png, jpeg: .notOpaque)
+        case nil:
+            sanitizerLog.notice("JPEG candidate unavailable: the opacity scan failed (\(image.width, privacy: .public)x\(image.height, privacy: .public)); sending PNG")
+            return SanitizedEncodings(png: png, jpeg: .encodeFailed)
+        case true?:
+            break
+        }
         // The same bare, stripped `CGImage` the PNG was made from — never the source, and no
         // properties but the quality (see `JPEGEncoder`).
-        guard let jpeg = JPEGEncoder.encode(image, quality: jpegQuality) else { return nil }
-        return SanitizedEncodings(png: png, jpeg: SanitizedImage(format: .jpeg, data: jpeg))
+        guard let jpeg = jpegEncoder(image, jpegQuality), !jpeg.isEmpty else {
+            sanitizerLog.notice("JPEG encode failed (\(image.width, privacy: .public)x\(image.height, privacy: .public)); sending PNG")
+            return SanitizedEncodings(png: png, jpeg: .encodeFailed)
+        }
+        return SanitizedEncodings(png: png, jpeg: .encoded(SanitizedImage(format: .jpeg, data: jpeg)))
     }
 
     /// Whether every pixel's alpha is 255 — **a pixel test, not a question about the channel.**
@@ -154,25 +194,28 @@ public enum ImageSanitizer {
     /// every pixel at 255; asking "has an alpha channel?" would silently turn JPEG off for all of
     /// them. The image is drawn into an 8-bit alpha-only bitmap — the pixels' alpha and nothing
     /// else, so no colour conversion is paid for — and each row is compared against a row of 255s
-    /// with `memcmp`. Measured at 25 MP: ~20 ms (an RGBA render with a per-pixel Swift loop was
-    /// ~0.7 s unoptimised). An image with no alpha channel draws as 255 everywhere.
+    /// with `memcmp`. Measured at 25 MP (6000×4166, Display P3, on the development Mac — Apple
+    /// silicon, macOS 26.3.1): **~6 ms** warm for a premultiplied-RGBA image (12 ms on the first
+    /// call), ~2 ms for one with no alpha channel, the same unoptimised and optimised. (An RGBA
+    /// render with a per-pixel Swift loop was ~0.7 s unoptimised.) An image with no alpha channel
+    /// draws as 255 everywhere.
     ///
-    /// Any failure answers "not opaque": the cost of a wrong "no" is a PNG, the cost of a wrong
-    /// "yes" is a flattened image.
-    static func isOpaque(_ image: CGImage) -> Bool {
+    /// nil when the bitmap cannot be made: the caller treats that as "no JPEG" without calling it
+    /// transparency. Never a guessed "yes" — a wrong "yes" is a flattened image.
+    static func isOpaque(_ image: CGImage) -> Bool? {
         let width = image.width, height = image.height
         guard width > 0, height > 0,
               let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8,
                                       bytesPerRow: width, space: nil as CGColorSpace?,
                                       bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.alphaOnly.rawValue))
-        else { return false }
+        else { return nil }
         context.setBlendMode(.copy)
         context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
-        guard let base = context.data else { return false }
+        guard let base = context.data else { return nil }
         let stride = context.bytesPerRow
         let opaqueRow = [UInt8](repeating: 255, count: width)
-        return opaqueRow.withUnsafeBytes { row in
-            guard let rowBase = row.baseAddress else { return false }
+        return opaqueRow.withUnsafeBytes { row -> Bool? in
+            guard let rowBase = row.baseAddress else { return nil }
             for y in 0..<height where memcmp(base + y * stride, rowBase, width) != 0 { return false }
             return true
         }
