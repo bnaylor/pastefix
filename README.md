@@ -78,7 +78,7 @@ Press **⌘⇧U** (rebindable in Settings → Shortcut, like the other two globa
 
 Every upload is scanned for secrets first, in full, with no size cap — deliberately unlike the 256 KB-capped badge under Secrets above, because a scan that runs once per deliberate upload can afford more than one that runs on every capture and summon. When something is found, you get the kinds found and a choice: **Redact** (preselected — Return uploads the redacted copy) or send as-is. Redaction only changes the uploaded copy; your buffer and the clipboard are untouched.
 
-**Expires** (Never / 1 hour / 1 day / 7 days) and **Burn after reading** are separate controls, because Zipline treats them as separate headers — a paste can be both one-view and gone in an hour.
+**Expires** (Never / 1 hour / 1 day / 7 days) and **Burn after reading** are separate controls, because Zipline treats them as separate headers — a paste can be both one-view and gone in an hour. Burn after reading means *only the first person to open the link can see it*: Zipline remembers who viewed it first, lets them open it again, and deletes it for anyone else. So **don't open a burn-after-reading link yourself to check it** — that uses it up, and the person you send it to gets nothing. The Open button after such an upload says so.
 
 **File type** sets the uploaded file's extension, which is how Zipline v4 picks syntax highlighting; there's no separate language control. It defaults to `json` when the buffer looks like JSON and `txt` otherwise, but your **Settings → Upload** default wins whenever you've set one away from `txt`, and anything you type into the field yourself wins over both.
 

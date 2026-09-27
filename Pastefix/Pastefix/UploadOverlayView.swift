@@ -697,8 +697,12 @@ struct UploadOverlayView: View {
             // `x-zipline-max-views: 1`, a different header with different semantics. A paste can
             // be both "one view" and "deleted in an hour", and collapsing them into one picker
             // would make those mutually exclusive for no reason but the UI's convenience.
+            // Measured against a real Zipline v4 (#86): the server remembers which client viewed the
+            // file first. That client can keep opening it; any other client gets 404 and the file
+            // is deleted. So "viewed once" is really "only the first person to open it" — and an
+            // uploader who opens their own link to check it has just used it up.
             Toggle("Burn after reading", isOn: $burnOnRead)
-                .help("The paste is deleted after it has been viewed once.")
+                .help("Only the first person to open the link can see it; anyone after them gets nothing. Opening it yourself uses it up.")
             if let message = inlineMessage(forHeaderContaining: "max-views") {
                 inlineError(message)
             }
@@ -1039,7 +1043,9 @@ struct UploadOverlayView: View {
             }
             HStack(spacing: 10) {
                 Button("Copy Again") { ClipboardBridge.writePlain(url.absoluteString, to: model.pasteboard) }
-                Button("Open") { NSWorkspace.shared.open(url) }
+                // For a burn-after-read upload, opening the link here *is* its one view, and the
+                // person it was meant for then gets a 404 (#86). Say so on the button itself.
+                Button(burnOnRead ? "Open (uses its one view)" : "Open") { NSWorkspace.shared.open(url) }
                 Spacer()
                 Button("Done") { onClose() }
                     .keyboardShortcut(.defaultAction)
