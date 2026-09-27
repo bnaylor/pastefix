@@ -11,8 +11,9 @@ import UniformTypeIdentifiers
 /// `NSBitmapImageRep.representation(using: .png)` (worse). Measured on macOS 26 with a standalone
 /// program containing none of this codebase's code: linear per call, no plateau, and
 /// `malloc_zone_pressure_relief` frees nothing — a leak, not allocator slack. Encoding to a file
-/// URL does not leak (flat across 8 calls, including reading the bytes back). The Apple report
-/// and its Feedback ID are tracked on #87. `PNGEncoderTests.doesNotLeak` fails if this ever
+/// URL does not leak (flat across 8 calls, including reading the bytes back). Reported to Apple
+/// as FB24956933 (tracked on #87); when it is fixed, `PNGEncoderTests.doesNotLeak` says whether
+/// an in-memory encode is safe again. `PNGEncoderTests.doesNotLeak` fails if this ever
 /// goes back to an in-memory destination.
 ///
 /// **What touches disk.** The encoded bytes, for the duration of one call, in a directory inside
