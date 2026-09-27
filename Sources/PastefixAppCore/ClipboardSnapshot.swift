@@ -208,8 +208,10 @@ public struct ClipboardSnapshot: Sendable {
     /// The body of `unreproduced(by:)` with its classification injected, which exists so a test can
     /// hand it a bucketing of a property this function does not name and check that the property is
     /// reported anyway. That is the difference between "the `.lossIfPresent` bucket is honoured" and
-    /// "`refusedImagePixels` happens to be reported", and it is not observable through the public
-    /// entry point while the type has exactly one `.lossIfPresent` field. Internal, and every
+    /// "today's `.lossIfPresent` fields happen to be reported": the public entry point can only be
+    /// handed fields that exist, so a body naming `refusedImagePixels` and `fileReferenceTypes`
+    /// passes every test of it, and only a field this function never heard of tells the two
+    /// apart. Internal, and every
     /// production caller goes through `unreproduced(by:)` with the real dictionary.
     func unreproduced(by payload: SavePayload,
                       classifiedBy classes: [String: RepresentationClass]) -> Set<Representation> {
