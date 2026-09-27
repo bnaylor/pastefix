@@ -140,7 +140,11 @@ modifiers held. If they stick, tap ⌃, ⌥ and ⌘ once each, or run `hold 0`
 **Pasteboard fixtures:** `pbcopy < file` for anything large;
 `~/.local/bin/pfx-ui/pb text "…" | concealed "…" | concealed-late "…" |
 legacy "…" | tiff W H | png W H | rich "…" | types | count` for the special
-cases (concealed/transient markers, real TIFF/PNG images, RTF + string). Each
+cases (concealed/transient markers, real TIFF/PNG images, RTF + string).
+`tiff W H` is exactly W×H pixels, uncompressed, on any display, so it suits
+pixel-count limits. `png W H` is a smooth gradient that compresses to almost
+nothing (about 0.12 MB at 30 MP), so it can never exceed a byte cap: for that,
+put a random-noise PNG on the pasteboard as `«class PNGf»` data. Each
 of those destructive subcommands refuses (exit 2) unless a fresh save from
 `pb begin` exists at `~/.local/state/pfx-ui/clipboard.json` (or
 `$PFX_PB_SAVE`) — see ground rule 2. Set `PFX_PB_FORCE=1` only when you
