@@ -31,8 +31,9 @@ private let historyLog = Logger(subsystem: "net.scromp.Pastefix", category: "his
 /// `NSWorkspace.frontmostApplication` cross-check the tracker folds into `recentBundleIDs`.
 /// Attribution on the candidate is the tracker's newest activation, from that second sample.
 ///
-/// The TIFF branch is the one exception to "tick holds the main thread throughout": converting
-/// a TIFF to PNG happens off the main actor (#32), so real time — and real activations — can
+/// A deferred conversion is the one exception to "tick holds the main thread throughout":
+/// converting a TIFF — or bytes mislabelled `public.png` (#97) — to PNG happens off the main
+/// actor (#32), so real time — and real activations — can
 /// pass before the capture lands. That path therefore re-checks the change count and re-runs the
 /// filters afterwards (see `convertPending`), and keeps its attribution from the sample taken
 /// before the conversion, because by the time the PNG exists the newest activation may be an app
@@ -58,7 +59,7 @@ final class PasteboardMonitor {
     /// result that comes back under a stale generation belongs to a change the monitor has
     /// already moved past — or to a monitor that has since been replaced — and is dropped.
     private var conversionGeneration = 0
-    /// The single lane every TIFF decode in the process goes down, whichever monitor queued it.
+    /// The single lane every capture-path image decode goes down, whichever monitor queued it.
     private let conversionSlot = TIFFConversionSlot.shared
 
     init(pasteboard: NSPasteboard = .general, filters: [any CaptureFilter], maxImageBytes: Int,
@@ -130,7 +131,7 @@ final class PasteboardMonitor {
         let finalTypes = Array(Set(types).union(pasteboard.types ?? []))
         let refreshed = tracker.context(window: windowSeconds)
         var candidate = result.candidate
-        // On the TIFF path this pass is provisional: the candidate has no image yet, and
+        // On the deferred-conversion path this pass is provisional: the candidate has no image yet, and
         // `finishPending` runs the same filters again on the whole thing. Neither shipped
         // filter inspects the candidate's content, but a future one that does will see this call
         // as well as the later one, and must be written for both.
@@ -192,7 +193,7 @@ final class PasteboardMonitor {
         // Superseded by a newer change (or by `stop()`): the newer one owns the pasteboard now.
         // Don't touch `conversionTask` here — whoever superseded us already owns that slot.
         guard generation == conversionGeneration else {
-            historyLog.notice("dropped a converted TIFF: superseded by a newer pasteboard change")
+            historyLog.notice("dropped a converted image: superseded by a newer pasteboard change")
             return
         }
         conversionTask = nil
@@ -204,14 +205,21 @@ final class PasteboardMonitor {
         // list. `lastChangeCount` has already advanced past this change and the newer one gets
         // its own tick, so dropping is all there is to do.
         guard pasteboard.changeCount == changeCount else {
-            historyLog.notice("dropped a converted TIFF: the pasteboard turned over during the conversion")
+            historyLog.notice("dropped a converted image: the pasteboard turned over during the conversion")
             return
         }
         // A failed conversion, or a PNG over the budget, still leaves the text worth keeping —
         // exactly what `HistoryStore.record` would have kept had the image never existed.
-        guard let resolved = PendingImage.resolve(candidate, png: png, pixelWidth: pixelWidth,
-                                                  pixelHeight: pixelHeight,
-                                                  maxImageBytes: maxImageBytes) else { return }
+        let resolved = PendingImage.resolve(candidate, png: png, pixelWidth: pixelWidth,
+                                            pixelHeight: pixelHeight, maxImageBytes: maxImageBytes)
+        // Every drop is logged at `.notice` (`.debug` is not persisted): the image going, with or
+        // without text left to record.
+        if resolved?.imagePNG == nil {
+            let why = png == nil ? "the conversion failed"
+                : "the converted PNG is over the image budget (\(png?.count ?? 0) bytes)"
+            historyLog.notice("dropped a converted image: \(why, privacy: .public)")
+        }
+        guard let resolved else { return }
         // Stage 2 again, now that the candidate is whole. Types are the union approved before
         // the conversion plus whatever is declared now: `setData` does not bump `changeCount`,
         // so a concealed marker can have been added to this same change while we were busy, and

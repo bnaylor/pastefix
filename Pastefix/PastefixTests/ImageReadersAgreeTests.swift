@@ -69,6 +69,9 @@ struct ImageReadersAgreeTests {
         #expect(mislabelled.candidate.imagePNG == nil, "stored raw under a PNG's name")
         #expect(mislabelled.pendingConversion == jpeg)
         #expect(mislabelled.imagePixelWidth == 20 && mislabelled.imagePixelHeight == 10)
+        // The claim itself: history's conversion lane produces the bytes the session keeps.
+        let session = try #require(ClipboardBridge.snapshot(from: f.pasteboard).imagePNG)
+        #expect(ImageBytes.convertedToPNG(try #require(mislabelled.pendingConversion)) == session)
 
         let png = try #require(Pixels.encoded(width: 20, height: 10, type: "public.png"))
         f.copy([.png: png])

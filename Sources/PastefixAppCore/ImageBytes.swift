@@ -7,7 +7,8 @@ import UniformTypeIdentifiers
 /// The one place pasteboard image bytes are measured, validated and converted.
 ///
 /// Both image paths come here. The capture path (`PasteboardMonitor.read`, `TIFFConversionSlot`)
-/// size-gates a TIFF from its header and converts it off the main actor; the session path
+/// size-gates a TIFF — or bytes mislabelled `public.png` (#97) — from its header and converts it
+/// off the main actor; the session path
 /// (`ClipboardBridge.snapshot`) validates and normalises the same two types synchronously at
 /// summon. They used to hold a copy each of the header read, the `NSBitmapImageRep` route and the
 /// 25M-pixel literal — three chances for two agreeing implementations to stop agreeing, which is

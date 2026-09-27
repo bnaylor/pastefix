@@ -2,13 +2,14 @@ import Foundation
 
 /// What survives when a capture's image could only be produced *after* the read.
 ///
-/// The monitor reads a TIFF-only pasteboard image without converting it and does the decode and
+/// The monitor reads a TIFF-only pasteboard image — or bytes offered as `public.png` that are not
+/// a PNG (#97) — without converting it and does the decode and
 /// PNG re-encode off the main actor (#32), so by the time the PNG exists — or fails to exist, or
 /// comes out over the image budget — the decision "is there still anything worth recording here"
 /// has to be made separately from the read. That decision is this type; the surrounding
 /// re-checks (change count, filters) are app glue and live in `PasteboardMonitor`.
 public enum PendingImage {
-    /// The candidate to record once a deferred TIFF→PNG conversion has finished, or nil when
+    /// The candidate to record once a deferred image→PNG conversion has finished, or nil when
     /// nothing is left worth recording.
     ///
     /// `png == nil` means the conversion failed. An over-budget PNG is dropped here rather than
