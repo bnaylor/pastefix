@@ -281,11 +281,15 @@ final class PasteboardMonitor {
                     c.imagePNG = png; c.imagePixelWidth = size.width; c.imagePixelHeight = size.height
                 }
             } else if let tiff = pb.data(forType: .tiff), let size = ImageBytes.pixelSize(of: tiff),
-                      // Header-only pixel gate, not a byte-size heuristic, and the ceiling itself is
-                      // `ImageBytes`' — shared with the session path so the two cannot drift. See
-                      // there for why pixels and not bytes. The store's byte cap on the PNG result
-                      // still applies on top of it.
-                      size.width * size.height <= ImageBytes.maxConvertiblePixels {
+                      // Header-only pixel gate, not a byte-size heuristic, and both the ceiling and
+                      // the multiplication are `ImageBytes`' — shared with the session path so the
+                      // two cannot drift. See there for why pixels and not bytes, and why the
+                      // product is computed rather than multiplied here: these are 32-bit header
+                      // fields, and a crafted TIFF's `width * height` overflows `Int` and traps.
+                      // A size that will not multiply is over any ceiling, so it is skipped. The
+                      // store's byte cap on the PNG result still applies on top of this.
+                      let pixels = ImageBytes.pixelCount(width: size.width, height: size.height),
+                      pixels <= ImageBytes.maxConvertiblePixels {
                 pendingTIFF = tiff; pendingWidth = size.width; pendingHeight = size.height
             }
         }

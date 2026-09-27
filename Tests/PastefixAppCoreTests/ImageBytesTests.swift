@@ -80,6 +80,28 @@ struct ImageBytesTests {
         #expect(ImageBytes.normalise(Data(sample.png.prefix(20))) == .unusable)
     }
 
+    @Test("empty bytes are unusable, never an image")
+    func emptyBytes() {
+        // The case a history blob can actually be: a zero-byte file that `Data(contentsOf:)` hands
+        // back as `Data()`, not nil. `AppModel.load` routes every blob through here so that
+        // `ClipboardSnapshot.imagePNG` cannot become `Data()` and `save()` cannot write a zero-byte
+        // `public.png` over the user's clipboard.
+        #expect(ImageBytes.normalise(Data()) == .unusable)
+    }
+
+    @Test("a pixel count that does not fit in an Int is refused, not trapped")
+    func pixelCountOverflow() {
+        // TIFF's ImageWidth/ImageLength are 32-bit header fields read without a decode, so a
+        // crafted image can declare 0xFFFFFFFF x 0xFFFFFFFF: ~1.8e19, past Int.max. An unchecked
+        // multiply there crashes the app on *copying* a hostile image.
+        let huge = Int(UInt32.max)
+        #expect(ImageBytes.pixelCount(width: huge, height: huge) == nil)
+        #expect(ImageBytes.pixelCount(width: Int.max, height: 2) == nil)
+        // And the ordinary case still just multiplies.
+        #expect(ImageBytes.pixelCount(width: 8, height: 6) == 48)
+        #expect(ImageBytes.pixelCount(width: 0, height: 0) == 0)
+    }
+
     @Test("the conversion route reports failure rather than empty bytes")
     func conversionFailure() {
         #expect(ImageBytes.convertedToPNG(Data("not an image".utf8)) == nil)

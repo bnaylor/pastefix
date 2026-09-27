@@ -56,6 +56,22 @@ public enum ImageBytes {
         return (width, height)
     }
 
+    /// `width * height`, or nil when that product does not fit in an `Int`.
+    ///
+    /// Both pixel gates come here, and the reason is not shared code but a trap: these numbers are
+    /// read from an image *header*, not from a decode, and TIFF's `ImageWidth`/`ImageLength` are
+    /// 32-bit fields. A crafted TIFF declaring 0xFFFFFFFF x 0xFFFFFFFF multiplies out to ~1.8e19,
+    /// past `Int.max`, and an unchecked `*` there traps the process — an app crash on copying a
+    /// hostile image. Every other untrusted-input path in this codebase is bounded explicitly;
+    /// this one is now too.
+    ///
+    /// nil is always **over** any ceiling a caller could set (`maxConvertiblePixels` is 25 M),
+    /// so callers treat it as too large rather than needing a rule of their own for it.
+    public static func pixelCount(width: Int, height: Int) -> Int? {
+        let (pixels, overflowed) = width.multipliedReportingOverflow(by: height)
+        return overflowed ? nil : pixels
+    }
+
     /// The one decode-and-re-encode route in the app: bitmap in, PNG out, nil if either half
     /// fails. Callers are responsible for the pixel gate (`maxConvertiblePixels`) and for deciding
     /// which thread pays for this.
@@ -71,6 +87,14 @@ public enum ImageBytes {
     /// The pixel ceiling therefore does not apply to a PNG: nothing here decodes it, and whoever
     /// eventually draws it does so off the main actor at display size.
     ///
+    /// The cost of that, stated rather than discovered: a PNG whose header is intact and whose
+    /// **body** is truncated or corrupt is accepted here, because accepting it is what "no decode"
+    /// means. It fails later, where it is drawn — `ImageSessionView`'s "This image can't be shown"
+    /// state exists for exactly this — and `Save` writes those bytes back, which is the right
+    /// answer for bytes we never claimed to have understood. Re-encoding to find out would cost a
+    /// full decode on the main actor on every summon and would hand `Save` different bytes than
+    /// the user copied. So "does not decode ⇒ no image" is true of a TIFF and **not** of a PNG.
+    ///
     /// Anything else (a TIFF, in practice) is converted under the ceiling.
     ///
     /// The form is decided by **sniffing the bytes**, not by trusting a declared pasteboard type,
@@ -81,7 +105,12 @@ public enum ImageBytes {
               CGImageSourceGetCount(source) > 0,
               let size = pixelSize(of: data), size.width > 0, size.height > 0 else { return .unusable }
         if CGImageSourceGetType(source) as String? == UTType.png.identifier { return .png(data) }
-        let pixels = size.width * size.height
+        // A header whose dimensions multiply past `Int.max` is refused rather than trapped (see
+        // `pixelCount`). `Int.max` is the nearest countable stand-in for a declared size that does
+        // not fit — the figure only reaches a banner, and every value in that range is refused.
+        guard let pixels = pixelCount(width: size.width, height: size.height) else {
+            return .tooLarge(pixels: Int.max)
+        }
         guard pixels <= maxPixels else { return .tooLarge(pixels: pixels) }
         guard let converted = convertedToPNG(data) else { return .unusable }
         return .png(converted)
