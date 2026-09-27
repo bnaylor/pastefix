@@ -76,7 +76,7 @@ struct ImageUploadCardTests {
     @Test("the fixed lines say exactly what the spec says")
     func fixedWording() {
         #expect(ImageUploadCard.notCheckedVerdict == "Images are not checked for secrets.")
-        #expect(ImageUploadCard.metadataRemoved == "Location and camera details removed.")
+        #expect(ImageUploadCard.metadataRemoved == "Any location and camera details removed.")
         #expect(ImageUploadCard.clipboardReplaced == "The image is no longer on your clipboard.")
     }
 
@@ -114,7 +114,7 @@ struct ImageUploadCardTests {
     @Test("a byte refusal names the prepared size, the 16 MB limit, and points at #21")
     func byteRefusal() {
         let line = ImageUploadCard.refusal(.tooManyBytes(23_697_818))
-        #expect(line == "22.6 MB after preparing; the limit is 16 MB. Uploading as JPEG (#21) would fit.")
+        #expect(line == "22.6 MB after preparing; the limit is 16 MB. Uploading as JPEG (#21) would be smaller.")
     }
 
     @Test("an unusable image says so plainly")

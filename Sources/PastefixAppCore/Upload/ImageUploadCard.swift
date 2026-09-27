@@ -68,7 +68,7 @@ public enum ImageUploadCard {
     public static let notCheckedVerdict = "Images are not checked for secrets."
     /// The escalation when Vision found text regions (or failed, which counts as found).
     public static let containsText = "This image contains text."
-    public static let metadataRemoved = "Location and camera details removed."
+    public static let metadataRemoved = "Any location and camera details removed."
     public static let preparing = "Preparing the image…"
     /// The done state's extra line: the URL replaced the image via `writePlain`, which the text
     /// path never had to say because it never destroyed its source.
@@ -104,7 +104,7 @@ public enum ImageUploadCard {
         case .tooManyPixels(let pixels):
             return "Too large to upload — \(ImageBytes.megapixelLabel(pixels)); the limit is \(ImageBytes.megapixelLabel(maxPixels))."
         case .tooManyBytes(let bytes):
-            return "\(HistoryFormatting.byteLabel(bytes)) after preparing; the limit is \(ByteLimit.describe(maxBytes)). Uploading as JPEG (#21) would fit."
+            return "\(HistoryFormatting.byteLabel(bytes)) after preparing; the limit is \(ByteLimit.describe(maxBytes)). Uploading as JPEG (#21) would be smaller."
         case .unusable:
             return "This image couldn't be prepared for upload."
         }

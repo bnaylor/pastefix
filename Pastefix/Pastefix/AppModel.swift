@@ -319,6 +319,10 @@ final class AppModel: ObservableObject {
         let origin = ClipboardBridge.snapshot()
         doc.refresh(origin: origin)
         document = doc
+        // A refresh can replace the image without a new session generation. The cache key
+        // includes the bytes, so a stale preparation is never *served* — but it would still be
+        // *held* (up to 16 MB) until the next request, so it is dropped here.
+        imagePreparations.clear()
         requestDetection()
         errorMessage = nil
         noticeMessage = nil

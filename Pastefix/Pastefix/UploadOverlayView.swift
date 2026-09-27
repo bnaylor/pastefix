@@ -518,7 +518,7 @@ struct UploadOverlayView: View {
             // "empty" is the wrong word for a clipboard that holds an image — there is something
             // there, just nothing this overlay can send. See `unsupportedImage`; since #48 only a
             // *refused* image reaches this line (a shown one is the image card, above).
-            return unsupportedImage != nil ? "\(origin) — image, not supported yet" : "\(origin) — empty"
+            return unsupportedImage != nil ? "\(origin) — image too large" : "\(origin) — empty"
         }
         return "\(origin) · \(HistoryFormatting.byteLabel(payloadByteCount))"
     }
@@ -752,8 +752,9 @@ struct UploadOverlayView: View {
                 // Only the refused case reaches here since #48: a session *showing* an image gets
                 // the image card instead. It must not claim the session is showing an image, because
                 // the session shows nothing and the user is looking at the empty panel it would be
-                // describing. The wording is kept exactly as it was, by instruction, pending review.
-                Label("The clipboard holds an image too large to open here. Image upload isn't supported yet either — that's #48.",
+                // describing. Too large to open means too large to upload: the sanitizer refuses the
+                // same pixel ceiling, so there is no path that would send it.
+                Label("The clipboard holds an image too large to open here, so it can't be uploaded either.",
                       systemImage: "photo")
                     .font(.callout)
                     .foregroundStyle(.secondary)
