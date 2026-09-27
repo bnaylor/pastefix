@@ -88,23 +88,42 @@ public struct PasteDocument: Sendable {
     /// Save on an *unedited* session is at best a no-op and at worst destructive: the clipboard
     /// already holds everything the session has, so the best a write can do is put the same content
     /// back, and the worst it can do is `clearContents()` and then fail to reproduce something the
-    /// clipboard was holding. So the rule is not "is the payload empty" but **the session must be
-    /// able to reproduce everything the clipboard still holds** — and when it cannot, Save is a
-    /// no-op and the session simply ends.
+    /// clipboard was holding. So the rule is not "is the payload empty" but: **the session must be
+    /// able to reproduce everything the clipboard still holds, except the representations Save
+    /// drops by policy** — and when it cannot, Save is a no-op and the session simply ends.
     ///
-    /// Two ways it cannot, today. The payload is empty, so the write is `clearContents()` and
-    /// nothing else. Or the origin carries `refusedImagePixels`: the clipboard holds an image this
-    /// session was never given the bytes for, so *any* write drops it — including a write of real
-    /// text in a mixed session, which is why "empty payload" alone was the wrong predicate and lost
-    /// the picture the banner on screen promises is safe. #71 adds a third (a file reference the
-    /// session cannot reproduce), and the principle already covers it; a list of cases would not.
+    /// **The policy exception is rich content, and it is wanted.** An unedited rich-text copy has
+    /// `origin.richRTFD`, the payload writes plain text only (`SavePayload.richRTFD` is nil by
+    /// policy), and `clearContents()` drops the RTF/HTML the clipboard was holding — so this Save
+    /// *does* lose something the session could have reproduced, and it proceeds anyway. Summon + ⌘S
+    /// as "strip formatting" predates image sessions and is plausibly relied on; removing the
+    /// exception to make the words "everything the clipboard holds" literally true would break it.
+    /// Anyone tempted to tighten this predicate to match a simpler sentence is removing a feature.
+    /// The exception is recorded as a bucket, not as prose: `richRTFD` is
+    /// `ClipboardSnapshot.RepresentationClass.droppedByPolicy`.
+    ///
+    /// The question is asked once, on the snapshot: `unreproduced(by:)` classifies **every** stored
+    /// property of `ClipboardSnapshot` as reproduced-by-payload, dropped-by-policy, metadata, or
+    /// loss-if-present, and a `Mirror`-based test fails on any property that is in none of them. So
+    /// #71 recording a file reference cannot slip through: the earlier claim that "the principle
+    /// already covers it" was false — the predicate would not have mentioned the new field, the
+    /// payload would have been non-empty, and Save would have cleared the clipboard and dropped it.
+    /// Now that addition fails a test until someone picks its bucket.
+    ///
+    /// Three ways it can be true today: the payload declares nothing at all, so the write is
+    /// `clearContents()` and nothing else (`.wholeClipboard` — including whatever the clipboard
+    /// holds that no snapshot reads, such as a Finder file copy); the origin carries
+    /// `refusedImagePixels`, an image the session has no bytes for, which makes *any* write lossy
+    /// even in a mixed session with real text to write (the regression that proved "empty payload"
+    /// was the wrong predicate); or the payload simply does not carry a representation the origin
+    /// has.
     ///
     /// `isUnedited` is the other half and it is what keeps deliberate destruction working: select
     /// all, delete, ⌘S is an edited document, and that write happens. Losing an image that way is a
     /// consequence of something the user did, not something ⌘S did to them for summoning the panel.
     public var saveWouldLoseContent: Bool {
         guard isUnedited else { return false }
-        return SavePayload(document: self).isEmpty || origin.refusedImagePixels != nil
+        return !origin.unreproduced(by: SavePayload(document: self)).isEmpty
     }
 
     /// True when nothing has happened to this document since it was captured: no transform

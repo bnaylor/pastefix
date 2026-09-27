@@ -71,4 +71,99 @@ public struct ClipboardSnapshot: Sendable {
     }
 
     public var hasRichContent: Bool { richRTFD != nil }
+
+    // MARK: What a Save can and cannot put back
+
+    /// One thing a clipboard can hold, named so that "would this Save lose something?" can be
+    /// answered as a set rather than as an expression nobody can extend safely.
+    ///
+    /// Not one case per stored property: `richRTFD` is dropped by policy and so can never appear
+    /// here, and `changeCount` is metadata. `wholeClipboard` is the opposite — it is no property at
+    /// all. The mapping from properties to buckets is `storedPropertyClasses`, and a test enforces
+    /// that every stored property appears in it.
+    public enum Representation: Hashable, Sendable {
+        /// The origin's text, which the payload does not write back.
+        case plainText
+        /// The origin's standalone image, which the payload does not write back.
+        case image
+        /// A standalone image the clipboard holds and this snapshot has no bytes for
+        /// (`refusedImagePixels`). No payload can ever reproduce it, so its presence alone makes
+        /// any write lossy — that is the whole reason the notice on screen can promise the picture
+        /// is still there.
+        case refusedImage
+        /// Everything on the clipboard that no snapshot enumerates: a Finder file copy, a custom
+        /// type some app wrote, `NSFilenamesPboardType`, a promise. Counted as lost exactly when
+        /// the payload would write nothing at all, because then the write is `clearContents()` and
+        /// nothing else — there is no content to weigh the loss against. When the payload *does*
+        /// write something, an unedited Save is accepted as the user asking for that write, which
+        /// is the behaviour that predates image sessions.
+        case wholeClipboard
+    }
+
+    /// Which of the four buckets each stored property of this type falls into.
+    ///
+    /// It exists to be enforced: `ClipboardSnapshotClassificationTests` enumerates the stored
+    /// properties with `Mirror` and fails on any property missing from here (and on any key here
+    /// that is no longer a property). So #71 adding a file reference cannot compile-and-pass
+    /// without someone deciding what a Save owes it — which is the failure mode the old
+    /// "the principle already covers it" claim actually had: the principle covered nothing,
+    /// `unreproduced(by:)` would not have mentioned the new field, and Save would have written
+    /// over a file reference it could not reproduce.
+    ///
+    /// The buckets are exhaustive by construction — every property is reproduced by the payload,
+    /// deliberately dropped, not content at all, or unreproducible-if-present.
+    public enum RepresentationClass: String, Hashable, Sendable, CaseIterable {
+        /// `SavePayload` carries it, so a Save puts it back.
+        case reproducedByPayload
+        /// A Save deliberately does not write it. Today that is `richRTFD` only, and the policy is
+        /// named where the predicate reads it (`PasteDocument.saveWouldLoseContent`): summon + ⌘S
+        /// as "strip formatting" is behaviour users rely on and it predates image sessions.
+        case droppedByPolicy
+        /// Not clipboard content: bookkeeping about the capture itself.
+        case metadata
+        /// Content the clipboard holds that this snapshot has no bytes for, so no payload can
+        /// reproduce it. Present ⇒ any write is lossy.
+        case lossIfPresent
+    }
+
+    public static let storedPropertyClasses: [String: RepresentationClass] = [
+        "plainText": .reproducedByPayload,
+        "richRTFD": .droppedByPolicy,
+        "imagePNG": .reproducedByPayload,
+        "refusedImagePixels": .lossIfPresent,
+        "changeCount": .metadata,
+    ]
+
+    /// **Does this snapshot hold a representation that `payload` does not reproduce and that Save
+    /// does not drop on purpose?** The question `PasteDocument.saveWouldLoseContent` asks, as a
+    /// set, so that a new field on this type extends one classification instead of being forgotten
+    /// by two predicates that happened to agree.
+    ///
+    /// Blank-once-trimmed text and empty `Data` are *not* representations: they are the absence of
+    /// one, the same rule `SavePayload.isEmpty`, `PasteDocument.displaysAsImage` and
+    /// `HistoryStore.record` use. Reproduction is byte-for-byte equality with what the payload
+    /// would write — which is why this is only meaningful for an *unedited* document: for an edited
+    /// one the payload is *supposed* to differ, and the caller gates on `isUnedited` for exactly
+    /// that reason.
+    public func unreproduced(by payload: SavePayload) -> Set<Representation> {
+        var lost: Set<Representation> = []
+        if let text = plainText,
+           !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+           payload.text != text {
+            lost.insert(.plainText)
+        }
+        if let image = imagePNG, !image.isEmpty, payload.imagePNG != image {
+            lost.insert(.image)
+        }
+        if refusedImagePixels != nil {
+            lost.insert(.refusedImage)
+        }
+        // `richRTFD` is absent from this function on purpose (`.droppedByPolicy`) — see
+        // `PasteDocument.saveWouldLoseContent` for why removing that exception breaks
+        // strip-formatting. `changeCount` is `.metadata` and not content at all.
+        if payload.isEmpty {
+            lost.insert(.wholeClipboard)
+        }
+        return lost
+    }
 }

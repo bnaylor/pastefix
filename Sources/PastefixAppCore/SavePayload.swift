@@ -71,10 +71,14 @@ public struct SavePayload: Sendable, Equatable {
     /// the save path disagree about whether a buffer has text gives two answers for one clipboard.
     /// Empty `Data` counts as no image and no rich content for the same reason.
     ///
-    /// This is one of the two ways `PasteDocument.saveWouldLoseContent` can be true — the other is
-    /// an origin carrying `refusedImagePixels`, an image the session holds no bytes for, which makes
-    /// *any* write lossy however full the payload is. Both are gated on `isUnedited` there: an empty
-    /// payload from a document the user *edited* is a deliberate clear and must still be written.
+    /// `ClipboardSnapshot.unreproduced(by:)` reads this as losing **everything** the clipboard holds
+    /// — its `.wholeClipboard` case, which covers the representations no snapshot even reads (a
+    /// Finder file copy, a custom type) precisely because there is no content to weigh them
+    /// against. It is one of the ways `PasteDocument.saveWouldLoseContent` is true; the others are
+    /// an origin representation this payload does not carry, and `refusedImagePixels`, an image the
+    /// session holds no bytes for, which makes *any* write lossy however full the payload is. All of
+    /// them are gated on `isUnedited` there: an empty payload from a document the user *edited* is a
+    /// deliberate clear and must still be written.
     public var isEmpty: Bool {
         (text ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             && (imagePNG?.isEmpty ?? true)
