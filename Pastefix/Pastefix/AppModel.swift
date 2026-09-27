@@ -118,7 +118,7 @@ final class AppModel: ObservableObject {
     /// a uniquely named pasteboard in tests (#68), so a test run never touches the user's clipboard.
     let pasteboard: NSPasteboard
 
-    init(settings: SettingsStore, history: HistoryStore, pasteboard: NSPasteboard = .general) {
+    init(settings: SettingsStore, history: HistoryStore, pasteboard: NSPasteboard) {
         self.pasteboard = pasteboard
         self.settings = settings
         self.history = history

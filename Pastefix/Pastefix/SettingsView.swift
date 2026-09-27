@@ -32,7 +32,7 @@ struct SettingsView: View {
             transforms.tabItem { Label("Transforms", systemImage: "slider.horizontal.3") }
             PresetsSettingsView(settings: settings, editor: presetEditor)
                 .tabItem { Label("Presets", systemImage: "text.badge.plus") }
-            UploadSettingsView(settings: settings)
+            UploadSettingsView(settings: settings, tokenStore: KeychainTokenStore())
                 .tabItem { Label("Upload", systemImage: "arrow.up.doc") }
         }
         .frame(width: 460, height: 400)

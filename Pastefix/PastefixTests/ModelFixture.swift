@@ -45,9 +45,14 @@ final class ModelFixture {
 
     func finish() {
         #expect(NSPasteboard.general.changeCount == generalAtStart,
-                "a test path reached the user's clipboard")
+                "the general clipboard changed during this test: a test path reached it, or something else on the machine copied while the test ran")
         pasteboard.releaseGlobally()
+        // `removePersistentDomain` empties the suite, but cfprefsd keeps the (now empty) plist
+        // file — one per test per run, forever, which is #85 over again. Remove the file too.
         UserDefaults().removePersistentDomain(forName: suite)
+        let plist = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Preferences/\(suite).plist")
+        try? FileManager.default.removeItem(at: plist)
         try? FileManager.default.removeItem(at: directory)
     }
 

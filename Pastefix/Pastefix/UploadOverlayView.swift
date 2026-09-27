@@ -254,7 +254,7 @@ struct UploadOverlayView: View {
     init(model: AppModel,
          onClose: @escaping () -> Void,
          uploader: any ZiplineUploading = URLSessionZiplineClient(),
-         tokenStore: any ZiplineTokenStore = KeychainTokenStore()) {
+         tokenStore: any ZiplineTokenStore) {
         _model = ObservedObject(wrappedValue: model)
         self.onClose = onClose
         self.uploader = uploader

@@ -181,7 +181,7 @@ struct PanelView: View {
                     .transition(.opacity)
                     .disabled(model.isApplying)
             } else if isUploadOpen {
-                UploadOverlayView(model: model, onClose: closeUpload)
+                UploadOverlayView(model: model, onClose: closeUpload, tokenStore: KeychainTokenStore())
                     .id(uploadGeneration)
                     .transition(.opacity)
                     .disabled(model.isApplying)

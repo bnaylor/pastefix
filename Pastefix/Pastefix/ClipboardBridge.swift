@@ -2,7 +2,7 @@ import AppKit
 import PastefixAppCore
 
 enum ClipboardBridge {
-    static func snapshot(from pasteboard: NSPasteboard = .general) -> ClipboardSnapshot {
+    static func snapshot(from pasteboard: NSPasteboard) -> ClipboardSnapshot {
         // Count **first**, contents second, and the order is the whole safety argument. A copy
         // landing between the two reads is recorded as count C against contents from C+1: the
         // snapshot then looks *older* than it is, so ⌘⇧U re-snapshots — a wasted read of the
@@ -68,7 +68,7 @@ enum ClipboardBridge {
                                  refusedImagePixels: refusedPixels, changeCount: changeCount)
     }
 
-    static func writePlain(_ text: String, to pasteboard: NSPasteboard = .general) {
+    static func writePlain(_ text: String, to pasteboard: NSPasteboard) {
         write(text: text, richRTFD: nil, imagePNG: nil, to: pasteboard)
     }
 
@@ -105,7 +105,7 @@ enum ClipboardBridge {
     private(set) static var lastSelfWriteChangeCount: [NSPasteboard.Name: Int] = [:]
 
     /// Whether `pasteboard`'s current contents are something Pastefix itself put there.
-    static func clipboardIsSelfWritten(changeCount: Int, on pasteboard: NSPasteboard = .general) -> Bool {
+    static func clipboardIsSelfWritten(changeCount: Int, on pasteboard: NSPasteboard) -> Bool {
         changeCount == lastSelfWriteChangeCount[pasteboard.name]
     }
 
@@ -135,7 +135,7 @@ enum ClipboardBridge {
     /// with an empty buffer now declares no `public.string` instead of an empty one, which is what
     /// `SavePayload.text` documents and what every other save path already did.
     static func writeRich(_ payload: SavePayload, html: String, rtf: Data?,
-                          to pasteboard: NSPasteboard = .general) {
+                          to pasteboard: NSPasteboard) {
         beginWrite(pasteboard)
         if let text = payload.text { pasteboard.setString(text, forType: .string) }
         pasteboard.setString(html, forType: .html)
@@ -144,7 +144,7 @@ enum ClipboardBridge {
     }
 
     /// Writes every representation we have for one item. Empty inputs write nothing for that type.
-    static func write(text: String?, richRTFD: Data?, imagePNG: Data?, to pasteboard: NSPasteboard = .general) {
+    static func write(text: String?, richRTFD: Data?, imagePNG: Data?, to pasteboard: NSPasteboard) {
         beginWrite(pasteboard)
         if let text { pasteboard.setString(text, forType: .string) }
         if let richRTFD {

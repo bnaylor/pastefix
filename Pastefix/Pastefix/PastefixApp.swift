@@ -73,7 +73,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private(set) lazy var history = HistoryStore(
         directory: Self.historyDirectory,
         limits: HistoryLimits(maxItems: settings.historyMaxItems))
-    private(set) lazy var model = AppModel(settings: settings, history: history)
+    private(set) lazy var model = AppModel(settings: settings, history: history, pasteboard: .general)
     private(set) lazy var snippetHotkeys = SnippetHotkeys(history: history)
     let updater = UpdaterController()
     private var panel: PanelController?

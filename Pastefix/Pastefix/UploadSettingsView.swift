@@ -37,7 +37,7 @@ struct UploadSettingsView: View {
 
     private enum Field: Hashable { case serverURL, token }
 
-    init(settings: SettingsStore, tokenStore: any ZiplineTokenStore = KeychainTokenStore()) {
+    init(settings: SettingsStore, tokenStore: any ZiplineTokenStore) {
         _settings = ObservedObject(wrappedValue: settings)
         self.tokenStore = tokenStore
         _serverURLDraft = State(initialValue: settings.ziplineServerURL)

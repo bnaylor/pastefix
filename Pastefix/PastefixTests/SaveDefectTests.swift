@@ -23,7 +23,10 @@ struct SaveDefectTests {
         let blob = try #require(f.history.imageURL(for: item))
         try Data().write(to: blob)                       // the blob on disk is now zero bytes
         f.model.load(item)
-        #expect(f.model.document?.origin.imagePNG != Data())
+        // `try #require` first: `document?.origin.imagePNG != Data()` alone passes when there is
+        // no document at all.
+        let doc = try #require(f.model.document)
+        #expect(doc.origin.imagePNG != Data())
         let before = f.pasteboard.changeCount
         f.model.save()
         if f.pasteboard.changeCount != before, let written = pngOnPasteboard(f.pasteboard) {
