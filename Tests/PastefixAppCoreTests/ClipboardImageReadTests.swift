@@ -128,4 +128,26 @@ struct ClipboardImageReadTests {
         let out = read([ClipboardImageRead.pngType: pngBytes], hasFileURL: false)
         #expect(out == pngBytes)
     }
+
+    @Test("public.file-url present is no image, even with a TIFF offered — the actual bug shape")
+    func fileURLBeatsValidTIFF() {
+        // A Finder file copy offers a TIFF (the file's icon rendering), not a PNG — this is the
+        // exact shape of the reported bug, unlike `fileURLBeatsValidPNG` above.
+        let out = read([ClipboardImageRead.tiffType: tiffBytes], hasFileURL: true)
+        #expect(out == nil)
+    }
+
+    @Test("public.file-url present means no bytes are ever fetched")
+    func noFetchWithFileURL() {
+        // Proves the guard runs before any read, not merely that it returns nil afterwards —
+        // analogous to `noFetchWithoutAType` above.
+        var fetched = false
+        _ = ClipboardImageRead.imagePNG(
+            hasFileURL: { true },
+            available: { _ in ClipboardImageRead.pngType },
+            data: { _ in fetched = true; return nil },
+            decodePNG: { $0 }
+        )
+        #expect(fetched == false)
+    }
 }
