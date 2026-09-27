@@ -54,6 +54,9 @@ public final class SingleSlotLane<Input: Sendable, Output: Sendable>: @unchecked
 
     /// For tests: the generation of the job currently waiting, if any.
     var waitingGeneration: Int? { lock.lock(); defer { lock.unlock() }; return waiting?.generation }
+    /// For tests: a job has been taken off the slot and is running (or about to), with none
+    /// waiting — so the next arrival waits rather than displacing it.
+    var isRunningWithNoneWaiting: Bool { lock.lock(); defer { lock.unlock() }; return draining && waiting == nil }
 
     private func drain() {
         while true {
