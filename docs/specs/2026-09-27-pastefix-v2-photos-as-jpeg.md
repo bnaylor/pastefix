@@ -30,29 +30,37 @@ By upload time every session image is PNG, so the source format is gone. Classif
 | Flat UI screenshot, 3024×1964 | 0.19 MB | 0.27 MB | **1.41** |
 | UI window over a photographic wallpaper, 3840×2160 | 5.89 MB | 1.36 MB | **0.23** |
 
-**Rule: send JPEG when the image has no transparency and its JPEG is at most half the size of its PNG. Otherwise send PNG.** The gap between photos (≤ 0.22) and screenshots (≥ 1.21) is wide, so a threshold of 0.5 isn't sitting on a boundary.
+**What the ratio can't do (measured in review, 2026-09-27):** a full-screen ⌘⇧3 capture with the wallpaper showing (3456×2234) measured **0.28**, right beside real photos. The wallpaper's texture is what makes the PNG big. No threshold separates "photo" from "full-screen screenshot with wallpaper". Window captures (whose shadow is real alpha) and region captures of text stay PNG.
 
-**Named cost:** a screenshot of a desktop with a photographic wallpaper (0.23) goes up as JPEG. At 0.85 its text stays readable but picks up faint ringing around glyphs. That's accepted, because the alternative is a content heuristic that fails without saying so.
+**The owner's decision:** photo-like images go JPEG, **with a one-click escape.**
+
+## The rule
+
+1. **Transparency means a non-opaque pixel, not an alpha channel.** `screencapture` output, and many TIFF→PNG pasteboard conversions, carry an alpha channel with every pixel at 255. Checking the channel would silently turn the feature off for them. The pixels are scanned (min alpha).
+2. Any non-opaque pixel → **PNG**. Over the cap → refused, as today.
+3. Opaque, and the PNG is **over** the 16 MB cap → **JPEG** if it fits, **whatever the ratio**. A refusal is worse than a lossy image. If even the JPEG doesn't fit, it's refused, naming the JPEG's size.
+4. Opaque, the PNG fits, and JPEG ≤ 0.5 × PNG → **JPEG, with "Send as PNG instead"** on the card.
+5. Otherwise → **PNG**.
 
 ## Decisions
 
 | Decision | Choice | Why |
 |---|---|---|
-| Format rule | JPEG if there's no alpha and JPEG ≤ 0.5 × PNG, else PNG | Above |
+| Format rule | Above; the choice is a pure function, `ImageFormatChoice` | Above |
 | JPEG quality | 0.85 | The usual default. Photos stay visually lossless at a fifth of the PNG's size |
-| Transparency | Always PNG | JPEG has no alpha. Flattening onto a colour changes what the user sees |
+| Transparency | Any non-opaque *pixel* means PNG | JPEG has no alpha, and flattening changes what the user sees. The test is on pixels, not on the channel's presence (see the rule) |
 | Where it runs | `ImageSanitizer` (Core), after the strip | It already decodes, orients, normalises the profile and encodes. `SanitizedImage` gains its format and extension |
-| Encoding | Through the leak-safe file path (`PNGEncoder`, generalised) | ImageIO leaks in-memory PNG encodes (#87). JPEG gets measured for the same leak, and goes through a file regardless |
-| Metadata | None, in either format | The JPEG encoder is given no properties. Tests assert no GPS, EXIF date, TIFF make or IPTC in the JPEG output, as for PNG |
+| Encoding | A bare `CGImage` via `CGImageDestinationAddImage`, **never** from a source (`AddImageFromSource` could carry MakerNote, gain maps or auxiliary data), through the file path | Measured: JPEG encoding does **not** leak (+0 MB over six in-memory encodes; #87 is PNG-specific). The file path is kept for consistency |
+| Metadata | An **allowlist of JPEG segments**, not a denylist of properties | The test walks the markers and allows only SOI, APP0 JFIF, APP2 ICC_PROFILE (bytes equal to canonical Display P3), DQT, SOF0/SOF2, DHT, DRI and SOS…EOI, **with nothing after EOI**. Anything else fails, including APP1 (EXIF and XMP), APP13 (IPTC), COM, APP2 MPF (gain maps, depth), APP14 and embedded thumbnails. That's `release.sh`'s allowlist lesson again |
 | Upload | `ZiplineUpload(image:)` takes its extension and content type from `SanitizedImage` (`jpg` / `image/jpeg`) | Zipline serves by type |
-| The card says what it sent | "Sent as JPEG (1.6 MB — the PNG would be 10.1 MB)" | A format change the user can't see would be a second silent transformation |
-| Cost | Both encodes run during preparation | Measured before accepting. If it's material at the ceiling, decide on a downscaled sample instead |
+| The card says what it sent | "Sending as JPEG (1.6 MB; as PNG it would be 10.1 MB)", plus **Send as PNG instead** when the PNG fits. When JPEG was forced by the cap, the card says so, with no escape | A format change the user can't see would be a second silent transformation. The escape is the owner's decision |
+| Cost | Both encodes, always; no sampling | Measured: JPEG takes 0.07 s at 24 MP against the PNG's 0.83 s, about +8%. Sampling isn't needed. It would also bias the ratio from both sides: downscaling averages away the sensor noise that makes a photo's PNG big, and anti-aliases the hard text edges that keep a screenshot's PNG small |
 | Byte cap | Applied to whichever format is sent | A photo whose JPEG still exceeds 16 MB is refused, naming the JPEG size |
 
 ## Testing
 
-Package-level, with synthetic fixtures (noise for photo texture, rendered text for screenshots):
-- A photo-like image with no alpha gives JPEG. A screenshot-like image gives PNG. Anything with alpha gives PNG.
+Package-level fixtures. **Blurred** noise stands in for photo texture: measured at 0.18–0.22, like real photos. *Uniform* noise measures 0.38, near the threshold, so it would only pass by luck. Rendered text stands in for screenshots, and there's one **screenshot-over-photographic-wallpaper** fixture that pins the owner's choice (JPEG, with the escape offered).
+- A photo-like opaque image gives JPEG with the escape. A screenshot-like image gives PNG. **An RGBA image with every alpha at 255 and photo texture gives JPEG; one pixel at 254 gives PNG.** A PNG over the cap whose JPEG fits gives JPEG, whatever the ratio.
 - The JPEG output has no metadata, same assertions as the PNG path.
 - The JPEG output keeps orientation (baked) and Display P3.
 - The byte cap applies to the chosen format.
