@@ -1,6 +1,6 @@
 ---
 type: spec
-status: approved
+status: implemented
 id: 2026-09-26-pastefix-v2-image-sessions
 title: Pastefix v2 — Image Sessions (Plan 15)
 description: A session can hold, display and write back an image. `ClipboardSnapshot` gains an image field, `Transformer` declares what content it accepts, and ↵ on an image history row opens it like any other. Viewing only — editing, OCR, EXIF stripping and image upload all build on this.
@@ -69,6 +69,9 @@ So the gap is the document model, not the rendering.
 | Text state | `working: String` and `history: [String]` unchanged | The transform pipeline, undo/redo, detection and secret scanning all read `working` and none of them should learn about images. |
 | Undo in an image session | Nothing to undo; `canUndo` is false | Not a new meaning for undo — an image session has no text history, and inventing image undo here is the editing feature this spec excludes. |
 | What counts as "no text" | Blank once trimmed is not text — the same rule `PendingImage.resolve` and `HistoryStore.record` already use | A pasteboard carrying an image and a single space would otherwise open the editor on nothing. Reusing the existing rule rather than writing a second one matters because a capture path and a session path disagreeing about whether a buffer has text is the kind of divergence nobody notices until it produces two different answers for the same clipboard. |
+| When the display form is decided | **Once, when the session opens. It is stored, not derived live.** | *Amended during implementation; the original wording was a defect.* A live derivation over `working` means ⌘A+Delete in a mixed session swaps the editor for the image view **on that keystroke** — and `canUndo` is false, because `setWorking` pushes no undo history, so the user cannot get the editor back for the rest of the session. The rule reads identically at session open and is a trap thereafter. |
+| A pasteboard carrying `public.file-url` | **Not an image session**, checked before the image types | Copying any file in Finder puts a `public.tiff` on the pasteboard that is a 1024×1024 rendering of the file's **icon** — measured, not assumed. Text-wins happens to save us today only because a file copy also carries the filename as text; that is accidental, and it evaporates for any future source that writes a tiff with no text. An icon is not an image the user copied. |
+| Pixel ceiling | 25 M pixels, shared with the capture path | #32's `TIFFConversionSlot` already refuses above it. A second decode path deciding separately is the drift the PNG decision exists to prevent — and above the ceiling the refusal must be **said**, not silent, which is what the notice channel is for. |
 | An RTFD with an embedded image | **Not** an image | The field means a standalone pasteboard image type (`.png`/`.tiff`). Without this rule every rich paste from a web page becomes an image session — the regression "image wins" was rejected for, wearing a different costume. |
 | Save semantics | Writes everything the session holds: text as edited, image unchanged | `ClipboardBridge.write(text:richRTFD:imagePNG:)` already does exactly this. Save must never write *less* than it was given; silently dropping an image the user never touched is data loss, and a mixed session is what invites it. |
 | Session size cap | None | The session holds whatever the clipboard had. History's 5 MB skip and upload's 16 MB refusal are genuinely different budgets (durable storage versus one transfer) and both already exist and both already say so. An 8 MB screenshot being viewable and uploadable but not recorded is already true today; this makes it visible rather than introducing it. |
@@ -119,11 +122,13 @@ public struct ClipboardSnapshot: Sendable {
 }
 ```
 
-`PasteDocument` exposes `origin.imagePNG` and gains one derived question — does
-this session display as an image? True when an image is present and the text is
-blank once trimmed, which is the rule `PendingImage.resolve:33` and
-`HistoryStore.record` already apply (`trimmingCharacters(in: .whitespacesAndNewlines).isEmpty`).
-Its text state is untouched.
+`PasteDocument` exposes `origin.imagePNG` and answers one question — does this
+session display as an image? It is a **stored** `let`, set at init: true when an
+image is present and the text was blank once trimmed *at that moment*, which is
+the rule `PendingImage.resolve:33` and `HistoryStore.record` already apply
+(`trimmingCharacters(in: .whitespacesAndNewlines).isEmpty`). Stored rather than
+computed because a live version changes form mid-session on a keystroke that
+cannot be undone — see the Decisions table. Its text state is untouched.
 
 ### PastefixCore
 
@@ -193,13 +198,25 @@ app. This increment's visible half is verified by a GUI pass using the tooling i
 
 ```
 Sources/PastefixAppCore/ClipboardSnapshot.swift      # imagePNG field
-Sources/PastefixAppCore/PasteDocument.swift          # display-form derivation
+Sources/PastefixAppCore/PasteDocument.swift          # stored display form
 Sources/PastefixAppCore/TransformCoordinator.swift   # form filtering
+Sources/PastefixAppCore/ClipboardImageRead.swift     # NEW — the three "no image" rules, as a pure seam
+Sources/PastefixAppCore/ImageBytes.swift             # NEW — the one TIFF→PNG conversion and the 25 MP ceiling
 Sources/PastefixCore/Transformer.swift               # ContentForm, acceptedForms
 Pastefix/Pastefix/ClipboardBridge.swift              # read a standalone image
-Pastefix/Pastefix/PanelView.swift                    # image view branch
-Pastefix/Pastefix/ImageSessionView.swift             # the image view itself
-Pastefix/Pastefix/AppModel.swift                     # load an image history item
+Pastefix/Pastefix/PanelView.swift                    # image view branch, notice banner
+Pastefix/Pastefix/ImageSessionView.swift             # NEW — the image view itself
+Pastefix/Pastefix/AppModel.swift                     # load an image history item; refusal notice
 Pastefix/Pastefix/HistoryOverlayView.swift           # ↵ opens image rows
+Pastefix/Pastefix/CommandPaletteView.swift           # says why an image session has no transforms
+Pastefix/Pastefix/PasteboardMonitor.swift            # shares the one conversion
+Pastefix/Pastefix/UploadOverlayView.swift            # refuses an image session, naming #48
 README.md                                            # ↵ rule, image sessions
+
+Deleted: Sources/PastefixCore/Upload/ZiplinePasteboardImage.swift and its tests —
+a `public` pasteboard-type predicate with no production caller, whose premise
+("`ClipboardBridge.snapshot` never reads image data") this increment makes false.
+The document answers the same question strictly better, and leaving the predicate
+around invites someone to re-derive "is this an image?" from a pasteboard the
+session already knows about.
 ```
