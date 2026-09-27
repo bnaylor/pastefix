@@ -1398,6 +1398,10 @@ struct UploadOverlayView: View {
             //
             // nil: a newer overlay's scan displaced this one while it waited. Only a newer
             // overlay does that, and this one is then already gone, so there is nothing to draw.
+            // That rests on one caller and one overlay at a time; a second caller of
+            // `UploadTextScan` (a share or sync path) could leave a *live* overlay here, on
+            // "Scanning…" with Upload disabled. That fails closed — never "clean" — so do not
+            // "fix" nil into an empty result: an empty result reads as "No secrets found".
             guard let result = await UploadTextScan.run(text) else { return }
             let (matches, redactedBytes) = (result.matches, result.redactedBytes)
             guard !Task.isCancelled else { return }

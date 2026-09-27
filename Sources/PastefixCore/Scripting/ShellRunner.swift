@@ -37,8 +37,9 @@ public enum ShellRunner {
         process.terminationHandler = { _ in exited.fire() }
         try process.run()
         let pid = process.processIdentifier
-        // Move the child into its own process group (pgid == pid).
-        // Ignore EPERM if the child already exec'd and set its own group.
+        // Process already spawns the child into its own group (pgid == pid; measured 400/400 in
+        // the #100 review), so `kill(-pid, …)` reaches it either way. This is belt-and-braces, and
+        // fails harmlessly (EACCES) if the child has already exec'd.
         setpgid(pid, pid)
 
         // Feed stdin on a background thread so a child that never reads stdin
