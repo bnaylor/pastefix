@@ -1,6 +1,6 @@
 # Pastefix v2 Image Sessions (Plan 15) — Implementation Plan
 
-> ## 🟡 STATUS: IN PROGRESS — branch `feat/image-sessions`
+> ## ✅ STATUS: COMPLETE — [PR #79](https://github.com/bnaylor/pastefix/pull/79)
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 >

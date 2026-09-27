@@ -410,6 +410,7 @@ When you **significantly expand the project** — a new target, subsystem, scrip
 | 12 — Regex presets | RegexPreset, RegexPresetTransformer, Presets tab | ✅ merged — PR #44 (`955f01b`) — [spec](docs/specs/2026-09-21-pastefix-v2-regex-presets.md), [plan](docs/plans/2026-09-21-pastefix-v2-regex-presets.md) |
 | 13 — Zipline upload | ZiplineClient, upload overlay, Keychain token, Upload tab | ✅ merged — PR #59 (`c353f9e`) — [spec](docs/specs/2026-09-22-pastefix-v2-zipline-upload.md), [plan](docs/plans/2026-09-22-pastefix-v2-zipline-upload.md) |
 | 14 — Large-buffer safety | DetectionScheduler, Deadline.run, maxInputBytes/timeout, URLFinder cap | ✅ merged — PR #53 (`7bd250c`) — [spec](docs/specs/2026-09-23-pastefix-v2-large-buffer-safety.md), [plan](docs/plans/2026-09-23-pastefix-v2-large-buffer-safety.md) |
+| 15 — Image sessions | ClipboardSnapshot.imagePNG, ImageBytes, ClipboardImageRead, SavePayload, ImageSessionView, ContentForm | ✅ merged — PR #79 — [spec](docs/specs/2026-09-26-pastefix-v2-image-sessions.md), [plan](docs/plans/2026-09-26-pastefix-v2-image-sessions.md) |
 
 Historical reference material for the 2007 and 2019 incarnations is vendored under [`docs/inputs/legacy/`](docs/inputs/legacy/).
 
