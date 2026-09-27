@@ -153,11 +153,12 @@ final class AppModel: ObservableObject {
     /// anti-pattern (the upload overlay's "image, not supported yet" exists for the same reason).
     ///
     /// The clipboard is untouched, which the message says, because "too large" invites the
-    /// assumption that something was lost. But it says it **conditionally** — "unless you save text
-    /// over it" — because that is the truth: `save()` refuses to write over an untouched session
-    /// (`SavePayload.isEmpty` plus `isUnedited`), and just as deliberately does not refuse once the
-    /// user has typed, since typing then saving is an instruction. A banner promising the picture is
-    /// safe full stop would be a promise ⌘S can break one keystroke later.
+    /// assumption that something was lost. But it says it **conditionally** — "until you save text
+    /// over it" — because that is exactly the guarantee: `PasteDocument.saveWouldLoseContent` makes
+    /// ⌘S a no-op for as long as the session is untouched, text in the buffer or not, and just as
+    /// deliberately stops doing so once the user has typed, since typing and then saving is an
+    /// instruction. A banner promising the picture is safe full stop would be a promise ⌘S can break
+    /// one keystroke later.
     ///
     /// Kept short, and ordered so the instruction comes before the numbers: the banner is
     /// `.lineLimit(2)` at `.callout` in a 560 pt panel, so at larger Dynamic Type sizes the tail is
@@ -314,23 +315,18 @@ final class AppModel: ObservableObject {
 
     func save() {
         guard let doc = document else { endSession(); return }
-        // What this Save writes, decided once, in one pure place, so that the refusal below and the
-        // write further down cannot disagree about what "nothing" is (see `SavePayload`).
+        // **Save on an unedited session is at best a no-op and at worst destructive, so it must be
+        // a no-op whenever the session cannot reproduce everything the clipboard still holds.**
+        // An unedited buffer means the clipboard already has everything this session has, so the
+        // most a write can achieve is putting the same bytes back — while `clearContents()` in
+        // front of it can silently drop what the session was never given: the over-ceiling image
+        // the notice on screen is about, and (#71) a file reference. The predicate and the whole
+        // argument live in `PasteDocument.saveWouldLoseContent`, where they are testable (#68) and
+        // where the next case to appear extends one rule rather than this list.
+        if doc.saveWouldLoseContent { endSession(); return }
+        // What this Save writes, decided once, in one pure place, so the write below and the
+        // refusal above cannot disagree about what the session holds (see `SavePayload`).
         let payload = SavePayload(document: doc)
-        // **Save never replaces the clipboard with less than nothing.** An empty payload declares
-        // no content at all, so the only thing writing it would accomplish is the `clearContents()`
-        // in front of it — over a clipboard that, being unedited, still holds everything this
-        // session has and possibly more than it ever carried: the over-ceiling photo the notice on
-        // screen is talking about, a history item whose image file has gone missing, an image whose
-        // bytes were unusable, a Finder file reference (#71). Any future fourth case is covered by
-        // the same sentence rather than by another special case here.
-        //
-        // Both halves of the condition earn their place. `isUnedited` is what keeps a deliberate
-        // clear working: select all, delete, ⌘S is an *edited* document with an empty payload, and
-        // that write must happen — clearing the clipboard on purpose is a use of this app, and
-        // losing an image that way is a consequence of an action the user took. And the emptiness
-        // is `SavePayload`'s, not a second condition written here, so it grows with the write.
-        if doc.isUnedited, payload.isEmpty { endSession(); return }
         if doc.outputMode == .renderedMarkdown {
             // MarkdownToRich's own cap only bounds arming (the transform ran against a buffer at
             // or under it), but the buffer can grow afterwards — further edits, or a preset that

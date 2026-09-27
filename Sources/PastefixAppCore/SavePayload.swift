@@ -2,11 +2,11 @@ import Foundation
 
 /// What one Save puts on the clipboard, decided from the document and nothing else.
 ///
-/// It exists so that **what Save writes and what Save refuses to write are one decision.** The
-/// refusal — an unedited session that holds nothing must not `clearContents()` over a clipboard
-/// that still holds the user's picture — used to be a separately written condition next to the
-/// write, agreeing with it only because someone wrote the two to agree. That shape is what
-/// produced the defect this type was introduced to close: a rule enforced on one of two readers.
+/// It exists so that **what Save writes and what Save refuses to write are read off the same
+/// value.** "Is there anything here?" used to be a condition written out by hand next to the write,
+/// agreeing with it only because someone wrote the two to agree — the shape that produced the defect
+/// this type was introduced to close, a rule enforced on one of two readers. The refusal itself is
+/// `PasteDocument.saveWouldLoseContent`, which asks this type the emptiness half of its question.
 /// #71 will grow the write (carrying a file reference back), and a hand-written emptiness test
 /// would then refuse a write that had become legitimate. Here, growing `SavePayload` grows both.
 ///
@@ -64,7 +64,9 @@ public struct SavePayload: Sendable, Equatable {
     /// the save path disagree about whether a buffer has text gives two answers for one clipboard.
     /// Empty `Data` counts as no image and no rich content for the same reason.
     ///
-    /// This is only half of Save's refusal. The other half is `PasteDocument.isUnedited`: an empty
+    /// This is one of the two ways `PasteDocument.saveWouldLoseContent` can be true — the other is
+    /// an origin carrying `refusedImagePixels`, an image the session holds no bytes for, which makes
+    /// *any* write lossy however full the payload is. Both are gated on `isUnedited` there: an empty
     /// payload from a document the user *edited* is a deliberate clear and must still be written.
     public var isEmpty: Bool {
         (text ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty

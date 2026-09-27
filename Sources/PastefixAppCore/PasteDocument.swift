@@ -83,6 +83,30 @@ public struct PasteDocument: Sendable {
         origin.refusedImagePixels != nil && SavePayload(document: self).isEmpty
     }
 
+    /// **Save must write nothing when this is true.**
+    ///
+    /// Save on an *unedited* session is at best a no-op and at worst destructive: the clipboard
+    /// already holds everything the session has, so the best a write can do is put the same content
+    /// back, and the worst it can do is `clearContents()` and then fail to reproduce something the
+    /// clipboard was holding. So the rule is not "is the payload empty" but **the session must be
+    /// able to reproduce everything the clipboard still holds** — and when it cannot, Save is a
+    /// no-op and the session simply ends.
+    ///
+    /// Two ways it cannot, today. The payload is empty, so the write is `clearContents()` and
+    /// nothing else. Or the origin carries `refusedImagePixels`: the clipboard holds an image this
+    /// session was never given the bytes for, so *any* write drops it — including a write of real
+    /// text in a mixed session, which is why "empty payload" alone was the wrong predicate and lost
+    /// the picture the banner on screen promises is safe. #71 adds a third (a file reference the
+    /// session cannot reproduce), and the principle already covers it; a list of cases would not.
+    ///
+    /// `isUnedited` is the other half and it is what keeps deliberate destruction working: select
+    /// all, delete, ⌘S is an edited document, and that write happens. Losing an image that way is a
+    /// consequence of something the user did, not something ⌘S did to them for summoning the panel.
+    public var saveWouldLoseContent: Bool {
+        guard isUnedited else { return false }
+        return SavePayload(document: self).isEmpty || origin.refusedImagePixels != nil
+    }
+
     /// True when nothing has happened to this document since it was captured: no transform
     /// pushed, nothing typed, nothing to redo, and no output mode armed.
     ///

@@ -71,6 +71,48 @@ struct SavePayloadTests {
         #expect(d.isUnedited)
     }
 
+    @Test("an unedited session holding a refused image refuses to write, text or no text")
+    func refusedImageRefusesEvenWithText() {
+        // The regression this predicate exists to prevent, and the reason "is the payload empty" was
+        // the wrong question. A *mixed* unedited session — real text plus an image over the ceiling —
+        // has a perfectly non-empty payload, so an emptiness-only guard writes the text, and
+        // `clearContents()` in front of that write destroys the picture the banner on screen has
+        // just promised is safe. The session has no bytes for that image, so *any* write drops it.
+        let mixed = PasteDocument(origin: ClipboardSnapshot(plainText: "notes about that photo",
+                                                           richRTFD: nil, imagePNG: nil,
+                                                           refusedImagePixels: 30_000_000))
+        #expect(SavePayload(document: mixed).isEmpty == false, "there is text to write…")
+        #expect(mixed.saveWouldLoseContent, "…and writing it would still lose the image")
+
+        // The empty refused session is the same rule, reached through the other half of it.
+        let empty = PasteDocument(origin: ClipboardSnapshot(plainText: nil, richRTFD: nil,
+                                                           imagePNG: nil,
+                                                           refusedImagePixels: 30_000_000))
+        #expect(empty.saveWouldLoseContent)
+    }
+
+    @Test("typing in a refused-image session earns the write back")
+    func editingARefusedSessionWrites() {
+        // Deliberate destruction still works: the banner says the picture is on the clipboard until
+        // you save text over it, and this is that. An edited document writes whatever it holds.
+        var d = PasteDocument(origin: ClipboardSnapshot(plainText: "notes", richRTFD: nil,
+                                                       imagePNG: nil,
+                                                       refusedImagePixels: 30_000_000))
+        d.setWorking("notes, edited")
+        #expect(d.saveWouldLoseContent == false)
+        #expect(SavePayload(document: d).text == "notes, edited")
+    }
+
+    @Test("an ordinary session writes")
+    func ordinarySessionsWrite() {
+        #expect(doc(text: "hello").saveWouldLoseContent == false)
+        #expect(doc(text: nil, image: png).saveWouldLoseContent == false, "an image session saves it back")
+        var cleared = doc(text: "something")
+        cleared.setWorking("")
+        #expect(cleared.saveWouldLoseContent == false, "a deliberate clear is a write")
+        #expect(doc(text: "").saveWouldLoseContent, "but an unedited session with nothing in it is not")
+    }
+
     @Test("blank once trimmed is nothing", arguments: ["", " ", "\n", "  \t\n "])
     func blankIsNothing(_ blank: String) {
         // The same rule as `PasteDocument.displaysAsImage`, `PendingImage.resolve` and
