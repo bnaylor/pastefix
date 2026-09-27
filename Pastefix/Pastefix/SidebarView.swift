@@ -10,8 +10,22 @@ struct SidebarView: View {
     @ObservedObject var model: AppModel
 
     var body: some View {
+        let sections = SidebarGrouping.sections(model.browsableTransformers())
         List {
-            ForEach(SidebarGrouping.sections(model.browsableTransformers())) { section in
+            // An empty grey column reads as a broken panel, which is the exact argument
+            // `CommandPaletteView.emptyMessage` rests on — and this surface is worse for it,
+            // because the sidebar is a persisted setting that is simply *there* in an image
+            // session, with nothing the user opened to explain it. Two causes, two sentences: a
+            // session that can't have transforms, and a Settings list with none left enabled.
+            if sections.isEmpty {
+                Text(model.document?.displaysAsImage == true
+                     ? "No transforms apply to an image"
+                     : "No transforms enabled")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            ForEach(sections) { section in
                 Section(section.title) {
                     ForEach(section.transformers, id: \.id) { transformer in
                         // Sizing lives inside the label so the whole row is the hit target,
