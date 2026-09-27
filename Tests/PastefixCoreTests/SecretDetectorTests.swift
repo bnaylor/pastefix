@@ -81,6 +81,7 @@ import Testing
         #expect(texts("https://example.com/cb?id_token=\(jwt)&state=1") == [jwt])
         #expect(kinds("https://example.com/cb?access_token=\(jwt)&state=1") == [.jwt])
         #expect(texts("https://example.com/cb?access_token=\(jwt)&amp;state=1") == [jwt])
+        #expect(texts("https://example.com/cb#access_token=\(jwt)&token_type=bearer") == [jwt])
         #expect(kinds("aaaaaaaa.bbbbbbbb.cccccccc") == [])                     // shape only, not a JWT
     }
     @Test func passwordInURL() {
@@ -382,6 +383,10 @@ import Testing
         // Outside a URL, not even `&name=` ends a value: the branch is chosen by where the KEY
         // sits, never by what the value contains.
         #expect(texts("PASSWORD=Tr0ub4dor&a=9zQxKcd-3") == ["Tr0ub4dor&a=9zQxKcd-3"])
+        // A commented-out credential is still one, and its `#` is not a URL fragment's.
+        #expect(texts("#DB_PASSWORD=Tr0ub4dor&3xKcd-9zQ") == ["Tr0ub4dor&3xKcd-9zQ"])
+        #expect(texts("# DB_PASSWORD=Tr0ub4dor&3xKcd-9zQ") == ["Tr0ub4dor&3xKcd-9zQ"])
+        #expect(texts("export A=1\n#DB_PASSWORD=Tr0ub4dor&3xKcd-9zQ") == ["Tr0ub4dor&3xKcd-9zQ"])
         #expect(texts("{\"password\": \"Tr0ub4dor&x=3xKcd-9zQ\"}") == ["Tr0ub4dor&x=3xKcd-9zQ"])
     }
     @Test func redactingEveryAmpersandShapeLeavesNothingToFind() {
@@ -390,6 +395,7 @@ import Testing
                       "https://app.example/#access_token=\(tok)&token_type=Bearer",
                       "<a href=\"https://example.com/cb?token=\(tok)&amp;state=1\">",
                       "PASSWORD=Tr0ub4dor&3xKcd-9zQ", "PASSWORD=Tr0ub4dor&a=9zQxKcd-3",
+                      "#DB_PASSWORD=Tr0ub4dor&3xKcd-9zQ",
                       "{\"password\": \"Tr0ub4dor&x=3xKcd-9zQ\"}"] {
             let out = SecretRedactor.redact(input, matches: SecretDetector.scan(input))
             #expect(out != input, "\(input) was not redacted")

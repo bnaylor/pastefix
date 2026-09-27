@@ -130,7 +130,7 @@ public enum SecretDetector {
         // over-claims: a value at the end of a sentence.
         //
         // **A value in a URL ends at the next parameter (#74).** When the key is itself a query or
-        // fragment parameter — preceded by `?`, `&`, `#` or an HTML-escaped `&amp;` — the value
+        // fragment parameter — preceded by `?`, `&`, an HTML-escaped `&amp;`, or a fragment's `#` — the value
         // stops at `&` and `#`, which a URL can only mean as separators (a literal one is `%26` /
         // `%23`), so `?access_token=<t>&state=1` redacts the token and leaves `&state=1` standing.
         // The branch is chosen by the KEY's context, never by the value's contents: `.env`, YAML
@@ -144,9 +144,14 @@ public enum SecretDetector {
         Rule(kind: .genericAssignment, regex: rx(#"["']?(?<![A-Za-z0-9])(?:password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|auth[_-]?token|client[_-]?secret)(?![A-Za-z0-9])["']?\s*(?:=>|[:=])\s*["']?((?<=\#(urlKey))[^\s"',;&#]{16,256}(?![^\s"',;&#])|(?<!\#(urlKey))[^\s"',;]{16,256}(?![^\s"',;]))"#, .caseInsensitive), group: 1, needsEntropy: true, trimsSentencePeriod: true),
     ]
     /// A key that is a URL parameter, up to and including its `=`: a parameter name after `?`,
-    /// `&`, `#` or `&amp;`. Bounded (64) because ICU lookbehind must be; a longer name falls to
-    /// the wide class, which over-redacts — the safe direction.
-    private static let urlKey = #"(?:[?&#]|&amp;)[A-Za-z0-9_.%\[\]-]{1,64}="#
+    /// `&`, `&amp;`, or a fragment's `#`. Bounded (64) because ICU lookbehind must be; a longer
+    /// name falls to the wide class, which over-redacts — the safe direction.
+    ///
+    /// The `#` must follow a URL character (`[^\s#]#`), never stand alone: a bare `#` also
+    /// matched `#DB_PASSWORD=Tr0ub4dor&3xKcd-9zQ`, a commented-out dotenv line — the commonest way
+    /// an old credential is kept — and sent it down the URL branch, cutting it at the `&`. A
+    /// fragment's `#` never starts a line and never follows whitespace.
+    private static let urlKey = #"(?:[?&]|[^\s#]#|&amp;)[A-Za-z0-9_.%\[\]-]{1,64}="#
 
     /// Declaration order of `SecretKind`, used as the deterministic tie-break when two rules
     /// match the identical range (`Array.sort` is not stable).
