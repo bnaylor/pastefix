@@ -84,4 +84,45 @@ struct PasteDocumentImageTests {
         d.refresh(origin: ClipboardSnapshot(plainText: nil, richRTFD: nil, imagePNG: png))
         #expect(d.displaysAsImage)
     }
+
+    // MARK: The refused-image session the panel withholds focus from
+
+    private func refused(text: String?) -> PasteDocument {
+        // What `ClipboardBridge.snapshot` produces for an over-ceiling image: no image, and the
+        // pixel count recorded so the panel can say so.
+        PasteDocument(origin: ClipboardSnapshot(plainText: text, richRTFD: nil, imagePNG: nil,
+                                               refusedImagePixels: 30_000_000))
+    }
+
+    @Test("a refused image with no text is the empty session")
+    func refusedAndEmpty() {
+        #expect(refused(text: nil).isEmptyRefusedImageSession)
+        #expect(refused(text: "").isEmptyRefusedImageSession)
+        #expect(refused(text: "  \n ").isEmptyRefusedImageSession, "blank once trimmed, as everywhere")
+    }
+
+    @Test("a refused image alongside real text is an ordinary text session")
+    func refusedButMixed() {
+        // The defect this property exists to close: keyed on "had a refused image" alone, the panel
+        // withheld editor focus for the whole life of a session whose editor holds the user's text —
+        // after every overlay close and every landed transform, typing did nothing until they
+        // clicked. A banner over a text session is still a text session.
+        #expect(refused(text: "notes about that photo").isEmptyRefusedImageSession == false)
+    }
+
+    @Test("typing into an empty refused session makes it an ordinary one")
+    func typingEndsTheSuppression() {
+        var d = refused(text: nil)
+        #expect(d.isEmptyRefusedImageSession)
+        d.setWorking("a")
+        #expect(d.isEmptyRefusedImageSession == false, "reads `working`, so focus comes back")
+    }
+
+    @Test("an empty session with no refused image is not this")
+    func emptyWithoutARefusal() {
+        // Focus is withheld only where a caret would invite overwriting a picture. An ordinary empty
+        // editor gets the caret it has always had.
+        #expect(doc(text: nil, image: nil).isEmptyRefusedImageSession == false)
+        #expect(doc(text: nil, image: png).isEmptyRefusedImageSession == false)
+    }
 }

@@ -65,6 +65,24 @@ public struct PasteDocument: Sendable {
     /// give two different answers for one clipboard, and nobody notices until they do.
     public let displaysAsImage: Bool
 
+    /// True when this session has nothing on screen but the refused-image notice: the clipboard
+    /// carried an image too large to convert, and there is no real text in the editor either.
+    ///
+    /// The panel uses it to *withhold* editor focus, which is why it must not be the weaker
+    /// condition "this session had a refused image". A **mixed** session — real text plus an
+    /// over-ceiling image — is an ordinary text session with a banner over it, and suppressing
+    /// focus there leaves a user unable to type after closing an overlay or landing a transform
+    /// without first clicking into the editor. Emptiness is the whole reason to withhold focus: a
+    /// blinking caret in an empty editor invites the one keystroke that makes `save()` write over
+    /// the picture the banner has just promised is still on the clipboard.
+    ///
+    /// Emptiness is `SavePayload(document:).isEmpty` rather than a fourth spelling of "blank once
+    /// trimmed", so the focus rule and Save's refusal cannot drift apart. It reads `working`, so a
+    /// user who does type gets focus back for the rest of the session.
+    public var isEmptyRefusedImageSession: Bool {
+        origin.refusedImagePixels != nil && SavePayload(document: self).isEmpty
+    }
+
     /// True when nothing has happened to this document since it was captured: no transform
     /// pushed, nothing typed, nothing to redo, and no output mode armed.
     ///

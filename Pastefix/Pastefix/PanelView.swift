@@ -541,14 +541,20 @@ struct PanelView: View {
         focusEditorUnlessRefusedImage()
     }
 
-    /// Requests focus for the editor, except in a refused-image session, where it is empty and
-    /// on screen only beneath the notice telling the user their picture is still on the
-    /// clipboard. A blinking caret there invites the one keystroke `save()` deliberately allows
-    /// to overwrite that image (typing is a deliberate act, so `save()` does not block it) — this
-    /// just stops inviting it. The editor stays reachable by click for anyone who does mean to
-    /// type over the image.
+    /// Requests focus for the editor, except in an *empty* refused-image session, where it is on
+    /// screen only beneath the notice telling the user their picture is still on the clipboard. A
+    /// blinking caret there invites the one keystroke `save()` deliberately allows to overwrite
+    /// that image (typing is a deliberate act, so `save()` does not block it) — this just stops
+    /// inviting it. The editor stays reachable by click for anyone who does mean to type over it.
+    ///
+    /// Emptiness is the condition, not "this session had a refused image", and the difference is a
+    /// whole class of session: a **mixed** one (real text plus an over-ceiling image) is an ordinary
+    /// text session with a banner over it, and the weaker condition left it never able to regain
+    /// focus — every overlay close, every landed transform, for the session's whole life. The rule
+    /// lives in `PasteDocument.isEmptyRefusedImageSession`, where it is one expression of "blank
+    /// once trimmed" shared with Save's refusal, and where it can be tested (#68).
     private func focusEditorUnlessRefusedImage() {
-        guard model.document?.origin.refusedImagePixels == nil else { return }
+        guard model.document?.isEmptyRefusedImageSession != true else { return }
         editorFocused = true
     }
 
