@@ -1,6 +1,7 @@
 import Testing
 import Foundation
 import ImageIO
+import AppKit
 @testable import PastefixAppCore
 
 /// #78: `public.file-url` alone must not decide "no image". Finder's file copy and a Photos.app
@@ -124,21 +125,44 @@ struct ConversionStripsLocationTests {
         }
     }
 
+    @Test("conversion applies the orientation tag instead of dropping it")
+    func conversionBakesOrientation() throws {
+        // A phone stores a portrait photo as landscape sensor pixels plus Orientation 6. The
+        // conversion drops every tag — so unless it *applies* the rotation first, the session
+        // shows the photo on its side. #78 made Photos copies reach this conversion.
+        let tiff = try #require(Self.geotagged(as: "public.tiff", orientation: 6))
+        guard case .png(let png) = ImageBytes.normalise(tiff) else {
+            Issue.record("a small TIFF must convert"); return
+        }
+        let props = try #require(Self.properties(png))
+        #expect(props["PixelWidth"] as? Int == 12)    // 16x12 stored, displayed 12x16
+        #expect(props["PixelHeight"] as? Int == 16)
+        #expect(props["Orientation"] == nil || props["Orientation"] as? Int == 1)
+        // The left half of the stored pixels is red. Rotated clockwise, stored bottom-right
+        // (blue) becomes displayed bottom-left — a check a dropped-but-unapplied tag fails.
+        let rep = try #require(NSBitmapImageRep(data: png))
+        let bottomLeft = try #require(rep.colorAt(x: 0, y: rep.pixelsHigh - 1)?.usingColorSpace(.sRGB))
+        #expect(bottomLeft.blueComponent > 0.5 && bottomLeft.redComponent < 0.5)
+    }
+
     static func properties(_ d: Data) -> [String: Any]? {
         guard let src = CGImageSourceCreateWithData(d as CFData, nil) else { return nil }
         return CGImageSourceCopyPropertiesAtIndex(src, 0, nil) as? [String: Any]
     }
 
-    static func geotagged(as type: String) -> Data? {
+    static func geotagged(as type: String, orientation: Int = 1) -> Data? {
         guard let ctx = CGContext(data: nil, width: 16, height: 12, bitsPerComponent: 8, bytesPerRow: 0,
                                   space: CGColorSpaceCreateDeviceRGB(),
                                   bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
-        ctx.setFillColor(red: 0.2, green: 0.5, blue: 0.8, alpha: 1)
-        ctx.fill(CGRect(x: 0, y: 0, width: 16, height: 12))
+        ctx.setFillColor(red: 1, green: 0, blue: 0, alpha: 1)
+        ctx.fill(CGRect(x: 0, y: 0, width: 8, height: 12))       // left half red
+        ctx.setFillColor(red: 0, green: 0, blue: 1, alpha: 1)
+        ctx.fill(CGRect(x: 8, y: 0, width: 8, height: 12))       // right half blue
         guard let image = ctx.makeImage() else { return nil }
         let out = NSMutableData()
         guard let dst = CGImageDestinationCreateWithData(out, type as CFString, 1, nil) else { return nil }
         let props: [CFString: Any] = [
+            kCGImagePropertyOrientation: orientation,
             kCGImagePropertyGPSDictionary: [kCGImagePropertyGPSLatitude: 12.3456, kCGImagePropertyGPSLatitudeRef: "N",
                                             kCGImagePropertyGPSLongitude: 45.6789, kCGImagePropertyGPSLongitudeRef: "W"],
             kCGImagePropertyExifDictionary: [kCGImagePropertyExifDateTimeOriginal: "2026:01:01 12:00:00"],
