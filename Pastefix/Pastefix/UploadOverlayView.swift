@@ -962,8 +962,8 @@ struct UploadOverlayView: View {
     /// Return-to-Upload by having scanned; an image is never scanned, so Return must never send
     /// one (spec, "Return key"). When text was detected, Cancel takes Return instead — except
     /// while uploading, where Return closing the overlay would abort a transfer the user did not
-    /// ask to stop. `ImageUploadCard.defaultAction` decides this and is tested; it has no case that
-    /// names Upload.
+    /// ask to stop. `ImageUploadCard.defaultAction` decides which button Return presses, and is
+    /// tested.
     private var imageActionRow: some View {
         HStack(spacing: 10) {
             if phase == .uploading {
@@ -976,12 +976,20 @@ struct UploadOverlayView: View {
             // Reads `@State` at call time through `uploadImage()` (the ⌘K Return lesson).
             Button(ImageUploadCard.sendTitle(hasText: imageState.hasText, isRetry: isRetry),
                    action: uploadImage)
+                .keyboardShortcut(uploadIsDefault ? KeyboardShortcut.defaultAction : nil)
                 .disabled(!isImageReadyToUpload)
         }
     }
 
     private var cancelIsDefault: Bool {
         phase != .uploading && ImageUploadCard.defaultAction(for: imageState) == .cancel
+    }
+
+    /// Return uploads only a ready image with no text detected (`ImageUploadCard.defaultAction`,
+    /// tested). Gated on the same readiness as the button itself, so Return can never fire a
+    /// send the button would refuse — `uploadImage()` re-checks anyway.
+    private var uploadIsDefault: Bool {
+        isImageReadyToUpload && ImageUploadCard.defaultAction(for: imageState) == .upload
     }
 
     /// Upload is disabled until the preparation resolves to `.ready`: preparing, refused and
