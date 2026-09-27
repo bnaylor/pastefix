@@ -100,6 +100,9 @@ struct UploadOverlayView: View {
     /// stays the single place that maps a string to a `ZiplineExpiry`.
     @State private var expiryTag: String
     @State private var burnOnRead: Bool
+    /// What the upload that reached `.done` was actually sent with. The done state describes that
+    /// upload, so it reads this rather than the live control (#86 review).
+    @State private var sentBurnOnRead = false
     @State private var fileExtension: String
     /// Whether the user has typed in the "File type" field by hand.
     ///
@@ -702,7 +705,7 @@ struct UploadOverlayView: View {
             // is deleted. So "viewed once" is really "only the first person to open it" — and an
             // uploader who opens their own link to check it has just used it up.
             Toggle("Burn after reading", isOn: $burnOnRead)
-                .help("Only the first person to open the link can see it; anyone after them gets nothing. Opening it yourself uses it up.")
+                .help("Only the first person to open the link can see it; anyone after them gets nothing. Opening it yourself uses it up, and so does a chat app's link preview (Slack, Discord, iMessage).")
             if let message = inlineMessage(forHeaderContaining: "max-views") {
                 inlineError(message)
             }
@@ -1029,11 +1032,13 @@ struct UploadOverlayView: View {
                 .lineLimit(1)
                 .truncationMode(.middle)
                 .textSelection(.enabled)
-            Text(burnOnRead
-                 ? "Copied to the clipboard. This paste is deleted after one view — opening it here is that view."
+            // Measured (#86): Zipline lets only the first client that opens a burn-after-read link
+            // see it — and a chat app's link preview (Slack, Discord, iMessage) is a client.
+            Text(sentBurnOnRead
+                 ? "Copied to the clipboard. Only the first person to open this link can see it — and opening it yourself, or pasting it where a link preview is fetched (Slack, Discord, iMessage), uses it up."
                  : "Copied to the clipboard.")
                 .font(.caption)
-                .foregroundStyle(burnOnRead ? Color.orange : Color.secondary)
+                .foregroundStyle(sentBurnOnRead ? Color.orange : Color.secondary)
             if imageSource != nil {
                 // New with images: `writePlain` above replaced the picture on the clipboard with
                 // the link. The text path never destroyed its source, so it never had to say so.
@@ -1045,7 +1050,7 @@ struct UploadOverlayView: View {
                 Button("Copy Again") { ClipboardBridge.writePlain(url.absoluteString, to: model.pasteboard) }
                 // For a burn-after-read upload, opening the link here *is* its one view, and the
                 // person it was meant for then gets a 404 (#86). Say so on the button itself.
-                Button(burnOnRead ? "Open (uses its one view)" : "Open") { NSWorkspace.shared.open(url) }
+                Button(sentBurnOnRead ? "Open (uses its one view)" : "Open") { NSWorkspace.shared.open(url) }
                 Spacer()
                 Button("Done") { onClose() }
                     .keyboardShortcut(.defaultAction)
@@ -1548,6 +1553,7 @@ struct UploadOverlayView: View {
 
     /// One client, one error mapping and one retry path for text and images alike.
     private func send(_ request: ZiplineUpload, to server: URL, token: String) {
+        sentBurnOnRead = request.burnOnRead
         phase = .uploading
         uploadTask = Task { @MainActor in
             do {

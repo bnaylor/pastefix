@@ -35,7 +35,7 @@ public final class SettingsStore: ObservableObject {
     @Published public var ziplineDefaultBurnOnRead: Bool { didSet { defaults.set(ziplineDefaultBurnOnRead, forKey: Key.ziplineBurn) } }
     @Published public var ziplineDefaultExtension: String { didSet { defaults.set(ziplineDefaultExtension, forKey: Key.ziplineExtension) } }
 
-    public init(defaults: UserDefaults = .standard) {
+    public init(defaults: UserDefaults) {
         self.defaults = defaults
         self.wrapWidth = (defaults.object(forKey: Key.wrapWidth) as? Int) ?? 400
         self.autoHideOnBlur = (defaults.object(forKey: Key.autoHide) as? Bool) ?? true

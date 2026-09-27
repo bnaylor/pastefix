@@ -3,7 +3,7 @@ import Testing
 
 /// The real guard for `GlobalHotkey` is the compiler: `AppDelegate` registers each case through an
 /// exhaustive switch. This only checks what can be checked without touching `.name` — the
-/// `KeyboardShortcuts.Name` statics write their defaults into `UserDefaults.standard`, the real
+/// `KeyboardShortcuts.Name` statics write their defaults into `the standard defaults domain`, the real
 /// settings domain inside a test host.
 @Suite("GlobalHotkey")
 struct GlobalHotkeyTests {
