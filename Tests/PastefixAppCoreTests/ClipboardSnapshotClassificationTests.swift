@@ -37,9 +37,11 @@ struct ClipboardSnapshotClassificationTests {
         #expect(unclassified.isEmpty, """
             ClipboardSnapshot gained \(unclassified.sorted()) without deciding what Save owes it. \
             Add each to ClipboardSnapshot.storedPropertyClasses as one of: reproducedByPayload (grow \
-            SavePayload too), droppedByPolicy (and say why, where saveWouldLoseContent names the \
-            rich-text exception), metadata (not clipboard content), or lossIfPresent (and report it \
-            from unreproduced(by:), so an unedited Save refuses instead of dropping it).
+            SavePayload too, AND write the comparison in unreproduced(by:) — that step is not \
+            mechanical and nothing checks it), droppedByPolicy (and say why, where \
+            saveWouldLoseContent names the rich-text exception), metadata (not clipboard content), \
+            or lossIfPresent (reported automatically — classifying it is the whole job; populate it \
+            in ClipboardSnapshotLossIfPresentTests.fixture, which fails until you do).
             """)
     }
 
@@ -104,7 +106,7 @@ struct ClipboardSnapshotUnreproducedTests {
         let origin = ClipboardSnapshot(plainText: "notes about that photo", richRTFD: nil,
                                        imagePNG: nil, refusedImagePixels: 30_000_000)
         #expect(origin.unreproduced(by: SavePayload(document: PasteDocument(origin: origin)))
-                == [.refusedImage])
+                == [.lossIfPresent("refusedImagePixels")])
     }
 
     @Test("a payload that writes nothing loses the whole clipboard, known representations or not")
@@ -156,5 +158,90 @@ struct ClipboardSnapshotUnreproducedTests {
     func changeCountIsNotContent() {
         let origin = ClipboardSnapshot(plainText: "hello", richRTFD: nil, changeCount: 41)
         #expect(origin.unreproduced(by: SavePayload(document: PasteDocument(origin: origin))).isEmpty)
+    }
+}
+
+/// The tests that make the `.lossIfPresent` bucket *be* the implementation.
+///
+/// What they replace: a classification dictionary nothing read. The reviewer reproduced the hole by
+/// doing what an honest #71 implementer does — add `fileReference`, classify it `.lossIfPresent`
+/// correctly, update the pinned property set because it fails otherwise, and leave
+/// `unreproduced(by:)` alone. Every test stayed green while an unedited `"hello"` session holding a
+/// file reference reported `saveWouldLoseContent == false`, so Save wrote `"hello"` and dropped the
+/// reference. The earlier "verified to bite" check added the field *without* classifying it, which
+/// is the one variant that did fail.
+///
+/// Neither of the two tests that carry the weight here can be silenced by editing a literal list:
+/// both derive what they expect from `storedPropertyClasses` itself.
+@Suite("ClipboardSnapshot .lossIfPresent is driven by the classification")
+struct ClipboardSnapshotLossIfPresentTests {
+    /// The same presence rule `unreproduced(by:)` applies, written out again here rather than shared
+    /// with it: a fixture check that called the code under test would agree with it by construction.
+    private func isPresent(_ value: Any) -> Bool {
+        let mirror = Mirror(reflecting: value)
+        guard mirror.displayStyle == .optional else { return true }
+        return mirror.children.isEmpty == false
+    }
+
+    private var lossIfPresentProperties: Set<String> {
+        Set(ClipboardSnapshot.storedPropertyClasses.filter { $0.value == .lossIfPresent }.keys)
+    }
+
+    /// Every `.lossIfPresent` property populated, and nothing that could contribute another case:
+    /// no origin text and no origin image (so no `.plainText`/`.image`), weighed below against a
+    /// payload that writes something (so no `.wholeClipboard`). Whatever comes back is the bucket
+    /// alone.
+    private let fixture = ClipboardSnapshot(plainText: nil, richRTFD: nil, imagePNG: nil,
+                                            refusedImagePixels: 30_000_000, changeCount: 7)
+
+    @Test("the fixture populates every .lossIfPresent property")
+    func fixtureIsNotVacuous() {
+        #expect(lossIfPresentProperties.isEmpty == false, "no .lossIfPresent bucket — test is vacuous")
+        let mirrored = Dictionary(uniqueKeysWithValues:
+            Mirror(reflecting: fixture).children.compactMap { child in
+                child.label.map { ($0, child.value) }
+            })
+        let unpopulated = lossIfPresentProperties.filter { !isPresent(mirrored[$0] as Any) }
+        #expect(unpopulated.isEmpty, """
+            ClipboardSnapshot classifies \(unpopulated.sorted()) as lossIfPresent but this suite's \
+            fixture leaves them nil, so the test below cannot see whether unreproduced(by:) reports \
+            them. Populate them in `fixture`.
+            """)
+    }
+
+    @Test("the reported loss set is exactly the populated .lossIfPresent properties")
+    func reportedLossesAreExactlyTheClassifiedOnes() {
+        // The reviewer's variant, as an assertion: the expectation is derived from the dictionary, so
+        // a property classified `.lossIfPresent` and not reported fails here. Populating the fixture
+        // above is the only step #71 owes this suite; being reported is `unreproduced(by:)`'s job,
+        // and it does that by reflection rather than by naming the field.
+        let expected = Set(lossIfPresentProperties.map(ClipboardSnapshot.Representation.lossIfPresent))
+        #expect(fixture.unreproduced(by: SavePayload(text: "notes about that photo")) == expected)
+    }
+
+    @Test("a property the predicate never names is reported when classified .lossIfPresent")
+    func aPropertyThePredicateNeverNamesIsStillReported() {
+        // The part the test above cannot reach while the type has exactly one `.lossIfPresent` field:
+        // with one real field, "honours the bucket" and "reports refusedImagePixels" are the same
+        // assertion, and a hard-coded `refusedImagePixels != nil` satisfies both. So here the
+        // classification is injected and `changeCount` stands in for #71's file reference — a
+        // property `unreproduced(by:)` has never heard of, in that bucket. A body that names fields
+        // instead of reading the dictionary fails this test today, with no new field to add.
+        var classes = ClipboardSnapshot.storedPropertyClasses
+        classes["changeCount"] = .lossIfPresent
+        let origin = ClipboardSnapshot(plainText: "hello", richRTFD: nil, changeCount: 41)
+        let payload = SavePayload(document: PasteDocument(origin: origin))
+        #expect(origin.unreproduced(by: payload, classifiedBy: classes)
+                == [.lossIfPresent("changeCount")])
+        #expect(origin.unreproduced(by: payload).isEmpty,
+                "and under the real classification changeCount is still metadata")
+    }
+
+    @Test("a nil .lossIfPresent property is not reported")
+    func absentPropertiesAreNotLosses() {
+        // The other direction, and the reason presence is an Optional unwrap rather than a
+        // description compare: a snapshot with nothing refused has to stay saveable.
+        let origin = ClipboardSnapshot(plainText: "hello", richRTFD: nil)
+        #expect(origin.unreproduced(by: SavePayload(text: "hello")).isEmpty)
     }
 }

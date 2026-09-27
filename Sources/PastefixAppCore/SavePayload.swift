@@ -74,9 +74,11 @@ public struct SavePayload: Sendable, Equatable {
     /// `ClipboardSnapshot.unreproduced(by:)` reads this as losing **everything** the clipboard holds
     /// — its `.wholeClipboard` case, which covers the representations no snapshot even reads (a
     /// Finder file copy, a custom type) precisely because there is no content to weigh them
-    /// against. It is one of the ways `PasteDocument.saveWouldLoseContent` is true; the others are
-    /// an origin representation this payload does not carry, and `refusedImagePixels`, an image the
-    /// session holds no bytes for, which makes *any* write lossy however full the payload is. All of
+    /// against — and when this is false, those same unmodelled representations are dropped by
+    /// policy, which is stated where that case is defined. It is one of the ways
+    /// `PasteDocument.saveWouldLoseContent` is true; the others are an origin representation this
+    /// payload does not carry, and any `.lossIfPresent` property — today `refusedImagePixels`, an
+    /// image the session holds no bytes for, which makes *any* write lossy however full it is. All of
     /// them are gated on `isUnedited` there: an empty payload from a document the user *edited* is a
     /// deliberate clear and must still be written.
     public var isEmpty: Bool {

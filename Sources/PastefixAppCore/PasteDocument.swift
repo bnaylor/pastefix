@@ -104,15 +104,20 @@ public struct PasteDocument: Sendable {
     ///
     /// The question is asked once, on the snapshot: `unreproduced(by:)` classifies **every** stored
     /// property of `ClipboardSnapshot` as reproduced-by-payload, dropped-by-policy, metadata, or
-    /// loss-if-present, and a `Mirror`-based test fails on any property that is in none of them. So
-    /// #71 recording a file reference cannot slip through: the earlier claim that "the principle
-    /// already covers it" was false — the predicate would not have mentioned the new field, the
-    /// payload would have been non-empty, and Save would have cleared the clipboard and dropped it.
-    /// Now that addition fails a test until someone picks its bucket.
+    /// loss-if-present, a `Mirror`-based test fails on any property that is in none of them, and for
+    /// the loss-if-present bucket the classification **is** the predicate — that function reads
+    /// `storedPropertyClasses` rather than naming fields. So #71 recording a file reference cannot
+    /// slip through: the earlier claim that "the principle already covers it" was false, and so was
+    /// its first replacement, a bucket nothing read — a field classified correctly with
+    /// `unreproduced(by:)` left alone passed every test while Save cleared the clipboard and dropped
+    /// the reference. Now classifying it `.lossIfPresent` refuses the Save, and the one thing still
+    /// left to a human is the comparison for a `.reproducedByPayload` field, which no reflection can
+    /// write.
     ///
     /// Three ways it can be true today: the payload declares nothing at all, so the write is
     /// `clearContents()` and nothing else (`.wholeClipboard` — including whatever the clipboard
-    /// holds that no snapshot reads, such as a Finder file copy); the origin carries
+    /// holds that no snapshot reads, such as a Finder file copy, which an unedited Save with a
+    /// non-empty payload drops by policy); the origin carries a `.lossIfPresent` property — today
     /// `refusedImagePixels`, an image the session has no bytes for, which makes *any* write lossy
     /// even in a mixed session with real text to write (the regression that proved "empty payload"
     /// was the wrong predicate); or the payload simply does not carry a representation the origin
