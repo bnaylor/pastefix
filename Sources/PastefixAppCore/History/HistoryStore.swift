@@ -120,15 +120,19 @@ public final class HistoryStore: ObservableObject {
             // A pin holds its own place: copying it again must not drag it into the recency
             // list or refresh `capturedAt`, which would reorder the unpinned section around it.
             if items[existing].pinned { return items[existing] }
-            if existing == 0 { return items[0] }
-            var moved = items.remove(at: existing)
-            moved.capturedAt = now
-            // Keep the ORIGINAL source: re-copying an item (e.g. AppModel.copyBack) re-writes
-            // the pasteboard, which the monitor then records as coming from Pastefix itself —
-            // relabeling every reused item would erase where it actually came from.
-            items.insert(moved, at: 0)
-            scheduleWrite()
-            return moved
+            let grew = image.map { refreshWords(at: existing, text: text, rich: rich, imageBytes: $0.count) } ?? false
+            if existing != 0 {
+                var moved = items.remove(at: existing)
+                moved.capturedAt = now
+                // Keep the ORIGINAL source: re-copying an item (e.g. AppModel.copyBack) re-writes
+                // the pasteboard, which the monitor then records as coming from Pastefix itself —
+                // relabeling every reused item would erase where it actually came from.
+                items.insert(moved, at: 0)
+                scheduleWrite()
+            }
+            // Only once the item is at index 0, which is the one place eviction never reaches.
+            if grew { enforceLimits() }
+            return items[0]
         }
 
         let id = UUID()
@@ -162,6 +166,28 @@ public final class HistoryStore: ObservableObject {
         enforceLimits()
         scheduleWrite()
         return item
+    }
+
+    /// A hash match is the same picture with different words around it, so the newest capture's
+    /// words win, as the move to the top already says the newest capture does (#70). The rich
+    /// text follows the plain text: apps paste the rich flavour first, so an old RTFD kept beside
+    /// a new caption would paste the old caption. Returns whether the item grew.
+    private func refreshWords(at i: Int, text: String?, rich: Data?, imageBytes: Int) -> Bool {
+        let id = items[i].id
+        var item = items[i]
+        item.plainText = text
+        if let rich, writeBlob(rich, id: id, ext: Self.richExtension) {
+            item.richRTFDFile = Self.blobName(id, ext: Self.richExtension)
+        } else {
+            // No new rich text, or it couldn't be written: either way the old one describes a
+            // caption that is no longer the item's.
+            try? FileManager.default.removeItem(at: blobURL(id, ext: Self.richExtension))
+            item.richRTFDFile = nil
+        }
+        item.byteCount = (text?.utf8.count ?? 0) + (item.richRTFDFile != nil ? rich?.count ?? 0 : 0) + imageBytes
+        let grew = item.byteCount > items[i].byteCount
+        if item != items[i] { items[i] = item; scheduleWrite() }
+        return grew
     }
 
     public func remove(_ id: UUID) {
