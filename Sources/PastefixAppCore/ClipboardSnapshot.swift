@@ -37,6 +37,15 @@ public struct ClipboardSnapshot: Sendable {
     /// enough to hit it). It is a number rather than a flag so the message can quote the size in
     /// the unit the limit is expressed in.
     public let refusedImagePixels: Int?
+    /// The file-reference types the pasteboard declared (`public.file-url`, its legacy flavours),
+    /// or nil when it declared none — a Finder file copy, or a Photos.app copy (#71).
+    ///
+    /// Pastefix cannot write a file reference back, so an **unedited** Save over one would replace
+    /// the user's copied file with its name as text. Classified `.lossIfPresent`: the generic
+    /// `unreproduced(by:)` then makes that Save a no-op — the owner's decision, and what macOS
+    /// itself does. Editing the text is deliberate and still writes. Declared types only, never
+    /// the URL: nothing here reads the file or resolves the reference (Invariant 13's pointer rule).
+    public let fileReferenceTypes: [String]?
     /// `NSPasteboard.changeCount` at the instant this was captured, or nil when the snapshot did
     /// not come from a pasteboard at all (a history item re-opened into the panel, a test).
     ///
@@ -48,19 +57,21 @@ public struct ClipboardSnapshot: Sendable {
     public let changeCount: Int?
 
     public init(plainText: String?, richRTFD: Data?, imagePNG: Data? = nil,
-                refusedImagePixels: Int? = nil, changeCount: Int? = nil) {
+                refusedImagePixels: Int? = nil, fileReferenceTypes: [String]? = nil, changeCount: Int? = nil) {
         self.plainText = plainText
         self.richRTFD = richRTFD
         self.imagePNG = imagePNG
         self.refusedImagePixels = refusedImagePixels
+        self.fileReferenceTypes = fileReferenceTypes
         self.changeCount = changeCount
     }
 
     public init(plainText: String?, rich: NSAttributedString?, imagePNG: Data? = nil,
-                refusedImagePixels: Int? = nil, changeCount: Int? = nil) {
+                refusedImagePixels: Int? = nil, fileReferenceTypes: [String]? = nil, changeCount: Int? = nil) {
         self.plainText = plainText
         self.imagePNG = imagePNG
         self.refusedImagePixels = refusedImagePixels
+        self.fileReferenceTypes = fileReferenceTypes
         self.changeCount = changeCount
         self.richRTFD = rich.flatMap { attributed in
             try? attributed.data(
@@ -90,7 +101,7 @@ public struct ClipboardSnapshot: Sendable {
         case image
         /// Something the clipboard holds that this snapshot has no bytes for, named by the stored
         /// property that recorded it — `lossIfPresent("refusedImagePixels")` for an image over the
-        /// conversion ceiling, and whatever #71 calls its file reference once that exists. No
+        /// conversion ceiling, `lossIfPresent("fileReferenceTypes")` for a copied file (#71). No
         /// payload can ever reproduce such a thing, so its presence alone makes any write lossy —
         /// that is the whole reason the notice on screen can promise the picture is still there.
         ///
@@ -100,29 +111,28 @@ public struct ClipboardSnapshot: Sendable {
         /// *is* reporting it. A case per field would put the extension back where it was — a second
         /// place to remember.
         case lossIfPresent(String)
-        /// Everything on the clipboard that no snapshot enumerates: a Finder file copy, a custom
-        /// type some app wrote, `NSFilenamesPboardType`, a promise. Counted as lost exactly when
+        /// Everything on the clipboard that no snapshot enumerates: a custom type some app wrote,
+        /// a file promise, any representation no stored property records. Counted as lost exactly when
         /// the payload would write nothing at all, because then the write is `clearContents()` and
         /// nothing else — there is no content to weigh the loss against.
         ///
         /// When the payload *does* write something, an unedited Save is accepted as the user asking
         /// for that write — and the other half of that, which this case leaves unsaid until now:
-        /// **everything the snapshot does not model is then dropped by policy.** An unedited Finder
-        /// file copy followed by ⌘S replaces the file on the clipboard with its filename. That
-        /// predates image sessions and is deliberate, but it is the same order of judgement as the
-        /// rich-text exception rather than a law of nature, and #71 makes it visible, because then
-        /// a file copy is one of the things a session is *for*. Whoever lands #71 is meeting that
-        /// decision here, not inheriting it silently: a modelled file reference classified
-        /// `.lossIfPresent` is reported by name above and stops being covered by this case at all.
+        /// **everything the snapshot does not model is then dropped by policy.** That is the same
+        /// order of judgement as the rich-text exception rather than a law of nature. A Finder file
+        /// copy was its most visible casualty — an unedited ⌘S replaced the file on the clipboard
+        /// with its filename — until #71 modelled it: `fileReferenceTypes` is `.lossIfPresent`, is
+        /// reported by name above, and is no longer covered by this case at all. The next
+        /// representation someone notices being dropped leaves this case the same way.
         case wholeClipboard
     }
 
     /// Which of the four buckets each stored property of this type falls into.
     ///
     /// **It is read, not just enforced.** `unreproduced(by:)` walks this dictionary for the
-    /// `.lossIfPresent` bucket, so for that bucket the entry below is the behaviour: classify #71's
-    /// file reference `.lossIfPresent` and an unedited Save over it is already a no-op, with no
-    /// second edit to forget. That is the fix for what this dictionary was when it was introduced —
+    /// `.lossIfPresent` bucket, so for that bucket the entry below is the behaviour: classifying
+    /// `fileReferenceTypes` `.lossIfPresent` is the whole of what made an unedited Save over a
+    /// copied file a no-op (#71), with no second edit to forget. That is the fix for what this dictionary was when it was introduced —
     /// a label beside a hard-coded predicate, which made the test below enforce only that someone
     /// had typed a bucket name. A correctly classified field with `unreproduced(by:)` left alone
     /// passed everything and lost the data anyway.
@@ -160,6 +170,7 @@ public struct ClipboardSnapshot: Sendable {
         "richRTFD": .droppedByPolicy,
         "imagePNG": .reproducedByPayload,
         "refusedImagePixels": .lossIfPresent,
+        "fileReferenceTypes": .lossIfPresent,
         "changeCount": .metadata,
     ]
 
@@ -197,8 +208,10 @@ public struct ClipboardSnapshot: Sendable {
     /// The body of `unreproduced(by:)` with its classification injected, which exists so a test can
     /// hand it a bucketing of a property this function does not name and check that the property is
     /// reported anyway. That is the difference between "the `.lossIfPresent` bucket is honoured" and
-    /// "`refusedImagePixels` happens to be reported", and it is not observable through the public
-    /// entry point while the type has exactly one `.lossIfPresent` field. Internal, and every
+    /// "today's `.lossIfPresent` fields happen to be reported": the public entry point can only be
+    /// handed fields that exist, so a body naming `refusedImagePixels` and `fileReferenceTypes`
+    /// passes every test of it, and only a field this function never heard of tells the two
+    /// apart. Internal, and every
     /// production caller goes through `unreproduced(by:)` with the real dictionary.
     func unreproduced(by payload: SavePayload,
                       classifiedBy classes: [String: RepresentationClass]) -> Set<Representation> {
@@ -214,7 +227,7 @@ public struct ClipboardSnapshot: Sendable {
         }
         // `.lossIfPresent`, read off the classification: no payload can reproduce any of these, so
         // presence is the entire test and reflection can do it for a field this code never heard of.
-        // Five children on a Save-time predicate costs nothing worth caching.
+        // Six children on a Save-time predicate costs nothing worth caching.
         for child in Mirror(reflecting: self).children {
             guard let label = child.label,
                   classes[label] == .lossIfPresent,

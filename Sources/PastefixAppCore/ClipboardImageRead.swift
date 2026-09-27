@@ -58,8 +58,8 @@ public enum ClipboardImageRead {
     ) -> Data? {
         // Checked before anything else, and before any bytes are read: a file copy is refused
         // outright rather than merely low-priority against the two image types below. Scope
-        // note: this only decides "no image" for the session; the pre-existing loss of
-        // `file-url`/`filenames`/`noderef` on Save is #71, not this rule's job.
+        // note: this only decides "no image" for the session; what an unedited Save does over
+        // a file copy is `ClipboardSnapshot.fileReferenceTypes` (#71), not this rule's job.
         guard !refusesAsFileCopy() else { return nil }
         // The "only .png and .tiff count" rule is enforced here rather than left to the adapter,
         // so it holds for every caller and is testable in one place.
@@ -110,9 +110,10 @@ public enum ClipboardImageRead {
     /// questions into one and turn "cannot read it" into "it is a file copy".
     ///
     /// **Known residual, unmeasured:** a third-party file manager that writes a file-url plus a
-    /// **PNG of the icon** and neither Finder marker would be accepted by arm 3, and an unedited
-    /// ⌘S would then write the icon over the file copy. No such source has been observed (none
-    /// was installed to measure); recorded so it is recognised if it is.
+    /// **PNG of the icon** and neither Finder marker would be accepted by arm 3, so the icon would
+    /// open as an image session. It would not be written over the file copy: the file-url alone
+    /// makes an unedited ⌘S a no-op (`ClipboardSnapshot.fileReferenceTypes`, #71). No such source
+    /// has been observed (none was installed to measure); recorded so it is recognised if it is.
     public static func refusesAsFileCopy(declaredTypes types: Set<String>) -> Bool {
         if !types.isDisjoint(with: finderMarkerTypes) { return true }
         if types.isDisjoint(with: fileURLTypes) { return false }

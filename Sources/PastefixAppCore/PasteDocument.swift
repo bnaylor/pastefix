@@ -106,7 +106,7 @@ public struct PasteDocument: Sendable {
     /// property of `ClipboardSnapshot` as reproduced-by-payload, dropped-by-policy, metadata, or
     /// loss-if-present, a `Mirror`-based test fails on any property that is in none of them, and for
     /// the loss-if-present bucket the classification **is** the predicate — that function reads
-    /// `storedPropertyClasses` rather than naming fields. So #71 recording a file reference cannot
+    /// `storedPropertyClasses` rather than naming fields. So #71's recorded file reference could not
     /// slip through: the earlier claim that "the principle already covers it" was false, and so was
     /// its first replacement, a bucket nothing read — a field classified correctly with
     /// `unreproduced(by:)` left alone passed every test while Save cleared the clipboard and dropped
@@ -116,11 +116,12 @@ public struct PasteDocument: Sendable {
     ///
     /// Three ways it can be true today: the payload declares nothing at all, so the write is
     /// `clearContents()` and nothing else (`.wholeClipboard` — including whatever the clipboard
-    /// holds that no snapshot reads, such as a Finder file copy, which an unedited Save with a
-    /// non-empty payload drops by policy); the origin carries a `.lossIfPresent` property — today
-    /// `refusedImagePixels`, an image the session has no bytes for, which makes *any* write lossy
-    /// even in a mixed session with real text to write (the regression that proved "empty payload"
-    /// was the wrong predicate); or the payload simply does not carry a representation the origin
+    /// holds that no snapshot reads, such as a custom type or a file promise, which an unedited
+    /// Save with a non-empty payload drops by policy); the origin carries a `.lossIfPresent`
+    /// property — today `refusedImagePixels`, an image the session has no bytes for, which makes
+    /// *any* write lossy even in a mixed session with real text to write (the regression that
+    /// proved "empty payload" was the wrong predicate), or `fileReferenceTypes`, a copied file no
+    /// write can put back (#71); or the payload simply does not carry a representation the origin
     /// has.
     ///
     /// `isUnedited` is the other half and it is what keeps deliberate destruction working: select
