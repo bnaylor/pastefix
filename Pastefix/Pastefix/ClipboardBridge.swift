@@ -84,10 +84,10 @@ enum ClipboardBridge {
         // `clearContents` is what bumps `changeCount` — the `setString`/`setData` calls that
         // follow do not — so its return value is exactly the count this write produced.
         let count = pasteboard.clearContents()
-        if pasteboard.name == .general { lastSelfWriteChangeCount = count }
+        lastSelfWriteChangeCount[pasteboard.name] = count
     }
 
-    /// The `changeCount` Pastefix's own last write to the general pasteboard produced.
+    /// The `changeCount` Pastefix's own last write to each pasteboard produced.
     ///
     /// ⌘⇧U asks "has the clipboard moved on since this buffer was captured?" and re-snapshots
     /// when it has. Without this, the app's own success write — the short URL it puts on the
@@ -95,16 +95,18 @@ enum ClipboardBridge {
     /// helpfully offer to upload the link to the thing just uploaded. A copy the user did not
     /// make is not a copy that redirects the next upload.
     ///
-    /// Only the latest write is kept, which is all the comparison needs: a chain of our own
-    /// writes (upload, then Copy Again) leaves the last one matching. Main-actor state, enforced
+    /// Only the latest write per pasteboard is kept, which is all the comparison needs: a chain of
+    /// our own writes (upload, then Copy Again) leaves the last one matching. Keyed by pasteboard
+    /// name so a test's private pasteboard (#68) is tracked like the general one without the two
+    /// ever answering for each other. Main-actor state, enforced
     /// rather than assumed: the app target builds with `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor`,
     /// so this enum is main-actor isolated without saying so, the same as `SnippetPaster`'s
     /// pending generation (which says so explicitly).
-    private(set) static var lastSelfWriteChangeCount: Int?
+    private(set) static var lastSelfWriteChangeCount: [NSPasteboard.Name: Int] = [:]
 
-    /// Whether the general pasteboard's current contents are something Pastefix itself put there.
-    static func clipboardIsSelfWritten(changeCount: Int) -> Bool {
-        changeCount == lastSelfWriteChangeCount
+    /// Whether `pasteboard`'s current contents are something Pastefix itself put there.
+    static func clipboardIsSelfWritten(changeCount: Int, on pasteboard: NSPasteboard = .general) -> Bool {
+        changeCount == lastSelfWriteChangeCount[pasteboard.name]
     }
 
     /// Armed-Markdown save: formatted targets take HTML/RTF, plain targets get the Markdown source.

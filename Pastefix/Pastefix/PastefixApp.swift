@@ -287,19 +287,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// the user cannot see is not one they can check. `summon()` itself is untouched, so ⌘⇧C and
     /// ⌘⇧V behave exactly as before.
     func summonUpload() {
-        // `changeCount` only — never a read of the contents, which is what would cost a macOS
-        // pasteboard-access prompt.
-        let changeCount = NSPasteboard.general.changeCount
-        // A clipboard Pastefix wrote itself is not the user copying something new. The case that
-        // matters: an upload succeeds, the short URL goes on the clipboard, and a second ⌘⇧U in
-        // the same session would otherwise re-snapshot and offer to upload that link.
-        let userCopiedSomethingNew = !ClipboardBridge.clipboardIsSelfWritten(changeCount: changeCount)
-        if let document = model.document,
-           !(userCopiedSomethingNew && document.isStale(comparedToPasteboardChangeCount: changeCount)) {
+        // The decision is `AppModel.uploadNeedsFreshSnapshot` (tested); what stays here is the
+        // panel. `changeCount` only is read — never the contents, which is what would cost a
+        // macOS pasteboard-access prompt.
+        if model.uploadNeedsFreshSnapshot() {
+            summon()
+        } else {
             lastSummonAt = Date()
             panel?.show()
-        } else {
-            summon()
         }
         model.uploadOverlayRequested = true
     }

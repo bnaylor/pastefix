@@ -166,13 +166,32 @@ final class AppModel: ObservableObject {
         )
     }
 
+    /// ⌘⇧U's one decision: does the upload need a fresh snapshot of the clipboard, or does the
+    /// open session stand? Fresh when there is no session, or when the session is unedited and the
+    /// user has copied something since it was captured. Pastefix's own writes — the short URL an
+    /// upload puts on the clipboard — are not the user copying, or a second ⌘⇧U would offer to
+    /// upload the link to what was just uploaded. Moved here from `AppDelegate.summonUpload` so it
+    /// is testable (#68): that stale-buffer rule is the one defect of Plan 13 that reached the user.
+    func uploadNeedsFreshSnapshot() -> Bool {
+        guard let document else { return true }
+        let changeCount = pasteboard.changeCount
+        let userCopiedSomethingNew = !ClipboardBridge.clipboardIsSelfWritten(changeCount: changeCount, on: pasteboard)
+        return userCopiedSomethingNew && document.isStale(comparedToPasteboardChangeCount: changeCount)
+    }
+
     func summon() {
+        beginSession(from: ClipboardBridge.snapshot(from: pasteboard))
+    }
+
+    /// A new session over `origin`. `summon` is this over a fresh pasteboard snapshot; tests (#68)
+    /// use it directly to start from a snapshot the pasteboard path would never produce — which is
+    /// how a defect that validation upstream now hides stays pinned downstream.
+    func beginSession(from origin: ClipboardSnapshot) {
         errorMessage = nil
         noticeMessage = nil
         resetSecretSelection()
         abandonInFlightWork()
         sessionGeneration &+= 1
-        let origin = ClipboardBridge.snapshot(from: pasteboard)
         document = PasteDocument(origin: origin)
         noteRefusedImage(origin)
         requestDetection()
