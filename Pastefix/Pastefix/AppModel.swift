@@ -9,6 +9,27 @@ import PastefixAppCore
 final class AppModel: ObservableObject {
     @Published private(set) var document: PasteDocument?
     @Published var errorMessage: String?
+    /// Separate from `errorMessage` on purpose: an error reports that something failed, a notice
+    /// reports a refusal in which nothing was lost (the clipboard is untouched). Conflating them
+    /// (as `noteRefusedImage` used to, through `errorMessage`) taught a user that an intact
+    /// clipboard looks exactly like a broken one — same red strip, same warning triangle.
+    ///
+    /// The two channels are independent, deliberately — not lockstep. `noticeMessage` is a
+    /// standing fact about the session's *origin* ("that image is too large to open") and stays
+    /// true for the session's whole life; `errorMessage` reports a
+    /// transient failure (an apply, a Markdown render) that can come and go many times within
+    /// that same session. Only the four session boundaries — `summon`, `refresh`, `load` and
+    /// `endSession` — clear both together, and each does it the same way: by assigning nil to both
+    /// channels itself, because only there does the standing fact itself change. `setWorking`
+    /// clears neither, deliberately — typing is not a new origin. Elsewhere — `apply`'s completion,
+    /// `save`'s Markdown size refusal and its render failure — a failure sets
+    /// `errorMessage` without touching `noticeMessage`, so the two *can* both be non-nil at once
+    /// mid-session: a still-true notice must survive an unrelated transient error, not be wiped
+    /// out by it. `PanelView` shows only one banner at a time and picks the error when both are
+    /// set — a priority for the single slot, not evidence that both can't happen — so nothing is
+    /// lost: the notice reappears as soon as the error clears (a later successful transform sets
+    /// `errorMessage = nil`).
+    @Published var noticeMessage: String?
     @Published private(set) var isApplying = false
     @Published private(set) var transformers: [any Transformer] = []
     @Published private(set) var allTransformers: [any Transformer] = []
@@ -114,11 +135,37 @@ final class AppModel: ObservableObject {
 
     func summon() {
         errorMessage = nil
+        noticeMessage = nil
         resetSecretSelection()
         abandonInFlightWork()
         sessionGeneration &+= 1
-        document = PasteDocument(origin: ClipboardBridge.snapshot())
+        let origin = ClipboardBridge.snapshot()
+        document = PasteDocument(origin: origin)
+        noteRefusedImage(origin)
         requestDetection()
+    }
+
+    /// Says so when the clipboard held an image the snapshot declined to open.
+    ///
+    /// Without this the panel comes up as an empty text session and nothing anywhere says why —
+    /// the user copied a picture and got a blank editor. A 30 MP photo out of Preview is enough to
+    /// hit the ceiling, so this is a path real people reach, and silence on it is the house
+    /// anti-pattern (the upload overlay's "image, not supported yet" exists for the same reason).
+    ///
+    /// The clipboard is untouched, which the message says, because "too large" invites the
+    /// assumption that something was lost. But it says it **conditionally** — "until you save text
+    /// over it" — because that is exactly the guarantee: `PasteDocument.saveWouldLoseContent` makes
+    /// ⌘S a no-op for as long as the session is untouched, text in the buffer or not, and just as
+    /// deliberately stops doing so once the user has typed, since typing and then saving is an
+    /// instruction. A banner promising the picture is safe full stop would be a promise ⌘S can break
+    /// one keystroke later.
+    ///
+    /// Kept short, and ordered so the instruction comes before the numbers: the banner is
+    /// `.lineLimit(2)` at `.callout` in a 560 pt panel, so at larger Dynamic Type sizes the tail is
+    /// what disappears. The megapixel figures are the expendable half; "paste it directly" is not.
+    private func noteRefusedImage(_ origin: ClipboardSnapshot) {
+        guard let pixels = origin.refusedImagePixels else { return }
+        noticeMessage = "That image is too large to open — paste it directly, it's on your clipboard until you save text over it. (\(ImageBytes.megapixelLabel(pixels)); limit \(ImageBytes.megapixelLabel(ImageBytes.maxConvertiblePixels)))"
     }
 
     /// Palette list: enabled transforms in the user's order, with those applicable to the
@@ -241,10 +288,15 @@ final class AppModel: ObservableObject {
 
     func refresh() {
         guard var doc = document else { return }
-        doc.refresh(origin: ClipboardBridge.snapshot())
+        let origin = ClipboardBridge.snapshot()
+        doc.refresh(origin: origin)
         document = doc
         requestDetection()
         errorMessage = nil
+        noticeMessage = nil
+        // After the clear, not before: a refused image is news about the buffer that was just
+        // installed, and clearing afterwards would throw it away.
+        noteRefusedImage(origin)
         resetSecretSelection()
     }
 
@@ -263,6 +315,18 @@ final class AppModel: ObservableObject {
 
     func save() {
         guard let doc = document else { endSession(); return }
+        // **Save on an unedited session is at best a no-op and at worst destructive, so it must be
+        // a no-op whenever the session cannot reproduce everything the clipboard still holds.**
+        // An unedited buffer means the clipboard already has everything this session has, so the
+        // most a write can achieve is putting the same bytes back — while `clearContents()` in
+        // front of it can silently drop what the session was never given: the over-ceiling image
+        // the notice on screen is about, and (#71) a file reference. The predicate and the whole
+        // argument live in `PasteDocument.saveWouldLoseContent`, where they are testable (#68) and
+        // where the next case to appear extends one rule rather than this list.
+        if doc.saveWouldLoseContent { endSession(); return }
+        // What this Save writes, decided once, in one pure place, so the write below and the
+        // refusal above cannot disagree about what the session holds (see `SavePayload`).
+        let payload = SavePayload(document: doc)
         if doc.outputMode == .renderedMarkdown {
             // MarkdownToRich's own cap only bounds arming (the transform ran against a buffer at
             // or under it), but the buffer can grow afterwards — further edits, or a preset that
@@ -274,7 +338,13 @@ final class AppModel: ObservableObject {
             }
             do {
                 let rich = try RichOutputRenderer.render(markdown: doc.working)
-                ClipboardBridge.writeRich(text: doc.working, html: rich.html, rtf: rich.rtf)
+                // The same `payload` as the branch below, plus the two renderings of its text.
+                // Arming Markdown → Rich Text is a statement about how the *text* is written, not
+                // permission to drop an image the session was handed and the user never touched —
+                // and passing the payload rather than `doc.imagePNG` is what stops this branch
+                // bypassing the empty-`Data` backstop and writing a zero-byte `public.png`
+                // (see `ClipboardBridge.writeRich`).
+                ClipboardBridge.writeRich(payload, html: rich.html, rtf: rich.rtf)
             } catch {
                 // Keep the session open and the mode armed: the user can read the error and
                 // either fix the Markdown or disarm the badge and save plain text instead.
@@ -282,7 +352,18 @@ final class AppModel: ObservableObject {
                 return
             }
         } else {
-            ClipboardBridge.writePlain(doc.working)
+            // Text and image, exactly as `SavePayload` decided them: a mixed session whose text was
+            // edited writes the edited text *and* the original image, and an image session writes
+            // the image back unchanged, which is the whole point of being able to open one.
+            //
+            // `richRTFD` is nil, and that is a policy rather than an oversight: putting *plain*
+            // text back is what this app is for, and no non-Markdown save has ever written the
+            // origin's rich content back (`writePlain` did the same before image sessions existed).
+            // So "Save writes everything the session holds" means the text as edited and the image
+            // unchanged — not every representation the clipboard arrived with. Arming
+            // Markdown → Rich Text is how a user asks for formatted output.
+            ClipboardBridge.write(text: payload.text, richRTFD: payload.richRTFD,
+                                  imagePNG: payload.imagePNG)
         }
         endSession()
     }
@@ -300,17 +381,75 @@ final class AppModel: ObservableObject {
 
     func cancel() { endSession() }
 
-    /// Starts a new session from a history item (rich data attached when present).
+    /// Starts a new session from a history item (rich data and image attached when present).
+    ///
+    /// Every item opens into a session now, image-only ones included: the snapshot carries the
+    /// image, `PasteDocument.displaysAsImage` makes the panel show it, and Save writes it back —
+    /// so an image-only item is an image session rather than something a session would discard.
+    /// An item with both text and an image opens as a text session that still carries the image
+    /// through to Save.
     func load(_ item: HistoryItem) {
-        // An image-only item has no text to edit; opening a session would silently discard the
-        // image. Put it straight back on the clipboard instead of opening an empty editor.
-        guard item.hasText else { copyBack(item); return }
         errorMessage = nil
+        noticeMessage = nil
         resetSecretSelection()
         abandonInFlightWork()
         sessionGeneration &+= 1
-        document = PasteDocument(origin: ClipboardSnapshot(plainText: item.plainText ?? "", richRTFD: history.richRTFD(for: item)))
+        let origin = historyOrigin(for: item)
+        document = PasteDocument(origin: origin)
+        // After the clears, for the same reason `refresh` notes its refusal afterwards: this is
+        // news about the buffer that was just installed.
+        noteUnopenableImage(in: item, origin)
         requestDetection()
+    }
+
+    /// The snapshot a history item opens into, with its stored image put through the *same*
+    /// validation the pasteboard paths use.
+    ///
+    /// This is the second entry point into an image session, and the rule it has to keep is the
+    /// increment's central one: `ClipboardSnapshot.imagePNG` is nil or valid bytes, **never**
+    /// `Data()` and never bytes nothing has looked at, because `save()` hands it straight to
+    /// `NSPasteboard`. `HistoryStore.imagePNG` is `try? Data(contentsOf:)` and validates nothing,
+    /// so without this a zero-byte or corrupt blob became a zero-byte or corrupt `public.png`
+    /// written over the user's clipboard — and `HistoryStore.repair` checks that a blob file
+    /// *exists*, not that it holds an image, so such a blob survives a restart with its index
+    /// entry intact.
+    ///
+    /// `ImageBytes.normalise` is the one conversion and the one ceiling, shared with
+    /// `ClipboardBridge.snapshot` and the capture path, so a blob that is really a TIFF is
+    /// converted here rather than republished under a PNG's name, and one over the ceiling is
+    /// *refused out loud* through the same `refusedImagePixels` channel a summon uses. A missing or
+    /// unreadable file is simply no image. `changeCount` stays nil: a history item was never the
+    /// clipboard, and `PasteDocument.isStale` depends on that distinction.
+    private func historyOrigin(for item: HistoryItem) -> ClipboardSnapshot {
+        var image: Data?
+        var refusedPixels: Int?
+        if let blob = history.imagePNG(for: item) {
+            switch ImageBytes.normalise(blob) {
+            case .png(let png): image = png
+            case .tooLarge(let pixels): refusedPixels = pixels
+            case .unusable: break
+            }
+        }
+        return ClipboardSnapshot(plainText: item.plainText ?? "",
+                                 richRTFD: history.richRTFD(for: item),
+                                 imagePNG: image,
+                                 refusedImagePixels: refusedPixels)
+    }
+
+    /// Says so when an item that has a picture opened without one.
+    ///
+    /// The silence this replaces was the bad part: an image-only row whose blob had gone missing
+    /// opened a blank editor with no explanation, which reads as a broken app — and the same
+    /// anti-pattern `noteRefusedImage` exists to prevent on the summon path. Same channel, two
+    /// messages, because the two causes call for different things from the user: a picture too
+    /// large to *open* is still intact in history, and one whose file is gone is not.
+    private func noteUnopenableImage(in item: HistoryItem, _ origin: ClipboardSnapshot) {
+        guard item.imageFile != nil, origin.imagePNG == nil else { return }
+        if let pixels = origin.refusedImagePixels {
+            noticeMessage = "That image is too large to open — it's still in your history. (\(ImageBytes.megapixelLabel(pixels)); limit \(ImageBytes.megapixelLabel(ImageBytes.maxConvertiblePixels)))"
+        } else {
+            noticeMessage = "That image couldn't be opened — its saved file is missing or unreadable."
+        }
     }
 
     /// Puts the whole item back on the clipboard and ends the session.
@@ -377,6 +516,7 @@ final class AppModel: ObservableObject {
         abandonInFlightWork()
         document = nil
         errorMessage = nil
+        noticeMessage = nil
         resetSecretSelection()
         sessionGeneration &+= 1
         onEndSession?()

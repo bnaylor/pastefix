@@ -30,11 +30,106 @@ public struct PasteDocument: Sendable {
         self.history = [origin.plainText ?? ""]
         self.cursor = 0
         self.outputMode = .plain
+        self.displaysAsImage = origin.imagePNG != nil
+            && (origin.plainText ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     public var working: String { history[cursor] }
     public var canUndo: Bool { cursor > 0 }
     public var canRedo: Bool { cursor < history.count - 1 }
+
+    /// The session's standalone image, if the clipboard had one. Carried whatever the session
+    /// displays as, so an image-aware action reaches it even from a text session.
+    public var imagePNG: Data? { origin.imagePNG }
+
+    /// True when this session renders as an image rather than the editor: the origin carried an
+    /// image and carried no real text.
+    ///
+    /// **Decided once, at init, and sticky for the session** — it is a `let`, and deliberately not
+    /// derived from `working`. A live derivation is what the spec originally asked for and it is
+    /// unshippable: `setWorking` pushes no history, so in a *mixed* session (image + text) ⌘A then
+    /// Delete would blank `working`, flip this true on that keystroke, and replace the `TextEditor`
+    /// with the image view — with `canUndo` false, so ⌘Z could not bring the editor back and the
+    /// user could not type again for the rest of the session. Clearing the text in a mixed session
+    /// leaves you in the editor.
+    ///
+    /// Sticky in both directions, and the other one costs nothing: an image session has no editor
+    /// to type into and no transform that accepts an image, so `working` cannot gain text.
+    ///
+    /// A new origin is a new decision, not a mutation of this one: `refresh(origin:)` replaces the
+    /// whole document, so ⌘R re-derives this from the clipboard it just read.
+    ///
+    /// "No real text" is blank-once-trimmed, which is the rule `PendingImage.resolve` and
+    /// `HistoryStore.record` already use. Reusing it rather than writing a second one is the
+    /// point: a capture path and a session path that disagree about whether a buffer has text
+    /// give two different answers for one clipboard, and nobody notices until they do.
+    public let displaysAsImage: Bool
+
+    /// True when this session has nothing on screen but the refused-image notice: the clipboard
+    /// carried an image too large to convert, and there is no real text in the editor either.
+    ///
+    /// The panel uses it to *withhold* editor focus, which is why it must not be the weaker
+    /// condition "this session had a refused image". A **mixed** session — real text plus an
+    /// over-ceiling image — is an ordinary text session with a banner over it, and suppressing
+    /// focus there leaves a user unable to type after closing an overlay or landing a transform
+    /// without first clicking into the editor. Emptiness is the whole reason to withhold focus: a
+    /// blinking caret in an empty editor invites the one keystroke that makes `save()` write over
+    /// the picture the banner has just promised is still on the clipboard.
+    ///
+    /// Emptiness is `SavePayload(document:).isEmpty` rather than a fourth spelling of "blank once
+    /// trimmed", so the focus rule and Save's refusal cannot drift apart. It reads `working`, so a
+    /// user who does type gets focus back for the rest of the session.
+    public var isEmptyRefusedImageSession: Bool {
+        origin.refusedImagePixels != nil && SavePayload(document: self).isEmpty
+    }
+
+    /// **Save must write nothing when this is true.**
+    ///
+    /// Save on an *unedited* session is at best a no-op and at worst destructive: the clipboard
+    /// already holds everything the session has, so the best a write can do is put the same content
+    /// back, and the worst it can do is `clearContents()` and then fail to reproduce something the
+    /// clipboard was holding. So the rule is not "is the payload empty" but: **the session must be
+    /// able to reproduce everything the clipboard still holds, except the representations Save
+    /// drops by policy** — and when it cannot, Save is a no-op and the session simply ends.
+    ///
+    /// **The policy exception is rich content, and it is wanted.** An unedited rich-text copy has
+    /// `origin.richRTFD`, the payload writes plain text only (`SavePayload.richRTFD` is nil by
+    /// policy), and `clearContents()` drops the RTF/HTML the clipboard was holding — so this Save
+    /// *does* lose something the session could have reproduced, and it proceeds anyway. Summon + ⌘S
+    /// as "strip formatting" predates image sessions and is plausibly relied on; removing the
+    /// exception to make the words "everything the clipboard holds" literally true would break it.
+    /// Anyone tempted to tighten this predicate to match a simpler sentence is removing a feature.
+    /// The exception is recorded as a bucket, not as prose: `richRTFD` is
+    /// `ClipboardSnapshot.RepresentationClass.droppedByPolicy`.
+    ///
+    /// The question is asked once, on the snapshot: `unreproduced(by:)` classifies **every** stored
+    /// property of `ClipboardSnapshot` as reproduced-by-payload, dropped-by-policy, metadata, or
+    /// loss-if-present, a `Mirror`-based test fails on any property that is in none of them, and for
+    /// the loss-if-present bucket the classification **is** the predicate — that function reads
+    /// `storedPropertyClasses` rather than naming fields. So #71 recording a file reference cannot
+    /// slip through: the earlier claim that "the principle already covers it" was false, and so was
+    /// its first replacement, a bucket nothing read — a field classified correctly with
+    /// `unreproduced(by:)` left alone passed every test while Save cleared the clipboard and dropped
+    /// the reference. Now classifying it `.lossIfPresent` refuses the Save, and the one thing still
+    /// left to a human is the comparison for a `.reproducedByPayload` field, which no reflection can
+    /// write.
+    ///
+    /// Three ways it can be true today: the payload declares nothing at all, so the write is
+    /// `clearContents()` and nothing else (`.wholeClipboard` — including whatever the clipboard
+    /// holds that no snapshot reads, such as a Finder file copy, which an unedited Save with a
+    /// non-empty payload drops by policy); the origin carries a `.lossIfPresent` property — today
+    /// `refusedImagePixels`, an image the session has no bytes for, which makes *any* write lossy
+    /// even in a mixed session with real text to write (the regression that proved "empty payload"
+    /// was the wrong predicate); or the payload simply does not carry a representation the origin
+    /// has.
+    ///
+    /// `isUnedited` is the other half and it is what keeps deliberate destruction working: select
+    /// all, delete, ⌘S is an edited document, and that write happens. Losing an image that way is a
+    /// consequence of something the user did, not something ⌘S did to them for summoning the panel.
+    public var saveWouldLoseContent: Bool {
+        guard isUnedited else { return false }
+        return !origin.unreproduced(by: SavePayload(document: self)).isEmpty
+    }
 
     /// True when nothing has happened to this document since it was captured: no transform
     /// pushed, nothing typed, nothing to redo, and no output mode armed.

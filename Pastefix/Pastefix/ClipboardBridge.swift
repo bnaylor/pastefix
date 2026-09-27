@@ -23,9 +23,45 @@ enum ClipboardBridge {
         } else {
             rich = nil
         }
+        // A standalone pasteboard image, on the same footing as the text reads above: it is
+        // content, so it comes after the count. The four "no image" rules live in
+        // `ClipboardImageRead` (a file copy, no image type, advertised-but-nil, empty bytes — see
+        // there for why nil is never `Data()`), and the bytes-level decisions — PNG kept verbatim
+        // and header-validated, TIFF decoded and converted, the pixel ceiling on the conversion —
+        // live in `ImageBytes`, which the capture path and the history load path use too.
+        //
+        // Set by the decode closure below when the clipboard *had* an image we would not convert.
+        var refusedPixels: Int?
+        let image = ClipboardImageRead.imagePNG(
+            // A Finder file copy puts `public.file-url` on the pasteboard; see
+            // `ClipboardImageRead` for why that alone rules out an image regardless of what
+            // image types are also offered.
+            hasFileURL: { pasteboard.availableType(from: [.fileURL]) != nil },
+            // PNG first, and the order is the point: `availableType(from:)` answers with the
+            // earliest match, so a pasteboard offering both (most screenshot sources do) is read
+            // as the PNG it already holds instead of paying a TIFF decode to arrive at one.
+            available: { types in
+                let ordered = [ClipboardImageRead.pngType, ClipboardImageRead.tiffType]
+                    .filter { types.contains($0) }
+                    .map { NSPasteboard.PasteboardType(rawValue: $0) }
+                return pasteboard.availableType(from: ordered)?.rawValue
+            },
+            data: { pasteboard.data(forType: NSPasteboard.PasteboardType(rawValue: $0)) },
+            // `ImageBytes` is shared with the capture path, ceiling and all. The refusal is
+            // recorded rather than swallowed: `nil` here is the only thing `ClipboardImageRead`
+            // can be told, and an image that silently becomes no image is a defect, not a policy.
+            decodePNG: { bytes in
+                switch ImageBytes.normalise(bytes) {
+                case .png(let png): return png
+                case .tooLarge(let pixels): refusedPixels = pixels; return nil
+                case .unusable: return nil
+                }
+            }
+        )
         // Stored with the snapshot: it is what later tells a summon whether the buffer it is
         // holding is older than the clipboard.
-        return ClipboardSnapshot(plainText: plain, rich: rich, changeCount: changeCount)
+        return ClipboardSnapshot(plainText: plain, rich: rich, imagePNG: image,
+                                 refusedImagePixels: refusedPixels, changeCount: changeCount)
     }
 
     static func writePlain(_ text: String, to pasteboard: NSPasteboard = .general) {
@@ -68,11 +104,37 @@ enum ClipboardBridge {
     }
 
     /// Armed-Markdown save: formatted targets take HTML/RTF, plain targets get the Markdown source.
-    static func writeRich(text: String, html: String, rtf: Data?, to pasteboard: NSPasteboard = .general) {
+    ///
+    /// **Takes the `SavePayload` rather than loose representations, and that is the fix for a real
+    /// bug.** This function used to take `imagePNG: Data?`, and `save()` handed it `doc.imagePNG` —
+    /// the raw origin bytes — while the other branch passed `payload.imagePNG`. `SavePayload`'s init
+    /// is what turns an empty `Data` into nil, so this branch could put **zero bytes under
+    /// `public.png`**: the one write this whole area of the code exists to prevent, reachable on an
+    /// armed-Markdown Save over an origin with empty image data. Two callers of one rule, agreeing
+    /// only by hand — the exact shape `SavePayload` was introduced to remove, surviving in the one
+    /// branch that did not go through it.
+    ///
+    /// So the rule is in the signature now: **the rendered branch chooses how the _text_ is written
+    /// — `html` and `rtf` are its renderings of it — and every other representation comes from the
+    /// payload.** That is the only exception, and a future representation (#71's file reference)
+    /// arrives here by growing `SavePayload`, not by growing this parameter list. There is no
+    /// parameter left through which a caller can smuggle in bytes the payload did not decide.
+    ///
+    /// The image rides along for the same reason it is on `write`: a session can carry a standalone
+    /// image alongside text (a copy that put both on the clipboard), and arming Markdown → Rich Text
+    /// is a statement about how the text is written, not permission to drop it. Save never writes
+    /// less than it was given.
+    ///
+    /// One behaviour change falls out of reading `.string` from the payload too: an image session
+    /// with an empty buffer now declares no `public.string` instead of an empty one, which is what
+    /// `SavePayload.text` documents and what every other save path already did.
+    static func writeRich(_ payload: SavePayload, html: String, rtf: Data?,
+                          to pasteboard: NSPasteboard = .general) {
         beginWrite(pasteboard)
-        pasteboard.setString(text, forType: .string)
+        if let text = payload.text { pasteboard.setString(text, forType: .string) }
         pasteboard.setString(html, forType: .html)
         if let rtf { pasteboard.setData(rtf, forType: .rtf) }
+        if let imagePNG = payload.imagePNG { pasteboard.setData(imagePNG, forType: .png) }
     }
 
     /// Writes every representation we have for one item. Empty inputs write nothing for that type.

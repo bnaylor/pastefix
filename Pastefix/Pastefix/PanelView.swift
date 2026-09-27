@@ -116,6 +116,17 @@ struct PanelView: View {
                             // No padding here: the text view carries its own 8 pt
                             // `textContainerInset`, which matches the editor's gutter.
                             MarkdownPreviewView(text: previewText)
+                        } else if let document = model.document, document.displaysAsImage,
+                                  let imagePNG = document.imagePNG {
+                            // An image session shows the image where the editor would be, and
+                            // nothing else about the panel changes: same toolbar, action bar,
+                            // footer and overlays. `.id` on the session generation because the
+                            // view holds a decoded bitmap in `@State` — a new summon or a loaded
+                            // history item must start it over rather than inherit the last
+                            // session's image (the view keeps its place in the hierarchy, so
+                            // SwiftUI would otherwise keep its state too).
+                            ImageSessionView(imagePNG: imagePNG, revision: document.detectionRevision)
+                                .id(model.sessionGeneration)
                         } else {
                             TextEditor(text: workingBinding, selection: selectionBinding)
                                 .font(.system(.body, design: .monospaced))
@@ -133,6 +144,21 @@ struct PanelView: View {
                         }
                         if let error = model.errorMessage {
                             errorBanner(error)
+                        } else if let notice = model.noticeMessage {
+                            // A separate banner from `errorBanner`, not just a recolor of it: a
+                            // notice reports a refusal in which nothing the user can act on has
+                            // failed, and the red-and-white treatment below said the opposite —
+                            // see `AppModel.noticeMessage`. Three messages today, all about an
+                            // image that would not open: too large to convert at summon
+                            // (`noteRefusedImage`), and too large or file-missing when a history
+                            // item is opened (`noteUnopenableImage`).
+                            //
+                            // This `else if` is a priority for one banner slot, not an assumption
+                            // that only one of the two can be set: both can be non-nil at once
+                            // (see `AppModel.noticeMessage`), and a transient error outranks a
+                            // standing notice here on purpose. The notice reappears on its own
+                            // once the error clears — nothing here discards it.
+                            noticeBanner(notice)
                         }
                     }
                     if settings.showSidebar {
@@ -195,12 +221,22 @@ struct PanelView: View {
             previewTask?.cancel()
             previewText = NSAttributedString()
         }
+        // Refresh (⌘R) can turn a text session into an image session *without* a new session
+        // generation, so the reset above does not cover it. The preview is a view of the buffer
+        // that just went away, and leaving it on would draw a blank preview over the image with
+        // the ⌘⇧M that turns it off now disabled — a dead end reachable in two keystrokes.
+        .onChange(of: model.document?.displaysAsImage) { _, displaysAsImage in
+            guard displaysAsImage == true, isPreviewing else { return }
+            isPreviewing = false
+            previewTask?.cancel()
+            previewText = NSAttributedString()
+        }
         // Hand focus back to the editor once a transform finishes, unless the user has an
         // overlay open and is picking the next thing — or is reading the preview, where there
         // is no editor to focus.
         .onChange(of: model.isApplying) { _, applying in
             if !applying && !isPaletteOpen && !isHistoryOpen && !isUploadOpen && !isPreviewing {
-                editorFocused = true
+                focusEditorUnlessRefusedImage()
             }
         }
         // Transforms, undo/redo and typing all land here; the debounce keeps a fast-changing
@@ -220,7 +256,7 @@ struct PanelView: View {
             guard let requested else { return }
             if !isPaletteOpen && !isHistoryOpen && !isUploadOpen && !isPreviewing {
                 editorSelection = requested
-                editorFocused = true
+                focusEditorUnlessRefusedImage()
             }
             model.requestedSelection = nil
         }
@@ -289,11 +325,16 @@ struct PanelView: View {
             }
             .help(isPreviewing ? "Back to the editor (⌘⇧M)" : "Preview as Markdown (⌘⇧M)")
             .accessibilityLabel(isPreviewing ? "Back to the editor" : "Preview as Markdown")
-            // Tinted, not gated: anything can be previewed, detection only makes it a suggestion.
+            // Tinted, not gated: any *text* can be previewed, detection only makes it a suggestion.
             .tint(model.document?.detectedKinds.contains(.markdown) == true ? Color.accentColor : nil)
             // Same one-binding rule as ⌘K/⌘Y: nothing owns ⌘⇧M while an overlay is up.
             .keyboardShortcut(isPaletteOpen || isHistoryOpen || isUploadOpen ? nil : KeyboardShortcut("m", modifiers: [.command, .shift]))
-            .disabled(model.document == nil || model.isApplying)
+            // Gated in an image session, which is the one thing there is no text to preview of:
+            // the buffer is blank, so ⌘⇧M would draw an empty preview over the image and the way
+            // back would be a shortcut the user has to guess. Disabled rather than reordering the
+            // branches below it — a lit button that silently does nothing is the worse failure.
+            .disabled(model.document == nil || model.isApplying
+                      || model.document?.displaysAsImage == true)
             Spacer()
             Button { toggleHistory() } label: {
                 Image(systemName: "clock.arrow.circlepath")
@@ -470,7 +511,7 @@ struct PanelView: View {
         previewTask?.cancel()
         // Unlike the overlays, the editor does not exist yet at this point — it comes back on
         // the next render — so the focus request has to wait a turn or it lands on nothing.
-        Task { @MainActor in editorFocused = true }
+        Task { @MainActor in focusEditorUnlessRefusedImage() }
     }
 
     /// Esc: close whichever overlay is open, then the preview, otherwise end the session.
@@ -490,16 +531,33 @@ struct PanelView: View {
 
     private func closePalette() {
         isPaletteOpen = false
-        editorFocused = true
+        focusEditorUnlessRefusedImage()
     }
 
     private func closeHistory() {
         isHistoryOpen = false
-        editorFocused = true
+        focusEditorUnlessRefusedImage()
     }
 
     private func closeUpload() {
         isUploadOpen = false
+        focusEditorUnlessRefusedImage()
+    }
+
+    /// Requests focus for the editor, except in an *empty* refused-image session, where it is on
+    /// screen only beneath the notice telling the user their picture is still on the clipboard. A
+    /// blinking caret there invites the one keystroke `save()` deliberately allows to overwrite
+    /// that image (typing is a deliberate act, so `save()` does not block it) — this just stops
+    /// inviting it. The editor stays reachable by click for anyone who does mean to type over it.
+    ///
+    /// Emptiness is the condition, not "this session had a refused image", and the difference is a
+    /// whole class of session: a **mixed** one (real text plus an over-ceiling image) is an ordinary
+    /// text session with a banner over it, and the weaker condition left it never able to regain
+    /// focus — every overlay close, every landed transform, for the session's whole life. The rule
+    /// lives in `PasteDocument.isEmptyRefusedImageSession`, where it is one expression of "blank
+    /// once trimmed" shared with Save's refusal, and where it can be tested (#68).
+    private func focusEditorUnlessRefusedImage() {
+        guard model.document?.isEmptyRefusedImageSession != true else { return }
         editorFocused = true
     }
 
@@ -534,5 +592,21 @@ struct PanelView: View {
         .foregroundStyle(.white)
         .padding(8)
         .background(Color.red.opacity(0.85))
+    }
+
+    /// Amber, not red-and-white: a notice (currently only the refused-image message) reports
+    /// that a refusal happened and nothing was lost, not that something failed. `errorBanner`
+    /// above stays exactly as it was — real errors still get the solid red strip and the
+    /// warning triangle.
+    private func noticeBanner(_ text: String) -> some View {
+        HStack {
+            Image(systemName: "info.circle.fill")
+            Text(text).lineLimit(2)
+            Spacer()
+        }
+        .font(.callout)
+        .foregroundStyle(.primary)
+        .padding(8)
+        .background(Color.orange.opacity(0.18))
     }
 }

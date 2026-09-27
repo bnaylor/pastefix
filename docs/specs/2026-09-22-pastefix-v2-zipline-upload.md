@@ -338,7 +338,10 @@ No UI tests for the overlay; the app target has none today and this is not the
 change that starts that. What this feature added is seven suites' worth of
 upload coverage — `ZiplineHeadersTests`, `ZiplineFileExtensionTests`,
 `ZiplineClientTests`, `UploadLimitsTests`, `ZiplineTokenStoreTests`,
-`ZiplineSettingsTests`, `ZiplinePasteboardImageTests`.
+`ZiplineSettingsTests`, and `ZiplinePasteboardImageTests`. Six of those are still
+here; the seventh went with its subject in #18, which gave a session its own
+image and so let this overlay ask the document whether it is showing one instead
+of poking `NSPasteboard.general.types` through a helper.
 
 No running total is kept here, deliberately. `swift test` prints the current
 one, and a figure written into a spec is stale by the next commit: this line
