@@ -32,6 +32,13 @@ public enum ImageBytes {
     /// 1.3 s at 20.4 MP, #32).
     public static let maxConvertiblePixels = 25_000_000
 
+    /// The pixel count reported for an image whose declared dimensions do not multiply into an
+    /// `Int` (see `pixelCount`). It is a sentinel rather than an optional on `tooLarge` because a
+    /// refusal has to stay expressible all the way to the banner: `ClipboardSnapshot.refusedImagePixels`
+    /// is an `Int?` in which nil already means "nothing was refused", so an unmeasurable refusal
+    /// carried as nil would erase itself. `megapixelLabel` renders it as words instead of a number.
+    public static let unmeasurablePixels = Int.max
+
     /// What `normalise` made of some bytes. `tooLarge` exists so a caller can *say so*: an image
     /// silently becoming no image is the failure mode this codebase treats as a defect.
     public enum Normalised: Sendable, Equatable {
@@ -106,10 +113,11 @@ public enum ImageBytes {
               let size = pixelSize(of: data), size.width > 0, size.height > 0 else { return .unusable }
         if CGImageSourceGetType(source) as String? == UTType.png.identifier { return .png(data) }
         // A header whose dimensions multiply past `Int.max` is refused rather than trapped (see
-        // `pixelCount`). `Int.max` is the nearest countable stand-in for a declared size that does
-        // not fit — the figure only reaches a banner, and every value in that range is refused.
+        // `pixelCount`), and refused *without* a figure: `megapixelLabel(unmeasurablePixels)` reads
+        // as words, because a banner printing a 19-digit megapixel count teaches a user to distrust
+        // every other message the app shows them.
         guard let pixels = pixelCount(width: size.width, height: size.height) else {
-            return .tooLarge(pixels: Int.max)
+            return .tooLarge(pixels: unmeasurablePixels)
         }
         guard pixels <= maxPixels else { return .tooLarge(pixels: pixels) }
         guard let converted = convertedToPNG(data) else { return .unusable }
@@ -119,7 +127,12 @@ public enum ImageBytes {
     /// "25 MP" / "30.9 MP" — for telling a user why their image was refused in the unit the limit
     /// is actually expressed in. Bytes would be the wrong unit here: the limit is on pixels, and a
     /// 3 MB TIFF and a 3 MB PNG are nowhere near the same amount of decoding.
+    ///
+    /// `unmeasurablePixels` is words rather than the number it stands for, and only this case is
+    /// vague: a real refusal keeps naming the actual count and the limit, because "30.9 MP; limit
+    /// 25 MP" is what makes the message act on.
     public static func megapixelLabel(_ pixels: Int) -> String {
+        if pixels == unmeasurablePixels { return "too large to measure" }
         let mp = Double(pixels) / 1_000_000
         let rounded = (mp * 10).rounded() / 10
         return rounded == rounded.rounded()

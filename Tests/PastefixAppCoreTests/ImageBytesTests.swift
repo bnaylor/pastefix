@@ -107,6 +107,15 @@ struct ImageBytesTests {
         #expect(ImageBytes.convertedToPNG(Data("not an image".utf8)) == nil)
     }
 
+    @Test("an unmeasurable pixel count is refused in words, not in 19 digits")
+    func unmeasurableLabel() {
+        // A crafted TIFF header arrives from any web page, and a banner reading
+        // "9223372036854.8 MP" teaches a user to distrust every other message the app shows.
+        #expect(ImageBytes.megapixelLabel(ImageBytes.unmeasurablePixels) == "too large to measure")
+        // And the ordinary refusal stays specific — that is what makes it actionable.
+        #expect(ImageBytes.megapixelLabel(30_900_000) == "30.9 MP")
+    }
+
     @Test("megapixel labels read the way a limit is quoted")
     func megapixels() {
         #expect(ImageBytes.megapixelLabel(25_000_000) == "25 MP")
