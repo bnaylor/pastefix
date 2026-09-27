@@ -149,8 +149,15 @@ public struct URLSessionZiplineClient: ZiplineUploading {
         var body = Data()
         body.append("--\(boundary)\r\n".data(using: .utf8)!)
         body.append("Content-Disposition: form-data; name=\"file\"; filename=\"paste.\(upload.fileExtension)\"\r\n".data(using: .utf8)!)
-        body.append("Content-Type: text/plain; charset=utf-8\r\n\r\n".data(using: .utf8)!)
-        body.append(Data(upload.text.utf8))
+        switch upload.body {
+        case .text(let text):
+            body.append("Content-Type: text/plain; charset=utf-8\r\n\r\n".data(using: .utf8)!)
+            body.append(Data(text.utf8))
+        case .image(let image):
+            // Zipline serves and previews by type; text/plain would make an image download.
+            body.append("Content-Type: image/png\r\n\r\n".data(using: .utf8)!)
+            body.append(image.png)
+        }
         body.append("\r\n--\(boundary)--\r\n".data(using: .utf8)!)
         return body
     }

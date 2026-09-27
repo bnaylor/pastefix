@@ -13,6 +13,8 @@ import PastefixAppCore
 /// The one thing this overlay owns that the other two do not is a decision about bytes leaving
 /// the machine, which is why the order of its states matters: *configured?* is answered before
 /// anything else is drawn, and *what is in the text?* is answered before Upload is enabled.
+/// For an image session (#48) the second question is *what did the strip produce?* — and the
+/// answer never includes "nothing secret", because images are not scanned (see `imageSource`).
 struct UploadOverlayView: View {
     @ObservedObject var model: AppModel
     let onClose: () -> Void
@@ -48,19 +50,40 @@ struct UploadOverlayView: View {
     /// `init`, like `source` and `sourceIsClipboard`, though it no longer has to be: the display
     /// form is fixed when a session opens.
     ///
-    /// A refused oversize image counts as well, and is a *different* case rather than the same one:
-    /// there is no `imagePNG`, nothing is on screen, and a message claiming the session is showing
-    /// an image would be describing a panel the user can see is empty. Hence two cases, not a Bool.
+    /// Only the *refused* case is left here. A session that is showing an image now gets the image
+    /// card (`imageSource`, #48) instead of a decline. A refused oversize image is different: there
+    /// is no `imagePNG`, nothing is on screen, and nothing to upload — so it keeps its decline.
     @State private var unsupportedImage: UnsupportedImage?
 
     /// Why `source` is empty, when an image is why.
     private enum UnsupportedImage {
-        /// The session is displaying an image; upload is #48.
-        case showing
         /// The clipboard held an image `ClipboardBridge.snapshot` declined to open, so this session
         /// has no image either — but "empty" is still the wrong word for that clipboard.
         case refused
     }
+
+    /// The image this overlay would upload, snapshotted once in `init` like `source` (#48). Non-nil
+    /// exactly when the session `displaysAsImage`, and then the whole overlay is the **image card**:
+    /// a sibling of the text card that shares only the configure, uploading, done and failed phases
+    /// and the option rows. None of the text card's state — `source`, `scanState`, redaction,
+    /// `payloadByteCount`, the extension — applies to it, and none of it is threaded through here.
+    ///
+    /// These are the session's bytes, and they **never leave the machine**: `ZiplineUpload(image:)`
+    /// takes only a `SanitizedImage`, which only a successful strip produces (`imageState`). There
+    /// is no fallback to these bytes, and the type makes one uncompilable. Do not add one.
+    @State private var imageSource: Data?
+    /// The image card's own state: preparing, ready, refused or superseded. Written once, by the
+    /// preparation task started in `onAppear`.
+    @State private var imageState: ImageUploadCard.State = .preparing
+    /// Same shape and reason as `scanStarted`: `onAppear` can fire more than once for one view
+    /// instance. The preparation itself is shared through `AppModel`'s cache either way, so a
+    /// second start would not be a second decode — but it would be a second wrapper racing the
+    /// first to write `imageState`.
+    @State private var imagePreparationStarted = false
+    /// Waits on `AppModel`'s shared preparation task and installs its answer. Cancelling this
+    /// drops the answer for this overlay only; the preparation itself belongs to the session and
+    /// is reused by the next overlay a repeat ⌘⇧U builds.
+    @State private var imageTask: Task<Void, Never>?
 
     @State private var phase: Phase
     @State private var scanState: ScanState = .scanning
@@ -184,6 +207,20 @@ struct UploadOverlayView: View {
     /// expiry control is precisely what a `1001 bad options[deletes-at]` failure needs the user to
     /// reach. It exists at all so the arithmetic cannot produce a negative height.
     private static let minScrollHeight: CGFloat = 44
+    /// The image card's scroll region: Expires and Burn, no "File type" row. Two ~26pt rows, the
+    /// 10pt spacing between them and the region's 12pt padding top and bottom (86), rounded up —
+    /// derived the same way as `optionsHeight`'s three rows.
+    private static let imageOptionsHeight: CGFloat = 88
+    /// One pinned image row: a `.callout` `Label` (~16pt, a symbol can make it 17) plus the 6pt
+    /// `VStack` spacing. Also what "This image contains text" adds when it is shown.
+    private static let imageRowHeight: CGFloat = 22
+    /// The preparing block: the not-checked verdict and the spinner row (a small `ProgressView`
+    /// is 16pt), each a row, plus the 8pt gap: 52.
+    private static let imagePreparingHeight: CGFloat = 52
+    /// The ready block without the text escalation: the not-checked verdict and the "removed"
+    /// line (a row each), the size caption (~13pt), and the 8pt gap to the banner/action row.
+    /// 65 by that sum, budgeted at 72 so it errs towards over-reserving like every other term.
+    private static let imageReadyHeight: CGFloat = 72
 
     /// The overlay's whole state, in the order it can be entered.
     ///
@@ -232,13 +269,18 @@ struct UploadOverlayView: View {
         // here means the buffer really is the panel's own — edited, or loaded from history.
         let sourceIsClipboard = model.document?.matchesPasteboard(changeCount: NSPasteboard.general.changeCount) ?? false
         _sourceIsClipboard = State(initialValue: sourceIsClipboard)
-        // Free, and no pasteboard read at all: the session already carries this. Image upload is
-        // still #48 — what changed is only how this overlay learns there is an image to decline.
+        // Free, and no pasteboard read at all: the session already carries this. A session showing
+        // an image is the image card now (#48); only a refused one is still declined.
         _unsupportedImage = State(initialValue: { () -> UnsupportedImage? in
-            guard text.isEmpty, let document = model.document else { return nil }
-            if document.displaysAsImage { return .showing }
+            guard text.isEmpty, let document = model.document, !document.displaysAsImage else { return nil }
             return document.origin.refusedImagePixels != nil ? .refused : nil
         }())
+        // The image snapshot, taken at the same instant as `source` for the same reason. Reading
+        // `imagePNG` is free (it is the session's `Data`, shared, not copied) — the expensive
+        // preparation is started from `onAppear`, never from here: this `init` runs on every
+        // `PanelView` re-render (see the token comment below).
+        let image = model.document.flatMap { $0.displaysAsImage ? $0.imagePNG : nil }
+        _imageSource = State(initialValue: image)
         // Only the server-URL half of "configured?" is decided here. Parsing a string costs
         // nothing and touches no Keychain, so the very first frame already knows whether there is
         // anywhere to send to — a user with no server configured never sees a flash of controls
@@ -297,7 +339,10 @@ struct UploadOverlayView: View {
         // `seedExtensionFromDetection` asks the same question again when the result lands. Before
         // detection moved off the main actor this call alone was enough, and after the move it
         // silently made every JSON upload a `.txt` one.
-        _fileExtension = State(initialValue: ZiplineUpload.extensionSeed(
+        //
+        // Not for an image: its extension is `png`, fixed by `ZiplineUpload(image:)`, and the field
+        // is not drawn. "png" here is only so the unused state is not a lie.
+        _fileExtension = State(initialValue: image != nil ? "png" : ZiplineUpload.extensionSeed(
             setting: settings.ziplineDefaultExtension,
             detectedKinds: model.document?.detectedKinds,
             userHasEditedField: false) ?? "txt")
@@ -357,6 +402,16 @@ struct UploadOverlayView: View {
             // above runs first and can move `phase` out of `.composing`, so this still sees the
             // fully-decided answer to "configured?" before deciding whether to scan — the ordering
             // the whole overlay exists to preserve (see the type's own doc comment).
+            //
+            // An image is prepared instead of scanned, under the same "configured?" gate: the
+            // preparation is a full decode, encode and Vision pass, not work to spend on an
+            // overlay that has nowhere to send the result.
+            if let imageSource {
+                guard !imagePreparationStarted, phase == .composing else { return }
+                imagePreparationStarted = true
+                startImagePreparation(imageSource)
+                return
+            }
             guard !scanStarted, phase == .composing else { return }
             scanStarted = true
             startScan()
@@ -371,6 +426,8 @@ struct UploadOverlayView: View {
         // Deliberately not `model.isDetecting`: that Bool reads `false` both for "the scan landed"
         // and for "there is no document", and the value this needs is the kinds themselves.
         .onChange(of: model.document?.detectedKinds) { _, kinds in
+            // Never for an image: there is no extension to seed (#48).
+            guard imageSource == nil else { return }
             seedExtensionFromDetection(kinds)
         }
         .onDisappear {
@@ -382,6 +439,9 @@ struct UploadOverlayView: View {
             // ran at once and bounded nothing about how long one took.
             scanTask?.cancel()
             scanProgressTask?.cancel()
+            // The wrapper only. The preparation it waits on is the session's (`AppModel`), and a
+            // rebuilt overlay picks it up; cancelling it would not stop a decode anyway.
+            imageTask?.cancel()
             // The upload is cancelled, which cancels the URLSession request if it is still in
             // flight — but it recalls nothing the server has already accepted, so a dismissal at
             // exactly the wrong moment can leave a paste on the server whose URL nobody ever saw.
@@ -449,10 +509,16 @@ struct UploadOverlayView: View {
     /// when the clipboard holds something Pastefix itself wrote (the last upload's short URL).
     private var sourceDescription: String {
         let origin = sourceIsClipboard ? "the clipboard" : "the panel buffer"
+        // "the clipboard — image · 1.2 MB": the size is the *prepared* size, once there is one,
+        // because that is what goes on the wire — the same rule `payloadByteCount` keeps for text.
+        if imageSource != nil {
+            return "\(origin) — \(ImageUploadCard.headerDetail(for: imageState))"
+        }
         guard !source.isEmpty else {
             // "empty" is the wrong word for a clipboard that holds an image — there is something
-            // there, just nothing this overlay can send yet. See `unsupportedImage`.
-            return unsupportedImage != nil ? "\(origin) — image, not supported yet" : "\(origin) — empty"
+            // there, just nothing this overlay can send. See `unsupportedImage`; since #48 only a
+            // *refused* image reaches this line (a shown one is the image card, above).
+            return unsupportedImage != nil ? "\(origin) — image too large" : "\(origin) — empty"
         }
         return "\(origin) · \(HistoryFormatting.byteLabel(payloadByteCount))"
     }
@@ -481,7 +547,11 @@ struct UploadOverlayView: View {
         // where they were, because the fix for the commonest failure (an expiry past the
         // server's `maxExpiration`) is to change one of them and press Upload again.
         case .composing, .uploading, .failed:
-            composingState(scrollHeight: scrollHeight)
+            if imageSource != nil {
+                imageComposingState(scrollHeight: scrollHeight)
+            } else {
+                composingState(scrollHeight: scrollHeight)
+            }
         }
     }
 
@@ -675,19 +745,16 @@ struct UploadOverlayView: View {
             // Under the delay: nothing at all. A row that appears and is replaced within a frame
             // or two is a flicker, and an empty row is not a claim about the text either way.
         case .clean:
-            if let unsupportedImage {
+            if unsupportedImage != nil {
                 // Correct that there is nothing to send; the generic empty-buffer line below is
-                // wrong about *why* here — the buffer is empty because of an image, and image
-                // upload is simply not built yet (#48, out of scope for this feature).
+                // wrong about *why* here — the buffer is empty because of an image.
                 //
-                // Two sentences because they are two situations. "This session is showing an image"
-                // rather than "the clipboard holds one", because the image can have come from a
-                // history item and the clipboard hold something else entirely — and it must not be
-                // said at all of a refused image, where the session shows nothing and the user is
-                // looking at the empty panel it would be describing.
-                Label(unsupportedImage == .showing
-                        ? "This session is showing an image. Image upload isn't supported yet — that's #48."
-                        : "The clipboard holds an image too large to open here. Image upload isn't supported yet either — that's #48.",
+                // Only the refused case reaches here since #48: a session *showing* an image gets
+                // the image card instead. It must not claim the session is showing an image, because
+                // the session shows nothing and the user is looking at the empty panel it would be
+                // describing. Too large to open means too large to upload: the sanitizer refuses the
+                // same pixel ceiling, so there is no path that would send it.
+                Label("The clipboard holds an image too large to open here, so it can't be uploaded either.",
                       systemImage: "photo")
                     .font(.callout)
                     .foregroundStyle(.secondary)
@@ -787,6 +854,158 @@ struct UploadOverlayView: View {
         }
     }
 
+    // MARK: Image (#48)
+
+    /// The image card: the text card's layout — options in the budgeted scroll region, the
+    /// verdict and the buttons pinned below it — with none of its text-shaped state. The option
+    /// rows are the same views (expiry and burn apply to any upload); the "File type" row and the
+    /// redact-or-send choice are **absent**, not greyed: an image's extension is `png`, fixed by
+    /// `ZiplineUpload(image:)`, and there is nothing to redact. An inapplicable control implies a
+    /// capability.
+    private func imageComposingState(scrollHeight: CGFloat) -> some View {
+        VStack(spacing: 0) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 10) {
+                    expirationRow
+                    burnRow
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(12)
+                // Inert while the bytes are on the wire, scoped to the content and not the
+                // `ScrollView` — the same reasoning as `composingState`.
+                .disabled(phase == .uploading)
+            }
+            .frame(height: scrollHeight)
+            Divider()
+            VStack(alignment: .leading, spacing: 8) {
+                // Pinned for the same reason the text verdict is: "not checked" is the one thing
+                // this card must say, and height pressure takes the option rows first.
+                imageVerdict
+                if let message = bannerMessage {
+                    errorBanner(message)
+                }
+                imageActionRow
+            }
+            .padding(12)
+        }
+        // As in `composingState`: an inline failure is cleared by the gesture that fixes it.
+        .onChange(of: expiryTag) { _, _ in clearInlineFailure(forHeaderContaining: "deletes-at") }
+        .onChange(of: burnOnRead) { _, _ in clearInlineFailure(forHeaderContaining: "max-views") }
+    }
+
+    /// Every row here is budgeted in `imageVerdictHeight`; a row added here without a term there
+    /// is how the action row gets pushed off a short panel.
+    @ViewBuilder private var imageVerdict: some View {
+        switch imageState {
+        case .preparing:
+            VStack(alignment: .leading, spacing: 6) {
+                notCheckedRow
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.small)
+                    Text(ImageUploadCard.preparing).foregroundStyle(.secondary)
+                }
+                .font(.callout)
+            }
+        case .ready(let image, let hasText):
+            VStack(alignment: .leading, spacing: 6) {
+                notCheckedRow
+                // Escalates; its absence is never a reassurance. `hasText == false` means Vision
+                // found no regions, and an 11 px line is measured to produce none — so there is no
+                // "no text found" line, here or anywhere.
+                if hasText {
+                    Label(ImageUploadCard.containsText, systemImage: "text.viewfinder")
+                        .font(.callout)
+                        .foregroundStyle(.orange)
+                        .lineLimit(1)
+                }
+                Label(ImageUploadCard.metadataRemoved, systemImage: "location.slash")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                Text(ImageUploadCard.sizeLine(bytes: image.png.count))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+        case .refused(let refusal):
+            imageRefusal(ImageUploadCard.refusal(refusal))
+        case .superseded:
+            imageRefusal(ImageUploadCard.supersededMessage)
+        }
+    }
+
+    /// "Images are not checked for secrets." — styled as a finding, not a footnote (Invariant 13:
+    /// "not scanned" is never "clean"), and shown in every state that can lead to an upload.
+    private var notCheckedRow: some View {
+        Label(ImageUploadCard.notCheckedVerdict, systemImage: "exclamationmark.shield")
+            .font(.callout)
+            .foregroundStyle(.orange)
+            .lineLimit(1)
+    }
+
+    /// Laid out like the text path's over-cap refusal, and budgeted with the same constant
+    /// (`refusalRowHeight`): two lines of `.callout` over a caption.
+    private func imageRefusal(_ message: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Label(message, systemImage: "exclamationmark.octagon")
+                .font(.callout)
+                .foregroundStyle(.orange)
+                .lineLimit(2)
+            Text(ImageUploadCard.refusalDetail)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
+        }
+    }
+
+    /// **The send button has no keyboard shortcut, in any state.** The text path earns
+    /// Return-to-Upload by having scanned; an image is never scanned, so Return must never send
+    /// one (spec, "Return key"). When text was detected, Cancel takes Return instead — except
+    /// while uploading, where Return closing the overlay would abort a transfer the user did not
+    /// ask to stop. `ImageUploadCard.defaultAction` decides this and is tested; it has no case that
+    /// names Upload.
+    private var imageActionRow: some View {
+        HStack(spacing: 10) {
+            if phase == .uploading {
+                ProgressView().controlSize(.small)
+                Text("Uploading…").font(.callout).foregroundStyle(.secondary)
+            }
+            Spacer()
+            Button("Cancel") { onClose() }
+                .keyboardShortcut(cancelIsDefault ? KeyboardShortcut.defaultAction : nil)
+            // Reads `@State` at call time through `uploadImage()` (the ⌘K Return lesson).
+            Button(ImageUploadCard.sendTitle(hasText: imageState.hasText, isRetry: isRetry),
+                   action: uploadImage)
+                .disabled(!isImageReadyToUpload)
+        }
+    }
+
+    private var cancelIsDefault: Bool {
+        phase != .uploading && ImageUploadCard.defaultAction(for: imageState) == .cancel
+    }
+
+    /// Upload is disabled until the preparation resolves to `.ready`: preparing, refused and
+    /// superseded all have no `SanitizedImage`, and nothing else can be sent.
+    private var isImageReadyToUpload: Bool {
+        guard ImageUploadCard.canUpload(imageState) else { return false }
+        switch phase {
+        case .composing, .failed: return true
+        case .configure, .uploading, .done: return false
+        }
+    }
+
+    /// Asks `AppModel` for this session's preparation — shared, so a repeat ⌘⇧U that rebuilt this
+    /// overlay gets the task already in flight rather than a second uncancellable decode — and
+    /// installs its answer. Called once, from `onAppear`, never from `init`.
+    private func startImagePreparation(_ png: Data) {
+        let prepared = model.imageUploadPreparation(for: png)
+        imageTask = Task { @MainActor in
+            let outcome = await prepared.value
+            guard !Task.isCancelled else { return }
+            imageState = ImageUploadCard.State(outcome)
+        }
+    }
+
     // MARK: Done
 
     private func doneState(_ url: URL) -> some View {
@@ -803,6 +1022,13 @@ struct UploadOverlayView: View {
                  : "Copied to the clipboard.")
                 .font(.caption)
                 .foregroundStyle(burnOnRead ? Color.orange : Color.secondary)
+            if imageSource != nil {
+                // New with images: `writePlain` above replaced the picture on the clipboard with
+                // the link. The text path never destroyed its source, so it never had to say so.
+                Text(ImageUploadCard.clipboardReplaced)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
             HStack(spacing: 10) {
                 Button("Copy Again") { ClipboardBridge.writePlain(url.absoluteString) }
                 Button("Open") { NSWorkspace.shared.open(url) }
@@ -856,8 +1082,9 @@ struct UploadOverlayView: View {
         case .configure: return "esc Close"
         case .done: return "↵ Done   esc Close"
         case .uploading: return "esc Close"
-        case .failed: return "↵ Retry   esc Close"
-        case .composing: return "↵ Upload   esc Close"
+        // An image never puts Upload (or Retry) on Return; see `imageActionRow`.
+        case .failed: return imageSource != nil ? ImageUploadCard.keyHint(for: imageState) : "↵ Retry   esc Close"
+        case .composing: return imageSource != nil ? ImageUploadCard.keyHint(for: imageState) : "↵ Upload   esc Close"
         }
     }
 
@@ -904,8 +1131,11 @@ struct UploadOverlayView: View {
     /// of one sentence read as two separate problems.
     private var bannerMessage: String? {
         guard case .failed(let error) = phase else { return nil }
+        // An image card has no extension field, so a `file-extension` refusal has nowhere inline
+        // to go and must stay in the banner — suppressing it there would show nothing at all.
+        let inline = imageSource != nil ? Self.imageInlineHeaders : Self.inlineHeaders
         if case .badOption(let header, _) = error,
-           Self.inlineHeaders.contains(where: { header.localizedCaseInsensitiveContains($0) }) {
+           inline.contains(where: { header.localizedCaseInsensitiveContains($0) }) {
             return nil
         }
         return Self.message(for: error)
@@ -914,6 +1144,8 @@ struct UploadOverlayView: View {
     /// The v4 headers that map onto a control in this overlay. A refusal about one of these is
     /// fixable here; anything else belongs in the banner.
     private static let inlineHeaders = ["deletes-at", "max-views", "file-extension"]
+    /// The same, for the image card, which has no "File type" row.
+    private static let imageInlineHeaders = ["deletes-at", "max-views"]
 
     /// Drops a failure that was attached to one control, leaving any other failure alone.
     private func clearInlineFailure(forHeaderContaining needle: String) {
@@ -1055,6 +1287,20 @@ struct UploadOverlayView: View {
     /// Only that last case is over budget, and by 1pt — the adaptive top padding is what pays for
     /// it, which is the whole reason it is adaptive.
     ///
+    /// The image card (#48) swaps two terms: options are `imageOptionsHeight` (88, no "File type"
+    /// row) and the verdict is `imageVerdictHeight` (preparing 52, ready 72, ready with text 94,
+    /// refused 70). At 380:
+    ///
+    ///     preparing            → padding 40, 107 available, 88 wanted → no scroll
+    ///     ready, no text       → padding 40, 87 available → options scroll by 1pt
+    ///     ready + text         → padding 40, 65 available → options scroll
+    ///     ready + text + banner → padding 12, 37 available → floored at 44; card ends at 363,
+    ///                            7pt into the bottom margin, inside the panel
+    ///     refused              → padding 40, 89 available → no scroll
+    ///
+    /// **None of the image rows has been measured on screen yet**; these are the constants' own
+    /// arithmetic, and the GUI pass is what confirms them.
+    ///
     /// **What was measured, and what has not been.** The Accessibility-automation pass this file
     /// used to cite — action row's bottom at 298 of 384 of content, card's lowest text at 332,
     /// i.e. ~40pt more compact than the budget claims — was taken against the *previous* layout,
@@ -1092,7 +1338,8 @@ struct UploadOverlayView: View {
                             panelHeight - cardTopPadding(forPanelHeight: panelHeight)
                                 - Self.cardBottomMargin - Self.cardChromeHeight
                                 - verdictHeight - Self.actionBlockHeight - bannerHeight)
-        return min(Self.optionsHeight + findingKindsHeight, available)
+        let options = imageSource != nil ? Self.imageOptionsHeight : Self.optionsHeight
+        return min(options + findingKindsHeight, available)
     }
 
     /// Whitespace above the card, surrendered before anything with content in it. Full
@@ -1113,6 +1360,8 @@ struct UploadOverlayView: View {
     /// is something to decide about. Tracks exactly what `verdict` renders, so the budget and the
     /// screen cannot disagree.
     private var verdictHeight: CGFloat {
+        // The image card's pinned block, which replaces the text verdict outright (#48).
+        if imageSource != nil { return imageVerdictHeight }
         switch scanState {
         // Nothing is drawn under the 150ms delay, so nothing is budgeted for it — the card grows
         // by a row when the progress line appears, which is the same movement the row itself is.
@@ -1120,6 +1369,19 @@ struct UploadOverlayView: View {
         case .clean: return Self.scanRowHeight
         case .found: return Self.findingsChromeHeight
         case .refusedTooLarge: return Self.refusalRowHeight
+        }
+    }
+
+    /// What `imageVerdict` renders, row for row. `scanState` stays `.scanning` for an image and
+    /// `findingKindsHeight` stays 0, so this and `imageOptionsHeight` are the image card's only
+    /// terms in the budget.
+    private var imageVerdictHeight: CGFloat {
+        switch imageState {
+        case .preparing: return Self.imagePreparingHeight
+        case .ready(_, let hasText):
+            return Self.imageReadyHeight + (hasText ? Self.imageRowHeight : 0)
+        // Same layout as the text path's over-cap refusal: a two-line callout over a caption.
+        case .refused, .superseded: return Self.refusalRowHeight
         }
     }
 
@@ -1201,25 +1463,7 @@ struct UploadOverlayView: View {
         // text field can forward a submit to the default button as well — so the first thing this
         // does is make the second call a no-op. `isReadyToUpload` is false for `.uploading`.
         guard isReadyToUpload else { return }
-        // Re-read, rather than trusting what `init` saw: Settings is reachable while the panel is
-        // up, and a token cleared in the meantime should return the overlay to the configure
-        // state instead of producing a 401 the user has to interpret.
-        guard let server = ZiplineServerURL.parse(model.settings.ziplineServerURL) else {
-            phase = .configure(Self.noServerMessage)
-            return
-        }
-        let token: String
-        switch Self.lookUpToken(tokenStore) {
-        case .found(let stored): token = stored
-        case .absent:
-            phase = .configure(Self.noTokenMessage)
-            return
-        case .unreadable(let message):
-            // The same three-way answer `onAppear` uses, for the same reason: a keychain that
-            // has become unreadable since the overlay opened is not a token that was removed.
-            phase = .configure(message)
-            return
-        }
+        guard let destination = resolveDestination() else { return }
         // `.found` is the only state that carries matches; `.clean` uploads the source untouched,
         // and `.scanning` cannot get here at all (`isReadyToUpload`).
         let matches: [SecretMatch]
@@ -1245,6 +1489,51 @@ struct UploadOverlayView: View {
             phase = .failed(.invalidFileExtension)
             return
         }
+        send(request, to: destination.server, token: destination.token)
+    }
+
+    /// The image card's Upload (#48). Reached only by a click: its button carries no keyboard
+    /// shortcut, so Return can never get here.
+    ///
+    /// The bytes are `imageState`'s `SanitizedImage` and nothing else. If there is none, nothing is
+    /// sent — there is no fallback to `imageSource`, and `ZiplineUpload(image:)` would not accept
+    /// one.
+    private func uploadImage() {
+        // The same double-press guard as `upload()`: false once `.uploading`.
+        guard isImageReadyToUpload, let image = imageState.sanitized else { return }
+        guard let destination = resolveDestination() else { return }
+        let request = ZiplineUpload(image: image,
+                                    expiry: SettingsStore.expiry(fromRaw: expiryTag),
+                                    burnOnRead: burnOnRead)
+        send(request, to: destination.server, token: destination.token)
+    }
+
+    /// The server and token to send to, read at the moment of sending — or nil, having moved the
+    /// overlay to the configure state that says why.
+    ///
+    /// Re-read, rather than trusting what `init` saw: Settings is reachable while the panel is
+    /// up, and a token cleared in the meantime should return the overlay to the configure
+    /// state instead of producing a 401 the user has to interpret.
+    private func resolveDestination() -> (server: URL, token: String)? {
+        guard let server = ZiplineServerURL.parse(model.settings.ziplineServerURL) else {
+            phase = .configure(Self.noServerMessage)
+            return nil
+        }
+        switch Self.lookUpToken(tokenStore) {
+        case .found(let stored): return (server, stored)
+        case .absent:
+            phase = .configure(Self.noTokenMessage)
+            return nil
+        case .unreadable(let message):
+            // The same three-way answer `onAppear` uses, for the same reason: a keychain that
+            // has become unreadable since the overlay opened is not a token that was removed.
+            phase = .configure(message)
+            return nil
+        }
+    }
+
+    /// One client, one error mapping and one retry path for text and images alike.
+    private func send(_ request: ZiplineUpload, to server: URL, token: String) {
         phase = .uploading
         uploadTask = Task { @MainActor in
             do {

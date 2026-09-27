@@ -16,8 +16,15 @@ import Foundation
 /// The check lives here rather than in the client because the client owns only one of those
 /// two sites: `ZiplineV4Headers` is public API with its own tests, and validating inside
 /// `upload(_:to:token:)` would leave it free to emit a header value with a CR LF in it.
+/// What an upload carries. An image is a `SanitizedImage` — only a successful strip makes one —
+/// so there is no way to hand this raw image bytes (#48, Critical Invariant 13).
+public enum ZiplineUploadBody: Sendable, Equatable {
+    case text(String)
+    case image(SanitizedImage)
+}
+
 public struct ZiplineUpload: Sendable, Equatable {
-    public var text: String
+    public let body: ZiplineUploadBody
     /// Canonical by construction: lowercase, no leading dot, `[a-z0-9._+-]{1,16}`. A `let`,
     /// and validated only in `init`, which is what makes that a property of the type rather
     /// than a habit of its callers.
@@ -32,10 +39,27 @@ public struct ZiplineUpload: Sendable, Equatable {
         guard let ext = ZiplineFileExtension.canonical(fileExtension) else {
             throw ZiplineUploadError.invalidFileExtension
         }
-        self.text = text
+        self.body = .text(text)
         self.fileExtension = ext
         self.expiry = expiry
         self.burnOnRead = burnOnRead
+    }
+
+    /// An image upload: always `png`, and deliberately no extension parameter — the overlay hides
+    /// its extension control for an image, and the type agrees rather than trusting the view.
+    public init(image: SanitizedImage, expiry: ZiplineExpiry, burnOnRead: Bool) {
+        self.body = .image(image)
+        self.fileExtension = "png"
+        self.expiry = expiry
+        self.burnOnRead = burnOnRead
+    }
+
+    /// The bytes that leave the machine — what `UploadLimits.maxPayloadBytes` is measured against.
+    public var byteCount: Int {
+        switch body {
+        case .text(let text): text.utf8.count
+        case .image(let image): image.png.count
+        }
     }
 
     /// Zipline v4 picks syntax highlighting from the file extension, so the
