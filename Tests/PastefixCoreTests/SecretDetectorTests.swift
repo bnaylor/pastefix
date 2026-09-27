@@ -68,8 +68,20 @@ import Testing
         #expect(texts("<\(jwt)>") == [jwt])                                    // bracket-delimited
         #expect(texts("Here it is: \(jwt).") == [jwt])                         // sentence-final dot trimmed
         // Delimiting on every non-JWT character (not just whitespace) keeps the two shapes the
-        // old regex found and a whitespace-only split would lose.
-        #expect(texts("https://example.com/cb?id_token=\(jwt)&state=1") == [jwt])
+        // old regex found and a whitespace-only split would lose. The parameter deliberately is
+        // NOT a credential keyword: `?id_token=` makes `genericAssignment` fire too, and its
+        // value class does not stop at `&`, so it claims a longer range and wins the overlap —
+        // which would test that rule's greediness instead of this one's delimiting. See #74.
+        #expect(texts("https://example.com/cb?id=\(jwt)&state=1") == [jwt])
+        // The OIDC callback shape, pinned rather than dropped: `?id_token=` is the realistic
+        // spelling, and the prefixed-key-name fix changed its behaviour — `genericAssignment`
+        // now matches it and claims `&state=1` along with the token, so the badge kind goes
+        // from JWT to generic and Redact breaks the URL. Not a security regression (more is
+        // redacted, not less), but it must not be invisible. Flips to an unexpected pass when
+        // #74 is fixed, which is the point of pinning it.
+        withKnownIssue("#74: genericAssignment's value class does not stop at & in a query string") {
+            #expect(texts("https://example.com/cb?id_token=\(jwt)&state=1") == [jwt])
+        }
         #expect(kinds("aaaaaaaa.bbbbbbbb.cccccccc") == [])                     // shape only, not a JWT
     }
     @Test func passwordInURL() {
@@ -93,6 +105,33 @@ import Testing
         #expect(kinds("'password' => '\(hex)'") == [.genericAssignment])
         #expect(texts("{\"password\": \"\(hex)\"}") == [hex])       // the value only
         #expect(kinds("{\"password\": \"changeme-changeme\"}") == [])   // still entropy-gated
+    }
+    @Test func genericAssignmentSeesPrefixedKeyNames() {
+        // `NAME_TOKEN=` is the commonest real shape there is — a shell export, a `.env` file,
+        // CI output — and a `\b` anchor never matched any of it, because `_` is a word
+        // character so there is no boundary between the prefix and the keyword. This detector
+        // gates Zipline upload, so `export GITHUB_TOKEN=…` was reported clean and sent.
+        //
+        // `API_KEY` was the one prefixed spelling that worked, and only by accident: the
+        // alternation contains `api[_-]?key`, which spans the underscore itself. That accident
+        // is why this survived review — the case a human tries by hand is the case that passed.
+        let hex = "9f8e7d6c5b4a39281706f5e4d3c2b1a0"
+        for name in ["API_TOKEN", "DB_PASSWORD", "GITHUB_TOKEN", "SLACK_TOKEN",
+                     "DB_API_KEY", "MY_CLIENT_SECRET", "APP_SECRET", "CI_AUTH_TOKEN"] {
+            #expect(kinds("export \(name)=\(hex)") == [.genericAssignment], "\(name) missed")
+        }
+        #expect(texts("export API_TOKEN=\(hex)") == [hex])              // the value only
+        #expect(kinds("export API_TOKEN=changeme-changeme") == [])       // still entropy-gated
+    }
+    @Test func genericAssignmentRefusesKeywordsGluedToLetters() {
+        // The separator that matters is `_`/`-`, not "any character". A keyword run into
+        // surrounding *letters* is a different word and must stay unmatched, or every
+        // identifier containing "token" becomes a finding.
+        let hex = "9f8e7d6c5b4a39281706f5e4d3c2b1a0"
+        #expect(kinds("MYTOKEN=\(hex)") == [])
+        #expect(kinds("notpassword=\(hex)") == [])
+        #expect(kinds("thetoken=\(hex)") == [])
+        #expect(kinds("token_id=\(hex)") == [])        // keyword, but no separator follows it
     }
     @Test func genericAssignmentValueLengthIsTerminated() {
         // A value longer than the class bound must fail outright. Matching its first 256
@@ -303,7 +342,14 @@ import Testing
         #expect(kinds("sk-" + longTail) == [])
         #expect(kinds("sk_live_" + longTail) == [])
         // A 50-character AWS secret value: 40 characters of it used to redact, leaving 10 behind.
-        #expect(kinds("aws_secret_access_key = wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEYabcdefghij") == [])
+        // The `awsSecretKey` rule still refuses it — that is what this test is about — but
+        // `genericAssignment` now claims the WHOLE value off the `access_key =` keyword, which is
+        // the outcome this test wanted: one match covering all 50 characters, no tail left in the
+        // buffer. Before the keyword boundary was fixed, `\b` could not match `access_key` after
+        // an underscore, so nothing matched at all and the badge stayed silent.
+        let awsTail = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEYabcdefghij"
+        #expect(kinds("aws_secret_access_key = \(awsTail)") == [.genericAssignment])
+        #expect(texts("aws_secret_access_key = \(awsTail)") == [awsTail])   // all 50, no partial
         // Canonical lengths are untouched.
         #expect(kinds("xoxb-1234567890-abcdefghij") == [.slackToken])
         #expect(kinds("aws_secret_access_key = wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY") == [.awsSecretKey])

@@ -109,13 +109,26 @@ public enum SecretDetector {
         // makes an over-long value fail outright rather than match its first 256 characters and
         // leave a redacted tail behind.
         //
+        // The keyword is bounded by `(?<![A-Za-z0-9])`/`(?![A-Za-z0-9])` rather than `\b`, and
+        // that is the whole point: `_` is a word character, so `\b` never matched `API_TOKEN=`,
+        // `DB_PASSWORD=`, `GITHUB_TOKEN=` or any other prefixed name — which is the commonest
+        // real shape a credential takes, and this detector gates upload. `API_KEY` was the one
+        // prefixed spelling that worked, and only because `api[_-]?key` spans the underscore
+        // itself; that accident is why the gap survived review. Letters still bound the keyword,
+        // so `MYTOKEN=` and `notpassword=` stay unmatched.
+        //
+        // Accepted consequence: benign `*_token` names now fire too — `next_page_token=<opaque>`
+        // is the common one. It is still entropy-gated, and redacting a pagination cursor costs
+        // the user nothing, so this is deliberate rather than an oversight. Do not "fix" it by
+        // narrowing the boundary back.
+        //
         // The value class is everything except whitespace and the characters that *delimit* a
         // value (quotes, comma, semicolon). An allow-list of `[A-Za-z0-9_\-+/=.]` missed the
         // commonest human password shape outright — `Tr0ub4dor&3xKcd-9zQ` and
         // `hunter2!SuperSecret99` both scanned clean — because `&`, `!`, `$`, `#`, `%` and `*` sat
         // outside it. `trimsSentencePeriod` then gives back the one character the wider class
         // over-claims: a value at the end of a sentence.
-        Rule(kind: .genericAssignment, regex: rx(#"["']?\b(?:password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|auth[_-]?token|client[_-]?secret)\b["']?\s*(?:=>|[:=])\s*["']?([^\s"',;]{16,256})["']?(?![^\s"',;])"#, .caseInsensitive), group: 1, needsEntropy: true, trimsSentencePeriod: true),
+        Rule(kind: .genericAssignment, regex: rx(#"["']?(?<![A-Za-z0-9])(?:password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|auth[_-]?token|client[_-]?secret)(?![A-Za-z0-9])["']?\s*(?:=>|[:=])\s*["']?([^\s"',;]{16,256})["']?(?![^\s"',;])"#, .caseInsensitive), group: 1, needsEntropy: true, trimsSentencePeriod: true),
     ]
 
     /// Declaration order of `SecretKind`, used as the deterministic tie-break when two rules
