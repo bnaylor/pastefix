@@ -31,16 +31,16 @@ private let historyLog = Logger(subsystem: "net.scromp.Pastefix", category: "his
 /// `NSWorkspace.frontmostApplication` cross-check the tracker folds into `recentBundleIDs`.
 /// Attribution on the candidate is the tracker's newest activation, from that second sample.
 ///
-/// The TIFF branch is the one exception to "tick holds the main thread throughout": converting
-/// a TIFF to PNG happens off the main actor (#32), so real time — and real activations — can
-/// pass before the capture lands. That path therefore re-checks the change count and re-runs the
-/// filters afterwards (see `convertPendingTIFF`), and keeps its attribution from the sample taken
-/// before the conversion, because by the time the PNG exists the newest activation may be an app
-/// the user switched to after copying. At most one conversion runs at a time process-wide
-/// (`TIFFConversionSlot` is shared, so a monitor rebuilt mid-conversion does not add a second)
-/// and at most one result is ever accepted: a conversion superseded before it starts is skipped,
-/// and one that has already started finishes anyway, because `NSBitmapImageRep` offers nothing
-/// to interrupt.
+/// A deferred conversion is the one exception to "tick holds the main thread throughout":
+/// converting a TIFF — or bytes mislabelled `public.png` (#97) — to PNG happens off the main actor
+/// (#32), so real time — and real activations — can pass before the capture lands. That path
+/// therefore re-checks the change count and re-runs the filters afterwards (see `convertPending`),
+/// and keeps its attribution from the sample taken before the conversion, because by the time the
+/// PNG exists the newest activation may be an app the user switched to after copying. At most one
+/// conversion runs at a time process-wide (`TIFFConversionSlot` is shared, so a monitor rebuilt
+/// mid-conversion does not add a second) and at most one result is ever accepted: a conversion
+/// superseded before it starts is skipped, and one that has already started finishes anyway,
+/// because `NSBitmapImageRep` offers nothing to interrupt.
 @MainActor
 final class PasteboardMonitor {
     private let pasteboard: NSPasteboard
@@ -54,11 +54,11 @@ final class PasteboardMonitor {
     /// The wrapper around the pending conversion's completion — what `stop()` cancels. It is not
     /// what keeps two conversions from running at once; `conversionSlot` is.
     private var conversionTask: Task<Void, Never>?
-    /// The last generation this monitor minted, for `finishPendingTIFF` to compare against. A
+    /// The last generation this monitor minted, for `finishPending` to compare against. A
     /// result that comes back under a stale generation belongs to a change the monitor has
     /// already moved past — or to a monitor that has since been replaced — and is dropped.
     private var conversionGeneration = 0
-    /// The single lane every TIFF decode in the process goes down, whichever monitor queued it.
+    /// The single lane every capture-path image decode goes down, whichever monitor queued it.
     private let conversionSlot = TIFFConversionSlot.shared
 
     init(pasteboard: NSPasteboard = .general, filters: [any CaptureFilter], maxImageBytes: Int,
@@ -130,19 +130,19 @@ final class PasteboardMonitor {
         let finalTypes = Array(Set(types).union(pasteboard.types ?? []))
         let refreshed = tracker.context(window: windowSeconds)
         var candidate = result.candidate
-        // On the TIFF path this pass is provisional: the candidate has no image yet, and
-        // `finishPendingTIFF` runs the same filters again on the whole thing. Neither shipped
+        // On the deferred-conversion path this pass is provisional: the candidate has no image yet, and
+        // `finishPending` runs the same filters again on the whole thing. Neither shipped
         // filter inspects the candidate's content, but a future one that does will see this call
         // as well as the later one, and must be written for both.
         guard filters.allSatisfy({ $0.shouldCapture(candidate, types: finalTypes, context: refreshed) }) else { return }
-        // An image that exists only as TIFF is not a capture yet: it still needs a decode and a
-        // PNG re-encode, which is the one image cost too expensive to pay here (#32). Hand it to
-        // a detached task and let the completion do the recording, after re-checking everything
-        // that can have changed in the meantime.
-        if let tiff = result.pendingTIFF {
-            convertPendingTIFF(tiff, candidate: candidate, pixelWidth: result.imagePixelWidth,
-                               pixelHeight: result.imagePixelHeight, types: finalTypes,
-                               attribution: refreshed, changeCount: count)
+        // An image that exists only as TIFF (or as bytes mislabelled `public.png`, #97) is not a
+        // capture yet: it still needs a decode and a PNG re-encode, which is the one image cost too
+        // expensive to pay here (#32). Hand it to a detached task and let the completion do the
+        // recording, after re-checking everything that can have changed in the meantime.
+        if let bytes = result.pendingConversion {
+            convertPending(bytes, candidate: candidate, pixelWidth: result.imagePixelWidth,
+                           pixelHeight: result.imagePixelHeight, types: finalTypes,
+                           attribution: refreshed, changeCount: count)
             return
         }
         // Attribution is the tracker's newest activation, not anything `read` saw.
@@ -151,8 +151,9 @@ final class PasteboardMonitor {
         onCapture(candidate)
     }
 
-    /// Converts a pasteboard TIFF to PNG off the main actor, then records the result on the main
-    /// actor if the pasteboard still holds the change it came from and the filters still approve.
+    /// Converts pasteboard image bytes (a TIFF, or a mislabelled PNG) to PNG off the main actor,
+    /// then records the result on the main actor if the pasteboard still holds the change it came
+    /// from and the filters still approve.
     ///
     /// Why off-main: a photographic TIFF inside the 25M-pixel ceiling still costs 0.4 s (6.6 MP)
     /// to 1.3 s (20.4 MP) to decode and re-encode, often for a PNG the image budget then throws
@@ -163,10 +164,10 @@ final class PasteboardMonitor {
     /// Everything that needs app state to decide — is this still the same change, do the filters
     /// still say yes — is decided back on the main actor, because both answers can change while
     /// the conversion runs.
-    private func convertPendingTIFF(_ tiff: Data, candidate: CaptureCandidate,
-                                    pixelWidth: Int?, pixelHeight: Int?,
-                                    types: [NSPasteboard.PasteboardType],
-                                    attribution: CaptureContext, changeCount: Int) {
+    private func convertPending(_ bytes: Data, candidate: CaptureCandidate,
+                                pixelWidth: Int?, pixelHeight: Int?,
+                                types: [NSPasteboard.PasteboardType],
+                                attribution: CaptureContext, changeCount: Int) {
         // Minting before queueing is what tells a conversion still waiting for the lane that it
         // has been superseded, so it never starts. Cancelling the wrapper is separate and
         // weaker: it cannot reach a decode already running.
@@ -175,23 +176,23 @@ final class PasteboardMonitor {
         conversionTask?.cancel()
         let slot = conversionSlot
         conversionTask = Task { @MainActor [weak self] in
-            let png = await slot.convert(tiff, generation: generation)
+            let png = await slot.convert(bytes, generation: generation)
             guard let self else { return }
-            self.finishPendingTIFF(generation: generation, changeCount: changeCount,
-                                   candidate: candidate, png: png, pixelWidth: pixelWidth,
-                                   pixelHeight: pixelHeight, types: types, attribution: attribution)
+            self.finishPending(generation: generation, changeCount: changeCount,
+                               candidate: candidate, png: png, pixelWidth: pixelWidth,
+                               pixelHeight: pixelHeight, types: types, attribution: attribution)
         }
     }
 
-    /// The main-actor half of `convertPendingTIFF`: everything here is re-decided against state
+    /// The main-actor half of `convertPending`: everything here is re-decided against state
     /// as it is now, not as it was when the conversion started.
-    private func finishPendingTIFF(generation: Int, changeCount: Int, candidate: CaptureCandidate,
-                                   png: Data?, pixelWidth: Int?, pixelHeight: Int?,
-                                   types: [NSPasteboard.PasteboardType], attribution: CaptureContext) {
+    private func finishPending(generation: Int, changeCount: Int, candidate: CaptureCandidate,
+                               png: Data?, pixelWidth: Int?, pixelHeight: Int?,
+                               types: [NSPasteboard.PasteboardType], attribution: CaptureContext) {
         // Superseded by a newer change (or by `stop()`): the newer one owns the pasteboard now.
         // Don't touch `conversionTask` here — whoever superseded us already owns that slot.
         guard generation == conversionGeneration else {
-            historyLog.notice("dropped a converted TIFF: superseded by a newer pasteboard change")
+            historyLog.notice("dropped a converted image: superseded by a newer pasteboard change")
             return
         }
         conversionTask = nil
@@ -203,14 +204,21 @@ final class PasteboardMonitor {
         // list. `lastChangeCount` has already advanced past this change and the newer one gets
         // its own tick, so dropping is all there is to do.
         guard pasteboard.changeCount == changeCount else {
-            historyLog.notice("dropped a converted TIFF: the pasteboard turned over during the conversion")
+            historyLog.notice("dropped a converted image: the pasteboard turned over during the conversion")
             return
         }
         // A failed conversion, or a PNG over the budget, still leaves the text worth keeping —
         // exactly what `HistoryStore.record` would have kept had the image never existed.
-        guard let resolved = PendingImage.resolve(candidate, png: png, pixelWidth: pixelWidth,
-                                                  pixelHeight: pixelHeight,
-                                                  maxImageBytes: maxImageBytes) else { return }
+        let resolved = PendingImage.resolve(candidate, png: png, pixelWidth: pixelWidth,
+                                            pixelHeight: pixelHeight, maxImageBytes: maxImageBytes)
+        // Every drop is logged at `.notice` (`.debug` is not persisted): the image going, with or
+        // without text left to record.
+        if resolved?.imagePNG == nil {
+            let why = png == nil ? "the conversion failed"
+                : "the converted PNG is over the image budget (\(png?.count ?? 0) bytes)"
+            historyLog.notice("dropped a converted image: \(why, privacy: .public)")
+        }
+        guard let resolved else { return }
         // Stage 2 again, now that the candidate is whole. Types are the union approved before
         // the conversion plus whatever is declared now: `setData` does not bump `changeCount`,
         // so a concealed marker can have been added to this same change while we were busy, and
@@ -235,13 +243,13 @@ final class PasteboardMonitor {
         onCapture(out)
     }
 
-    /// What one pasteboard change offered: the candidate, plus the raw TIFF when the image is
-    /// only available in that form and still has to be converted.
+    /// What one pasteboard change offered: the candidate, plus the raw image bytes when they still
+    /// have to be converted — a TIFF, or bytes offered as `public.png` that are not a PNG (#97).
     struct PendingRead {
         var candidate: CaptureCandidate
-        /// Non-nil only when the pasteboard had no PNG and the TIFF passed the pixel ceiling.
-        /// `candidate.imagePNG` is nil in that case: the PNG does not exist yet.
-        var pendingTIFF: Data?
+        /// Non-nil only when the image needs converting — a TIFF, or a mislabelled `public.png` —
+        /// and passed the pixel ceiling. `candidate.imagePNG` is nil then: the PNG does not exist yet.
+        var pendingConversion: Data?
         var imagePixelWidth: Int?
         var imagePixelHeight: Int?
     }
@@ -250,10 +258,11 @@ final class PasteboardMonitor {
     /// Content only: source attribution is the caller's job, from the tracker's context.
     ///
     /// Nothing here decodes an image. `maxImageBytes` is an exact gate for the `.png` branch: the
-    /// pasteboard already holds the PNG, so an over-budget one is skipped without any decoding.
-    /// The `.tiff` branch cannot know its PNG size until the PNG exists, so it hands the raw TIFF
-    /// back as `pendingTIFF` — bounded by the header-only pixel ceiling below — for the caller to
-    /// convert off the main actor (#32), where the byte cap is applied to the result.
+    /// pasteboard already holds the PNG, so an over-budget one is skipped without any decoding. The
+    /// `.tiff` branch cannot know its PNG size until the PNG exists, so it hands the raw TIFF back
+    /// as `pendingConversion` (and so does the `.png` branch for bytes that are not a PNG) —
+    /// bounded by the header-only pixel ceiling below — for the caller to convert off the main
+    /// actor (#32), where the byte cap is applied to the result.
     static func read(_ pb: NSPasteboard, maxImageBytes: Int) -> PendingRead? {
         var c = CaptureCandidate()
         c.plainText = pb.string(forType: .string)
@@ -262,7 +271,7 @@ final class PasteboardMonitor {
             c.richRTFD = try? attributed.data(from: NSRange(location: 0, length: attributed.length),
                                               documentAttributes: [.documentType: NSAttributedString.DocumentType.rtfd])
         }
-        var pendingTIFF: Data?
+        var pendingConversion: Data?
         var pendingWidth: Int?
         var pendingHeight: Int?
         // A Finder file copy's only image is a 1024×1024 rendering of the file's *icon*, not an
@@ -286,38 +295,53 @@ final class PasteboardMonitor {
             available: { ClipboardBridge.offeredImageType($0, on: pb) }) {
         case ClipboardImageRead.pngType?:
             if let png = pb.data(forType: .png) {
-                // Size before decode: a header-only read gives pixel dimensions without decoding
-                // an image the store is about to reject anyway.
-                if png.count <= maxImageBytes, let size = ImageBytes.pixelSize(of: png) {
-                    c.imagePNG = png; c.imagePixelWidth = size.width; c.imagePixelHeight = size.height
+                if ImageBytes.isPNG(png) {
+                    // Size before decode: a header-only read gives pixel dimensions without
+                    // decoding an image the store is about to reject anyway.
+                    if png.count <= maxImageBytes, let size = ImageBytes.pixelSize(of: png) {
+                        c.imagePNG = png
+                        c.imagePixelWidth = size.width; c.imagePixelHeight = size.height
+                    }
+                } else if let deferred = convertible(png) {
+                    // Offered as a PNG, and isn't one (#97): stored raw it kept its EXIF and ⌘↵
+                    // wrote it back under a PNG's name, while the session converts the same bytes.
+                    // Converted like a TIFF instead — off this actor, under the same pixel ceiling.
+                    pendingConversion = png
+                    pendingWidth = deferred.width; pendingHeight = deferred.height
                 }
             }
         case ClipboardImageRead.tiffType?:
-            if let tiff = pb.data(forType: .tiff), let size = ImageBytes.pixelSize(of: tiff),
-                      // Header-only pixel gate, not a byte-size heuristic, and both the ceiling and
-                      // the multiplication are `ImageBytes`' — shared with the session path so the
-                      // two cannot drift. See there for why pixels and not bytes, and why the
-                      // product is computed rather than multiplied here: these are 32-bit header
-                      // fields, and a crafted TIFF's `width * height` overflows `Int` and traps.
-                      // A size that will not multiply is over any ceiling, so it is skipped. The
-                      // store's byte cap on the PNG result still applies on top of this.
-                      let pixels = ImageBytes.pixelCount(width: size.width, height: size.height),
-                      pixels <= ImageBytes.maxConvertiblePixels {
-                pendingTIFF = tiff; pendingWidth = size.width; pendingHeight = size.height
+            if let tiff = pb.data(forType: .tiff), let size = convertible(tiff) {
+                pendingConversion = tiff; pendingWidth = size.width; pendingHeight = size.height
             }
         default:
             break
         }
-        guard c.plainText != nil || c.imagePNG != nil || pendingTIFF != nil else { return nil }
-        return PendingRead(candidate: c, pendingTIFF: pendingTIFF,
+        guard c.plainText != nil || c.imagePNG != nil || pendingConversion != nil else { return nil }
+        return PendingRead(candidate: c, pendingConversion: pendingConversion,
                            imagePixelWidth: pendingWidth, imagePixelHeight: pendingHeight)
     }
 
+    /// The pixel dimensions of bytes that still need converting, or nil when they are not an image
+    /// or are over the conversion ceiling.
+    private static func convertible(_ bytes: Data) -> (width: Int, height: Int)? {
+        guard let size = ImageBytes.pixelSize(of: bytes),
+              // Header-only pixel gate, not a byte-size heuristic, and both the ceiling and
+              // the multiplication are `ImageBytes`' — shared with the session path so the
+              // two cannot drift. See there for why pixels and not bytes, and why the
+              // product is computed rather than multiplied here: these are 32-bit header
+              // fields, and a crafted TIFF's `width * height` overflows `Int` and traps.
+              // A size that will not multiply is over any ceiling, so it is skipped. The
+              // store's byte cap on the PNG result still applies on top of this.
+              let pixels = ImageBytes.pixelCount(width: size.width, height: size.height),
+              pixels <= ImageBytes.maxConvertiblePixels else { return nil }
+        return size
+    }
 }
 
-/// The one lane TIFF→PNG conversions run down: at most one decode at a time, at most one other
-/// conversion holding its bytes while it waits, and a conversion superseded before it reaches
-/// the front of the lane never starts.
+/// The one lane image→PNG conversions run down (a TIFF, or a mislabelled PNG — #97): at most one
+/// decode at a time, at most one other conversion holding its bytes while it waits, and a
+/// conversion superseded before it reaches the front of the lane never starts.
 ///
 /// A bare `Task.detached` does not give that. Cancelling the wrapper task cannot reach a decode
 /// already running, and awaiting a non-throwing `.value` does not resume early — so at a 0.5 s
@@ -359,7 +383,7 @@ nonisolated private final class TIFFConversionSlot: @unchecked Sendable {
     /// The newest generation minted by anyone. Anything older has been superseded.
     private var newest = 0
     /// The single conversion waiting for the lane, if any.
-    private var waiting: (tiff: Data, generation: Int,
+    private var waiting: (bytes: Data, generation: Int,
                           continuation: CheckedContinuation<Data?, Never>)?
     /// True from the moment a drain is dispatched until it finds nothing left to do. Guards
     /// against dispatching a second drain, which is what would turn this back into a queue.
@@ -378,11 +402,11 @@ nonisolated private final class TIFFConversionSlot: @unchecked Sendable {
 
     /// nil when the conversion was superseded — before it started or while it waited — or when
     /// the decode failed.
-    func convert(_ tiff: Data, generation: Int) async -> Data? {
+    func convert(_ bytes: Data, generation: Int) async -> Data? {
         await withCheckedContinuation { continuation in
             lock.lock()
             let displaced = waiting
-            waiting = (tiff, generation, continuation)
+            waiting = (bytes, generation, continuation)
             let needsDrain = !draining
             draining = true
             lock.unlock()
@@ -416,7 +440,7 @@ nonisolated private final class TIFFConversionSlot: @unchecked Sendable {
             }
             // The shared route, so the session path and this lane convert identically; what stays
             // local is *where* it runs, which is the whole point of this class.
-            next.continuation.resume(returning: ImageBytes.convertedToPNG(next.tiff))
+            next.continuation.resume(returning: ImageBytes.convertedToPNG(next.bytes))
         }
     }
 }

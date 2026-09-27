@@ -15,14 +15,14 @@ import PastefixAppCore
 ///   the session refuses, which was #81's harm;
 /// - which *bytes* each keeps. JPEG bytes under `public.png` are converted by the session and
 ///   stored raw by history (header-only validation). Both say "image", so this suite passes;
-///   that divergence is tracked separately (#97).
+///   history now converts them too (#97, `mislabelledPNG` below).
 @MainActor
 @Suite("the session and history capture agree on whether there is an image (#81)")
 struct ImageReadersAgreeTests {
     private func agree(_ f: ModelFixture, _ label: String, expectImage: Bool) {
         let session = ClipboardBridge.snapshot(from: f.pasteboard).imagePNG != nil
         let read = PasteboardMonitor.read(f.pasteboard, maxImageBytes: .max)
-        let history = read?.candidate.imagePNG != nil || read?.pendingTIFF != nil
+        let history = read?.candidate.imagePNG != nil || read?.pendingConversion != nil
         #expect(session == expectImage, "\(label): session")
         #expect(history == expectImage, "\(label): history")
     }
@@ -55,6 +55,29 @@ struct ImageReadersAgreeTests {
         // Not here, because it cannot be built: a PNG beside a declared, never-set TIFF. The
         // pasteboard synthesises the TIFF from the PNG (measured: `data(forType: .tiff)` returned
         // 3,992 bytes), so on a real pasteboard that shape is "PNG + TIFF", already covered below.
+    }
+
+    // #97: the readers agree that JPEG bytes under `public.png` are an image; they used to keep
+    // different bytes. The session converts them; history stored them raw, EXIF included, and ⌘↵
+    // wrote them back under a PNG's name. Now history defers them to the conversion a TIFF gets.
+    @Test("history defers a mislabelled PNG to conversion, and takes a real PNG as-is (#97)")
+    func mislabelledPNG() throws {
+        let f = try ModelFixture(); defer { f.finish() }
+        let jpeg = try #require(Pixels.encoded(width: 20, height: 10, type: "public.jpeg"))
+        f.copy([.png: jpeg])
+        let mislabelled = try #require(PasteboardMonitor.read(f.pasteboard, maxImageBytes: .max))
+        #expect(mislabelled.candidate.imagePNG == nil, "stored raw under a PNG's name")
+        #expect(mislabelled.pendingConversion == jpeg)
+        #expect(mislabelled.imagePixelWidth == 20 && mislabelled.imagePixelHeight == 10)
+        // The claim itself: history's conversion lane produces the bytes the session keeps.
+        let session = try #require(ClipboardBridge.snapshot(from: f.pasteboard).imagePNG)
+        #expect(ImageBytes.convertedToPNG(try #require(mislabelled.pendingConversion)) == session)
+
+        let png = try #require(Pixels.encoded(width: 20, height: 10, type: "public.png"))
+        f.copy([.png: png])
+        let real = try #require(PasteboardMonitor.read(f.pasteboard, maxImageBytes: .max))
+        #expect(real.candidate.imagePNG == png, "a real PNG is kept verbatim, with no conversion")
+        #expect(real.pendingConversion == nil)
     }
 
     @Test("every other shape: both readers give the same answer")

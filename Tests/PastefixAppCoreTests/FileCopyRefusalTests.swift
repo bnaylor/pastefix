@@ -125,6 +125,29 @@ struct ConversionStripsLocationTests {
         #expect(Self.properties(out)?["{GPS}"] != nil)   // GPS and all — deliberately
     }
 
+    // #97: history capture defers bytes labelled public.png that aren't a PNG to the same
+    // conversion as a TIFF, instead of storing them raw. The sniff decides; the conversion strips.
+    @Test("the PNG sniff reads the header, not the label")
+    func pngSniff() throws {
+        #expect(ImageBytes.isPNG(try #require(Self.geotagged(as: "public.png"))))
+        #expect(!ImageBytes.isPNG(try #require(Self.geotagged(as: "public.jpeg"))))
+        #expect(!ImageBytes.isPNG(try #require(Self.geotagged(as: "public.tiff"))))
+        #expect(!ImageBytes.isPNG(Data("not an image at all".utf8)))
+        #expect(!ImageBytes.isPNG(Data()))
+    }
+
+    @Test("a GPS-bearing JPEG converts to a PNG with no GPS, date or camera")
+    func jpegConversionDropsGPS() throws {
+        let jpeg = try #require(Self.geotagged(as: "public.jpeg"))
+        #expect(Self.properties(jpeg)?["{GPS}"] != nil)   // fixture sanity
+        let png = try #require(ImageBytes.convertedToPNG(jpeg))
+        #expect(ImageBytes.isPNG(png))
+        let after = try #require(Self.properties(png))
+        #expect(after["{GPS}"] == nil)
+        #expect((after["{Exif}"] as? [String: Any])?["DateTimeOriginal"] == nil)
+        #expect((after["{TIFF}"] as? [String: Any])?["Make"] == nil)
+    }
+
     @Test("conversion applies the orientation tag instead of dropping it")
     func conversionBakesOrientation() throws {
         // A phone stores a portrait photo as landscape sensor pixels plus Orientation 6. The
