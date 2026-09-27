@@ -28,10 +28,15 @@ final class ModelFixture {
     init() throws {
         let id = UUID().uuidString
         generalAtStart = NSPasteboard.general.changeCount
-        suite = "net.scromp.PastefixTests.\(id)"
         directory = FileManager.default.temporaryDirectory.appendingPathComponent("pastefix-apptests-\(id)", isDirectory: true)
+        // The suite is named by an absolute path inside this test's own temp folder, so its plist
+        // lives there and is removed with the folder. A named suite (net.scromp.PastefixTests.<id>)
+        // leaks: cfprefsd recreates the emptied plist in ~/Library/Preferences several seconds
+        // after `removePersistentDomain` and any file removal — measured, a file per test per run.
+        suite = directory.appendingPathComponent("defaults").path
         let scripts = directory.appendingPathComponent("scripts", isDirectory: true)
         try FileManager.default.createDirectory(at: scripts, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let defaults = try #require(UserDefaults(suiteName: suite))
         defaults.set(scripts.path, forKey: "pastefix.scriptsDirectoryPath")
         settings = SettingsStore(defaults: defaults)
@@ -47,12 +52,8 @@ final class ModelFixture {
         #expect(NSPasteboard.general.changeCount == generalAtStart,
                 "the general clipboard changed during this test: a test path reached it, or something else on the machine copied while the test ran")
         pasteboard.releaseGlobally()
-        // `removePersistentDomain` empties the suite, but cfprefsd keeps the (now empty) plist
-        // file — one per test per run, forever, which is #85 over again. Remove the file too.
+        // The suite's plist lives inside `directory` (see `init`), so removing the folder removes it.
         UserDefaults().removePersistentDomain(forName: suite)
-        let plist = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Preferences/\(suite).plist")
-        try? FileManager.default.removeItem(at: plist)
         try? FileManager.default.removeItem(at: directory)
     }
 
