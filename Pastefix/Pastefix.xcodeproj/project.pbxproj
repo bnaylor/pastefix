@@ -14,8 +14,19 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		82ABC3D4CD9B46D0E4B2D983 /* PastefixTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = PastefixTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		44988CCF3032B43A0042BEFC /* Pastefix.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Pastefix.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
+
+/* Begin PBXContainerItemProxy section */
+		57DB001B4BFE45969CF5599D /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 44988CC73032B43A0042BEFC /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 44988CCE3032B43A0042BEFC;
+			remoteInfo = Pastefix;
+		};
+/* End PBXContainerItemProxy section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
 		44C98363303C000000BB563C /* Exceptions for "Pastefix" folder in "Pastefix" target */ = {
@@ -28,6 +39,11 @@
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
+		EF9A5917137578C5B5EA69ED /* PastefixTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = PastefixTests;
+			sourceTree = "<group>";
+		};
 		44988CD13032B43A0042BEFC /* Pastefix */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
@@ -39,6 +55,13 @@
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
+		695B8ACD94B9A5AE26CD11AB /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		44988CCC3032B43A0042BEFC /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
@@ -57,6 +80,7 @@
 			isa = PBXGroup;
 			children = (
 				44988CD13032B43A0042BEFC /* Pastefix */,
+				EF9A5917137578C5B5EA69ED /* PastefixTests */,
 				44988CE2303A4AD40042BEFC /* Frameworks */,
 				44988CD03032B43A0042BEFC /* Products */,
 			);
@@ -66,6 +90,7 @@
 			isa = PBXGroup;
 			children = (
 				44988CCF3032B43A0042BEFC /* Pastefix.app */,
+				82ABC3D4CD9B46D0E4B2D983 /* PastefixTests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -106,6 +131,29 @@
 			productReference = 44988CCF3032B43A0042BEFC /* Pastefix.app */;
 			productType = "com.apple.product-type.application";
 		};
+		34CE819D3E2D51CE7D1D41F6 /* PastefixTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = BB34885A13D3620DC77B556E /* Build configuration list for PBXNativeTarget "PastefixTests" */;
+			buildPhases = (
+				AB7278DDDCF19F9044F4C060 /* Sources */,
+				695B8ACD94B9A5AE26CD11AB /* Frameworks */,
+				847F9E66BBAD7377946AAD9C /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				F476B4E7DE7DE65E6D9B6A4E /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				EF9A5917137578C5B5EA69ED /* PastefixTests */,
+			);
+			name = PastefixTests;
+			packageProductDependencies = (
+			);
+			productName = PastefixTests;
+			productReference = 82ABC3D4CD9B46D0E4B2D983 /* PastefixTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -118,6 +166,10 @@
 				TargetAttributes = {
 					44988CCE3032B43A0042BEFC = {
 						CreatedOnToolsVersion = 26.4;
+					};
+					34CE819D3E2D51CE7D1D41F6 = {
+						CreatedOnToolsVersion = 26.4;
+						TestTargetID = 44988CCE3032B43A0042BEFC;
 					};
 				};
 			};
@@ -141,12 +193,20 @@
 			projectRoot = "";
 			targets = (
 				44988CCE3032B43A0042BEFC /* Pastefix */,
+				34CE819D3E2D51CE7D1D41F6 /* PastefixTests */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
 		44988CCD3032B43A0042BEFC /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		847F9E66BBAD7377946AAD9C /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -163,7 +223,22 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		AB7278DDDCF19F9044F4C060 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		F476B4E7DE7DE65E6D9B6A4E /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 44988CCE3032B43A0042BEFC /* Pastefix */;
+			targetProxy = 57DB001B4BFE45969CF5599D /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		44988CD83032B43B0042BEFC /* Debug */ = {
@@ -354,6 +429,46 @@
 			};
 			name = Release;
 		};
+		6117E723770FC6909C8FD473 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = scromp.net.PastefixTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Pastefix.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Pastefix";
+			};
+			name = Debug;
+		};
+		B8C86E7CB2F925D52F2C3B6A /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = scromp.net.PastefixTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Pastefix.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Pastefix";
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -371,6 +486,15 @@
 			buildConfigurations = (
 				44988CDB3032B43B0042BEFC /* Debug */,
 				44988CDC3032B43B0042BEFC /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		BB34885A13D3620DC77B556E /* Build configuration list for PBXNativeTarget "PastefixTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				6117E723770FC6909C8FD473 /* Debug */,
+				B8C86E7CB2F925D52F2C3B6A /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

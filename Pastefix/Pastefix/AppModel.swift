@@ -114,7 +114,12 @@ final class AppModel: ObservableObject {
     /// `secretScanSkipped` for an over-cap buffer).
     var isDetecting: Bool { document?.isDetecting ?? false }
 
-    init(settings: SettingsStore, history: HistoryStore) {
+    /// Every clipboard read and write the model makes goes through this. `.general` in the app;
+    /// a uniquely named pasteboard in tests (#68), so a test run never touches the user's clipboard.
+    let pasteboard: NSPasteboard
+
+    init(settings: SettingsStore, history: HistoryStore, pasteboard: NSPasteboard = .general) {
+        self.pasteboard = pasteboard
         self.settings = settings
         self.history = history
         reload()
@@ -167,7 +172,7 @@ final class AppModel: ObservableObject {
         resetSecretSelection()
         abandonInFlightWork()
         sessionGeneration &+= 1
-        let origin = ClipboardBridge.snapshot()
+        let origin = ClipboardBridge.snapshot(from: pasteboard)
         document = PasteDocument(origin: origin)
         noteRefusedImage(origin)
         requestDetection()
@@ -316,7 +321,7 @@ final class AppModel: ObservableObject {
 
     func refresh() {
         guard var doc = document else { return }
-        let origin = ClipboardBridge.snapshot()
+        let origin = ClipboardBridge.snapshot(from: pasteboard)
         doc.refresh(origin: origin)
         document = doc
         // A refresh can replace the image without a new session generation. The cache key
@@ -376,7 +381,7 @@ final class AppModel: ObservableObject {
                 // and passing the payload rather than `doc.imagePNG` is what stops this branch
                 // bypassing the empty-`Data` backstop and writing a zero-byte `public.png`
                 // (see `ClipboardBridge.writeRich`).
-                ClipboardBridge.writeRich(payload, html: rich.html, rtf: rich.rtf)
+                ClipboardBridge.writeRich(payload, html: rich.html, rtf: rich.rtf, to: pasteboard)
             } catch {
                 // Keep the session open and the mode armed: the user can read the error and
                 // either fix the Markdown or disarm the badge and save plain text instead.
@@ -395,7 +400,7 @@ final class AppModel: ObservableObject {
             // unchanged — not every representation the clipboard arrived with. Arming
             // Markdown → Rich Text is how a user asks for formatted output.
             ClipboardBridge.write(text: payload.text, richRTFD: payload.richRTFD,
-                                  imagePNG: payload.imagePNG)
+                                  imagePNG: payload.imagePNG, to: pasteboard)
         }
         endSession()
     }
@@ -486,7 +491,7 @@ final class AppModel: ObservableObject {
 
     /// Puts the whole item back on the clipboard and ends the session.
     func copyBack(_ item: HistoryItem) {
-        ClipboardBridge.write(text: item.plainText, richRTFD: history.richRTFD(for: item), imagePNG: history.imagePNG(for: item))
+        ClipboardBridge.write(text: item.plainText, richRTFD: history.richRTFD(for: item), imagePNG: history.imagePNG(for: item), to: pasteboard)
         endSession()
     }
 

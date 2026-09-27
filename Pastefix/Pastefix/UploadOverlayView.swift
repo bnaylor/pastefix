@@ -267,7 +267,7 @@ struct UploadOverlayView: View {
         // nothing and prompts for nothing. ⌘⇧U has already re-snapshotted a stale, unedited
         // document by the time this runs (`AppDelegate.summonUpload`), so "not the clipboard"
         // here means the buffer really is the panel's own — edited, or loaded from history.
-        let sourceIsClipboard = model.document?.matchesPasteboard(changeCount: NSPasteboard.general.changeCount) ?? false
+        let sourceIsClipboard = model.document?.matchesPasteboard(changeCount: model.pasteboard.changeCount) ?? false
         _sourceIsClipboard = State(initialValue: sourceIsClipboard)
         // Free, and no pasteboard read at all: the session already carries this. A session showing
         // an image is the image card now (#48); only a refused one is still declined.
@@ -1038,7 +1038,7 @@ struct UploadOverlayView: View {
                     .foregroundStyle(.secondary)
             }
             HStack(spacing: 10) {
-                Button("Copy Again") { ClipboardBridge.writePlain(url.absoluteString) }
+                Button("Copy Again") { ClipboardBridge.writePlain(url.absoluteString, to: model.pasteboard) }
                 Button("Open") { NSWorkspace.shared.open(url) }
                 Spacer()
                 Button("Done") { onClose() }
@@ -1549,7 +1549,7 @@ struct UploadOverlayView: View {
                 guard !Task.isCancelled else { return }
                 // The link on the clipboard is the point of the feature; the URL shown below is
                 // the confirmation of it, not the only copy.
-                ClipboardBridge.writePlain(url.absoluteString)
+                ClipboardBridge.writePlain(url.absoluteString, to: model.pasteboard)
                 phase = .done(url)
             } catch let error as ZiplineUploadError {
                 guard !Task.isCancelled else { return }

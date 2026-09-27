@@ -5,7 +5,6 @@ import KeyboardShortcuts
 import PastefixCore
 import PastefixAppCore
 
-@main
 struct PastefixApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var delegate
 
