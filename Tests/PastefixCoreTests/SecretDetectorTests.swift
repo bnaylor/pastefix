@@ -73,15 +73,15 @@ import Testing
         // value class does not stop at `&`, so it claims a longer range and wins the overlap —
         // which would test that rule's greediness instead of this one's delimiting. See #74.
         #expect(texts("https://example.com/cb?id=\(jwt)&state=1") == [jwt])
-        // The OIDC callback shape, pinned rather than dropped: `?id_token=` is the realistic
-        // spelling, and the prefixed-key-name fix changed its behaviour — `genericAssignment`
-        // now matches it and claims `&state=1` along with the token, so the badge kind goes
-        // from JWT to generic and Redact breaks the URL. Not a security regression (more is
-        // redacted, not less), but it must not be invisible. Flips to an unexpected pass when
-        // #74 is fixed, which is the point of pinning it.
-        withKnownIssue("#74: genericAssignment's value class does not stop at & in a query string") {
-            #expect(texts("https://example.com/cb?id_token=\(jwt)&state=1") == [jwt])
-        }
+        // The OIDC and OAuth callback shapes (#74, pinned as a known issue until it was fixed):
+        // `genericAssignment` fires on these keys too, and used to claim `&state=1` along with
+        // the token, winning the overlap on length — the badge said "credential" and Redact broke
+        // the URL. A URL-parameter value now ends at `&`, so both rules claim the same range and
+        // the JWT wins the tie on `SecretKind` declaration order.
+        #expect(texts("https://example.com/cb?id_token=\(jwt)&state=1") == [jwt])
+        #expect(kinds("https://example.com/cb?access_token=\(jwt)&state=1") == [.jwt])
+        #expect(texts("https://example.com/cb?access_token=\(jwt)&amp;state=1") == [jwt])
+        #expect(texts("https://example.com/cb#access_token=\(jwt)&token_type=bearer") == [jwt])
         #expect(kinds("aaaaaaaa.bbbbbbbb.cccccccc") == [])                     // shape only, not a JWT
     }
     @Test func passwordInURL() {
@@ -160,10 +160,18 @@ import Testing
         // ~9 700 candidates that each reach the base64 decode, the worst shape for the tokeniser.
         let minimalJWTCandidates = String(repeating: "eyJhbGciOiJI.bbbbbbbb.cccccccc ", count: 8_456)
         let nearMisses = String(repeating: "sk-abc ", count: 9_000)                           // ~63 KB
+        // #74's URL-key lookbehind, three ways: separators with no keyword, a keyword on every
+        // parameter with a value one short of the floor, and the longest name the lookbehind
+        // admits in front of a maximal value.
+        let parameterRun = String(repeating: "&a=?a=", count: 43_000)                        // ~252 KB
+        let shortTokenParameters = String(repeating: "&access_token=aB9_x-Zq7Lm4_pK", count: 8_700)
+        let maximalURLKeys = String(repeating: "?" + String(repeating: "a", count: 58) + "_token=" +
+                                    String(repeating: "aB9_x-Zq", count: 32) + "&", count: 800)
         for (label, s) in [("unbroken base64url", unbrokenBase64URL), ("dotted base64url", dottedBase64URL),
                            ("minimal JWT candidates", minimalJWTCandidates),
                            ("unterminated PEM", unterminatedPEM), ("maximal slack", maximalSlack),
-                           ("sk- near misses", nearMisses)] {
+                           ("sk- near misses", nearMisses), ("parameter run", parameterRun),
+                           ("short token parameters", shortTokenParameters), ("maximal URL keys", maximalURLKeys)] {
             #expect(s.utf8.count <= SecretDetector.maxBytes, "\(label) must not be rejected by the size guard")
             let t = clock.measure { _ = SecretDetector.scan(s) }
             // 1 s, not the 150 ms budget: this is wall-clock time measured while 48 other suites
@@ -346,6 +354,53 @@ import Testing
         #expect(texts("token: ABCD1234EFGH5678.") == ["ABCD1234EFGH5678"])
         let out = SecretRedactor.redact("token: ABCD1234EFGH5678.", matches: SecretDetector.scan("token: ABCD1234EFGH5678."))
         #expect(out == "token: [REDACTED credential].")
+    }
+    // #74: in a query string the next `&name=` ends the value, so redacting the token leaves the
+    // rest of the URL intact.
+    @Test func genericAssignmentStopsAtTheNextQueryParameter() {
+        let tok = "Xk9vQ2mZr7Lp4TnB8wYc"
+        #expect(texts("https://example.com/cb?token=\(tok)&state=1") == [tok])
+        #expect(texts("https://example.com/cb?access_token=\(tok)&state=1") == [tok])
+        // The OAuth implicit flow puts it in the fragment, with more parameters after it.
+        #expect(texts("https://app.example/#access_token=\(tok)&token_type=Bearer&expires_in=3600") == [tok])
+        // An HTML-escaped query string: `&amp;` is still a parameter separator.
+        #expect(texts("<a href=\"https://example.com/cb?token=\(tok)&amp;state=1\">") == [tok])
+        // …and a key that itself follows an escaped separator is a URL parameter too.
+        #expect(texts("<a href=\"https://example.com/cb?state=1&amp;access_token=\(tok)&amp;x=1\">") == [tok])
+        let url = "https://example.com/cb?access_token=\(tok)&state=1"
+        #expect(SecretRedactor.redact(url, matches: SecretDetector.scan(url))
+                == "https://example.com/cb?access_token=[REDACTED credential]&state=1")
+        // Too short to be a credential is too short: the branches are exclusive, so the value
+        // does not fall through to the wide class and claim `short&x=…` as one 16+ value.
+        #expect(kinds("https://example.com/cb?token=short&x=1234567890abcdef") == [])
+    }
+    // The other half of #74, and the reason `&` is not simply a delimiter in unquoted values:
+    // `.env`, YAML and INI files are not shells, and they hold passwords like this unquoted.
+    // Stopping at the bare `&` would cut the value to 9 characters, under the floor, and lose it.
+    @Test func genericAssignmentKeepsAnAmpersandThatIsPartOfTheValue() {
+        #expect(texts("PASSWORD=Tr0ub4dor&3xKcd-9zQ") == ["Tr0ub4dor&3xKcd-9zQ"])
+        #expect(texts("password: Tr0ub4dor&3xKcd-9zQ") == ["Tr0ub4dor&3xKcd-9zQ"])
+        // Outside a URL, not even `&name=` ends a value: the branch is chosen by where the KEY
+        // sits, never by what the value contains.
+        #expect(texts("PASSWORD=Tr0ub4dor&a=9zQxKcd-3") == ["Tr0ub4dor&a=9zQxKcd-3"])
+        // A commented-out credential is still one, and its `#` is not a URL fragment's.
+        #expect(texts("#DB_PASSWORD=Tr0ub4dor&3xKcd-9zQ") == ["Tr0ub4dor&3xKcd-9zQ"])
+        #expect(texts("# DB_PASSWORD=Tr0ub4dor&3xKcd-9zQ") == ["Tr0ub4dor&3xKcd-9zQ"])
+        #expect(texts("export A=1\n#DB_PASSWORD=Tr0ub4dor&3xKcd-9zQ") == ["Tr0ub4dor&3xKcd-9zQ"])
+        #expect(texts("{\"password\": \"Tr0ub4dor&x=3xKcd-9zQ\"}") == ["Tr0ub4dor&x=3xKcd-9zQ"])
+    }
+    @Test func redactingEveryAmpersandShapeLeavesNothingToFind() {
+        let tok = "Xk9vQ2mZr7Lp4TnB8wYc"
+        for input in ["https://example.com/cb?access_token=\(tok)&state=1",
+                      "https://app.example/#access_token=\(tok)&token_type=Bearer",
+                      "<a href=\"https://example.com/cb?token=\(tok)&amp;state=1\">",
+                      "PASSWORD=Tr0ub4dor&3xKcd-9zQ", "PASSWORD=Tr0ub4dor&a=9zQxKcd-3",
+                      "#DB_PASSWORD=Tr0ub4dor&3xKcd-9zQ",
+                      "{\"password\": \"Tr0ub4dor&x=3xKcd-9zQ\"}"] {
+            let out = SecretRedactor.redact(input, matches: SecretDetector.scan(input))
+            #expect(out != input, "\(input) was not redacted")
+            #expect(SecretDetector.scan(out).isEmpty, "\(input) → \(out) still scans")
+        }
     }
     @Test func vendorRulesDoNotMatchMidToken() {
         // `\b` succeeds before `-`, so an over-long hyphenated token matched a prefix: redaction

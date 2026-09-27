@@ -73,6 +73,83 @@ import Foundation
             try #expect(FileManager.default.contentsOfDirectory(atPath: dir.path).filter { $0.hasSuffix(".png") }.count == 2)
         }
     }
+    // #70: a hash match is the same picture with different words around it, so the newest
+    // capture's text wins — in both orders, and the rich text follows the plain text.
+    @Test func reCopyingAnImageWithACaptionKeepsTheCaption() throws {
+        try withDir { dir in
+            let s = HistoryStore(directory: dir)
+            let bare = s.record(CaptureCandidate(imagePNG: png(1)))!
+            s.record(text("between"))
+            let captioned = s.record(CaptureCandidate(plainText: "Q3 revenue chart", imagePNG: png(1)))!
+            #expect(captioned.id == bare.id && s.items.count == 2)
+            #expect(s.items[0].id == bare.id && s.items[0].plainText == "Q3 revenue chart")
+            #expect(s.items[0].byteCount == "Q3 revenue chart".utf8.count + png(1).count)
+        }
+    }
+    @Test func reCopyingACaptionedImageBareDropsTheCaption() throws {
+        try withDir { dir in
+            let s = HistoryStore(directory: dir)
+            s.record(CaptureCandidate(plainText: "caption", richRTFD: Data([1, 2]), imagePNG: png(1)))
+            let bare = s.record(CaptureCandidate(imagePNG: png(1)))!
+            #expect(s.items.count == 1 && bare.plainText == nil && bare.richRTFDFile == nil)
+            #expect(s.richRTFD(for: bare) == nil && bare.byteCount == png(1).count)
+            try #expect(FileManager.default.contentsOfDirectory(atPath: dir.path).filter { $0.hasSuffix(".rtfd") }.isEmpty)
+        }
+    }
+    @Test func aNewCaptionReplacesTheOldCaptionsRichText() throws {
+        try withDir { dir in
+            let s = HistoryStore(directory: dir)
+            s.record(CaptureCandidate(plainText: "old", richRTFD: Data([1, 2]), imagePNG: png(1)))
+            // Apps paste the rich flavour first: an old RTFD kept beside new plain text would
+            // paste the old caption.
+            let plainOnly = s.record(CaptureCandidate(plainText: "new", imagePNG: png(1)))!
+            #expect(plainOnly.plainText == "new" && s.richRTFD(for: plainOnly) == nil)
+            let rich = s.record(CaptureCandidate(plainText: "newer", richRTFD: Data([7, 7, 7]), imagePNG: png(1)))!
+            #expect(s.richRTFD(for: rich) == Data([7, 7, 7]) && rich.byteCount == 5 + 3 + png(1).count)
+        }
+    }
+    @Test func theRefreshedCaptionSurvivesAReload() throws {
+        try withDir { dir in
+            let s = HistoryStore(directory: dir)
+            s.record(CaptureCandidate(imagePNG: png(1)))
+            s.record(CaptureCandidate(plainText: "caption", imagePNG: png(1)))
+            s.flush()
+            #expect(HistoryStore(directory: dir).items.map(\.plainText) == ["caption"])
+        }
+    }
+    @Test func aCaptionThatBreaksTheBudgetEvictsTheOldestNotTheImage() throws {
+        try withDir { dir in
+            // The re-copied image is the OLDEST item when its caption pushes the total over
+            // budget: evicting before it moves to the top would evict the image itself.
+            let s = HistoryStore(directory: dir, limits: .init(maxTotalBytes: 100))
+            let img = s.record(CaptureCandidate(imagePNG: png(1)))!
+            s.record(text("b"))
+            let back = s.record(CaptureCandidate(plainText: String(repeating: "c", count: 40), imagePNG: png(1)))
+            #expect(back?.id == img.id && s.items.map(\.id) == [img.id])
+        }
+    }
+    @Test func aRefreshCountsOnlyAnImageThatWasStored() throws {
+        try withDir { dir in
+            let s = HistoryStore(directory: dir)
+            // A read-only directory fails the image blob write: the item survives as text only,
+            // but still carries the image's hash, so the next copy of that image matches it.
+            try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: dir.path)
+            let first = s.record(CaptureCandidate(plainText: "caption", imagePNG: png(1)))
+            try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: dir.path)
+            #expect(first?.imageFile == nil && first?.imageHash != nil, "fixture: image write must fail")
+            let again = s.record(CaptureCandidate(plainText: "new caption", imagePNG: png(1)))
+            #expect(again?.id == first?.id && again?.byteCount == "new caption".utf8.count)
+        }
+    }
+    @Test func aPinnedImageIgnoresANewCaption() throws {
+        try withDir { dir in
+            let s = HistoryStore(directory: dir)
+            let img = s.record(CaptureCandidate(plainText: "pinned words", imagePNG: png(1)))!
+            s.pin(img.id)
+            s.record(CaptureCandidate(plainText: "other words", imagePNG: png(1)))
+            #expect(s.items.count == 1 && s.items[0].plainText == "pinned words")
+        }
+    }
     @Test func itemCapEvictsOldestAndDeletesBlobs() throws {
         try withDir { dir in
             let s = HistoryStore(directory: dir, limits: .init(maxItems: 2))

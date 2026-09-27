@@ -56,18 +56,35 @@ public enum ClipboardImageRead {
         data: (String) -> Data?,
         decodePNG: (Data) -> Data?
     ) -> Data? {
-        // Checked before anything else, and before any bytes are read: a file copy is refused
-        // outright rather than merely low-priority against the two image types below. Scope
-        // note: this only decides "no image" for the session; what an unedited Save does over
-        // a file copy is `ClipboardSnapshot.fileReferenceTypes` (#71), not this rule's job.
-        guard !refusesAsFileCopy() else { return nil }
-        // The "only .png and .tiff count" rule is enforced here rather than left to the adapter,
-        // so it holds for every caller and is testable in one place.
-        guard let offered = available(imageTypes), imageTypes.contains(offered) else { return nil }
+        // The file-copy refusal and the type choice, before any bytes are read — shared with
+        // history capture (#81). Scope note: this only decides "no image" for the session; what an
+        // unedited Save does over a file copy is `ClipboardSnapshot.fileReferenceTypes` (#71),
+        // not this rule's job.
+        guard let offered = imageSource(refusesAsFileCopy: refusesAsFileCopy, available: available)
+        else { return nil }
         // Empty bytes are refused before the decoder sees them. Independent of what any decoder
         // does with zero bytes, and it is the case that must never survive as `Data()`.
         guard let bytes = data(offered), !bytes.isEmpty else { return nil }
         return decodePNG(bytes)
+    }
+
+    /// Which of `imageTypes` to read the image's bytes from, or nil when there is no image to read:
+    /// the *choice* half of `imagePNG`, and the whole of what the two readers of one pasteboard —
+    /// the session here and history capture in `PasteboardMonitor.read` — must agree on (#81).
+    ///
+    /// Having chosen, a reader takes bytes from that type only. History capture used to fall back
+    /// to the TIFF when a declared PNG never materialised, so it stored an image the session
+    /// refused to open. What the readers then do with the bytes may differ — the monitor keeps a
+    /// byte budget and defers the TIFF conversion off the main actor — but not whether they look.
+    public static func imageSource(refusesAsFileCopy: () -> Bool,
+                                   available: (Set<String>) -> String?) -> String? {
+        // Checked before anything else, and before any bytes are read: a file copy is refused
+        // outright rather than merely low-priority against the two image types below.
+        guard !refusesAsFileCopy() else { return nil }
+        // The "only .png and .tiff count" rule is enforced here rather than left to the adapter,
+        // so it holds for every caller and is testable in one place.
+        guard let offered = available(imageTypes), imageTypes.contains(offered) else { return nil }
+        return offered
     }
 
     // MARK: File copies (#78)

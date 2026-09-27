@@ -266,21 +266,34 @@ final class PasteboardMonitor {
         var pendingWidth: Int?
         var pendingHeight: Int?
         // A Finder file copy's only image is a 1024×1024 rendering of the file's *icon*, not an
-        // image the user copied; captured, it would reopen as an image session and Save would
-        // write the icon over the file reference. The session path asks the same question through
-        // `ClipboardImageRead`, and both must ask the *same function*: two readers of one
-        // pasteboard disagreeing about what an image is has bitten this rule once already.
+        // image the user copied; captured, it would reopen from history as a session showing the
+        // icon, and Save there *would* write it: a history item records no file reference, so
+        // #71's no-op — which covers only a session summoned over the live file copy — does not
+        // apply. This refusal is the only thing standing in that route. The session path asks the
+        // same question through `ClipboardImageRead`, and both must ask the *same function*: two
+        // readers of one pasteboard disagreeing about what an image is has bitten this rule once
+        // already.
         // A Photos.app copy carries a file-url too, but offers the photo itself — so it is
         // captured (via its TIFF, whose conversion strips GPS; see `ConversionStripsLocationTests`).
         // Text/rich capture above is unaffected either way.
-        if !ClipboardImageRead.refusesAsFileCopy(declaredTypes: Set(pb.types?.map(\.rawValue) ?? [])) {
+        //
+        // Which type to read is the session's decision too, not only whether to read (#81): having
+        // chosen, only that type's bytes are taken. Falling back to the TIFF when a declared PNG
+        // never materialised stored an image the session refused to open.
+        let declared = Set(pb.types?.map(\.rawValue) ?? [])
+        switch ClipboardImageRead.imageSource(
+            refusesAsFileCopy: { ClipboardImageRead.refusesAsFileCopy(declaredTypes: declared) },
+            available: { ClipboardBridge.offeredImageType($0, on: pb) }) {
+        case ClipboardImageRead.pngType?:
             if let png = pb.data(forType: .png) {
                 // Size before decode: a header-only read gives pixel dimensions without decoding
                 // an image the store is about to reject anyway.
                 if png.count <= maxImageBytes, let size = ImageBytes.pixelSize(of: png) {
                     c.imagePNG = png; c.imagePixelWidth = size.width; c.imagePixelHeight = size.height
                 }
-            } else if let tiff = pb.data(forType: .tiff), let size = ImageBytes.pixelSize(of: tiff),
+            }
+        case ClipboardImageRead.tiffType?:
+            if let tiff = pb.data(forType: .tiff), let size = ImageBytes.pixelSize(of: tiff),
                       // Header-only pixel gate, not a byte-size heuristic, and both the ceiling and
                       // the multiplication are `ImageBytes`' — shared with the session path so the
                       // two cannot drift. See there for why pixels and not bytes, and why the
@@ -292,6 +305,8 @@ final class PasteboardMonitor {
                       pixels <= ImageBytes.maxConvertiblePixels {
                 pendingTIFF = tiff; pendingWidth = size.width; pendingHeight = size.height
             }
+        default:
+            break
         }
         guard c.plainText != nil || c.imagePNG != nil || pendingTIFF != nil else { return nil }
         return PendingRead(candidate: c, pendingTIFF: pendingTIFF,
