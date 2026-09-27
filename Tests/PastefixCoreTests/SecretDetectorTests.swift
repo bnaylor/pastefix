@@ -73,6 +73,15 @@ import Testing
         // value class does not stop at `&`, so it claims a longer range and wins the overlap —
         // which would test that rule's greediness instead of this one's delimiting. See #74.
         #expect(texts("https://example.com/cb?id=\(jwt)&state=1") == [jwt])
+        // The OIDC callback shape, pinned rather than dropped: `?id_token=` is the realistic
+        // spelling, and the prefixed-key-name fix changed its behaviour — `genericAssignment`
+        // now matches it and claims `&state=1` along with the token, so the badge kind goes
+        // from JWT to generic and Redact breaks the URL. Not a security regression (more is
+        // redacted, not less), but it must not be invisible. Flips to an unexpected pass when
+        // #74 is fixed, which is the point of pinning it.
+        withKnownIssue("#74: genericAssignment's value class does not stop at & in a query string") {
+            #expect(texts("https://example.com/cb?id_token=\(jwt)&state=1") == [jwt])
+        }
         #expect(kinds("aaaaaaaa.bbbbbbbb.cccccccc") == [])                     // shape only, not a JWT
     }
     @Test func passwordInURL() {

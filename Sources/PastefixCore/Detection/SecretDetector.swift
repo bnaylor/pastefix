@@ -117,6 +117,11 @@ public enum SecretDetector {
         // itself; that accident is why the gap survived review. Letters still bound the keyword,
         // so `MYTOKEN=` and `notpassword=` stay unmatched.
         //
+        // Accepted consequence: benign `*_token` names now fire too — `next_page_token=<opaque>`
+        // is the common one. It is still entropy-gated, and redacting a pagination cursor costs
+        // the user nothing, so this is deliberate rather than an oversight. Do not "fix" it by
+        // narrowing the boundary back.
+        //
         // The value class is everything except whitespace and the characters that *delimit* a
         // value (quotes, comma, semicolon). An allow-list of `[A-Za-z0-9_\-+/=.]` missed the
         // commonest human password shape outright — `Tr0ub4dor&3xKcd-9zQ` and
