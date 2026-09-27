@@ -146,9 +146,12 @@ struct PanelView: View {
                             errorBanner(error)
                         } else if let notice = model.noticeMessage {
                             // A separate banner from `errorBanner`, not just a recolor of it: a
-                            // notice (currently only the refused-image message) reports that
-                            // nothing was lost, and the red-and-white treatment below said the
-                            // opposite — see `AppModel.noticeMessage`.
+                            // notice reports a refusal in which nothing the user can act on has
+                            // failed, and the red-and-white treatment below said the opposite —
+                            // see `AppModel.noticeMessage`. Three messages today, all about an
+                            // image that would not open: too large to convert at summon
+                            // (`noteRefusedImage`), and too large or file-missing when a history
+                            // item is opened (`noteUnopenableImage`).
                             //
                             // This `else if` is a priority for one banner slot, not an assumption
                             // that only one of the two can be set: both can be non-nil at once

@@ -9,10 +9,18 @@ public struct ClipboardSnapshot: Sendable {
     public let richRTFD: Data?
     /// A standalone pasteboard image, normalised to PNG.
     ///
-    /// Nil covers three different "no image" cases deliberately, because none of them should
-    /// become an empty `Data`: the pasteboard had no image type; it advertised one whose provider
-    /// never materialised the promised data; or the bytes did not decode. An empty `Data` here
-    /// would be written back over the user's clipboard as a zero-byte image by `Save`.
+    /// Nil covers every "no image" case deliberately, because none of them should become an empty
+    /// `Data`: the pasteboard carried `public.file-url` (a Finder file copy, so the TIFF on offer
+    /// is the file's icon); it had no image type at all; it advertised one whose provider never
+    /// materialised the promised data; the bytes were empty; or the bytes were unusable. An empty
+    /// `Data` here would be written back over the user's clipboard as a zero-byte image by `Save`.
+    ///
+    /// "Unusable" is narrower than "does not decode", and the difference is worth knowing before
+    /// trusting these bytes: `ImageBytes.normalise` decodes a TIFF (conversion requires it) but
+    /// validates a PNG from its header and pixel dimensions alone, so the user's own bytes are what
+    /// `Save` writes. A PNG with an intact header and a corrupt body therefore arrives here
+    /// non-nil and fails where it is drawn (`ImageSessionView` has a state for it). The guarantee
+    /// is "non-nil means real bytes we accepted", not "non-nil means it will draw".
     ///
     /// An image embedded inside `richRTFD` is **not** this. This field means a standalone
     /// pasteboard image type; without that rule every rich paste from a web page would become an
@@ -21,9 +29,10 @@ public struct ClipboardSnapshot: Sendable {
     /// The pixel count of a standalone image this snapshot *declined* to carry, or nil when there
     /// was nothing to decline.
     ///
-    /// Only one thing sets it today: a non-PNG image over `ImageBytes.maxConvertiblePixels`, which
-    /// `ClipboardBridge.snapshot` will not decode synchronously on the summon path. `imagePNG` is
-    /// nil in that case — and an image silently becoming no image is the failure this codebase
+    /// One thing sets it, from either of the two paths that can open a session: an image over
+    /// `ImageBytes.maxConvertiblePixels` that would need converting — which `ClipboardBridge.snapshot`
+    /// will not decode synchronously on the summon path, and which `AppModel.load` will not decode
+    /// out of a history blob either. `imagePNG` is nil in that case — and an image silently becoming no image is the failure this codebase
     /// treats as a defect, so the panel says so instead (a 30 MP photo copied out of Preview is
     /// enough to hit it). It is a number rather than a flag so the message can quote the size in
     /// the unit the limit is expressed in.

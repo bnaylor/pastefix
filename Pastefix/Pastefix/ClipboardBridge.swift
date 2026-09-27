@@ -24,10 +24,11 @@ enum ClipboardBridge {
             rich = nil
         }
         // A standalone pasteboard image, on the same footing as the text reads above: it is
-        // content, so it comes after the count. The three "no image" rules live in
-        // `ClipboardImageRead` (see there for why nil is never `Data()`), and the bytes-level
-        // decisions — PNG kept verbatim, TIFF converted, the pixel ceiling — live in `ImageBytes`,
-        // which the capture path uses too.
+        // content, so it comes after the count. The four "no image" rules live in
+        // `ClipboardImageRead` (a file copy, no image type, advertised-but-nil, empty bytes — see
+        // there for why nil is never `Data()`), and the bytes-level decisions — PNG kept verbatim
+        // and header-validated, TIFF decoded and converted, the pixel ceiling on the conversion —
+        // live in `ImageBytes`, which the capture path and the history load path use too.
         //
         // Set by the decode closure below when the clipboard *had* an image we would not convert.
         var refusedPixels: Int?

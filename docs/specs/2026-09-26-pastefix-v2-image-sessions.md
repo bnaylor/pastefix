@@ -115,8 +115,10 @@ public struct ClipboardSnapshot: Sendable {
     public let plainText: String?
     public let richRTFD: Data?
     /// A standalone pasteboard image, normalised to PNG. Nil when the pasteboard
-    /// had none, when its provider never materialised the promised data, or when
-    /// the bytes did not decode. An image embedded in `richRTFD` is *not* this.
+    /// had none, when it was a Finder file copy, when its provider never
+    /// materialised the promised data, when the bytes were empty, or when they
+    /// were unusable (a TIFF that will not decode; a PNG is validated from its
+    /// header — see Error handling). An image embedded in `richRTFD` is *not* this.
     public let imagePNG: Data?
     public let changeCount: Int?
 }
@@ -174,18 +176,37 @@ transforms.
 | Case | Behaviour |
 |---|---|
 | Pasteboard advertises an image type but its provider never materialised the data | Treated as **no image**, never as an empty one. Otherwise a session claims an image it does not have and Save writes zero bytes over the user's clipboard. (`pb save/restore` in `docs/gui-automation.md` hit exactly this and had to skip unmaterialised types.) |
-| Advertised as an image, does not decode | No image; fall back to the text path. With no text either, that is the honest empty state rather than an image session showing nothing. |
+| Advertised as an image, unusable bytes | No image; fall back to the text path. With no text either, that is the honest empty state rather than an image session showing nothing. **"Unusable" is asymmetric on purpose:** a TIFF is decoded (converting it requires that), while a PNG is accepted on a valid header and non-zero pixel dimensions and kept byte-for-byte, because re-encoding would cost a main-actor decode on every summon and would hand Save different bytes than the user copied. So a PNG with an intact header and a corrupt body *is* accepted, fails where it is drawn (`ImageSessionView` has a state for it), and is written back as the bytes we were given. There is no fallback from a corrupt PNG to a good TIFF on the same pasteboard — the known cost of reading PNG first. |
+| A history item's image file is missing, empty, unusable, or over the ceiling | No image, and **said**: the same `noticeMessage` channel the summon refusal uses, with two messages, because a picture too large to open is still in history and one whose file is gone is not. The blob goes through `ImageBytes.normalise` exactly as a pasteboard's bytes do — `imagePNG` is nil or valid at *both* entry points, never `Data()`, because Save writes it straight to the pasteboard. |
+| An unedited session holds nothing to write | Save writes nothing and ends the session. The write would be `clearContents()` and no content — less than nothing — over a clipboard that, being unedited, still holds everything the session has. `SavePayload.isEmpty` decides it, so the refusal and the write are one decision rather than two that must be kept in step. An *edited* empty buffer still writes: clearing the clipboard on purpose is a use of the app. |
 | Image over history's 5 MB | Viewable and uploadable, not recorded. Already today's behaviour; no new code. |
 | Image over upload's 16 MB | Refused by `UploadLimits`, which already names the size and the limit. |
-| Mixed session, text edited | Save writes the **edited text and the original image**. This is the rule that needs a test rather than a comment. |
+| Mixed session, text edited | Save writes the **edited text and the original image**. This is the rule that needs a test rather than a comment — it has one: `SavePayloadTests.mixedEdited`. |
 
 ## Testing
 
-Package-level, with real tests: `ClipboardSnapshot`'s image field; the
-advertised-but-unmaterialised rule; the RTFD-embedded-image exclusion; form
-filtering in `TransformCoordinator`; the display-form derivation for all four
-combinations of text and image presence; and Save writing everything the session
-holds after a text edit.
+Package-level, with real tests: `ClipboardSnapshot`'s image field; the four "no
+image" rules in `ClipboardImageRead`; the bytes-level rules in `ImageBytes` (PNG
+verbatim, TIFF converted, the ceiling, empty bytes, and a header whose dimensions
+overflow an `Int`); the RTFD-embedded-image exclusion; form filtering in
+`TransformCoordinator`; the display-form derivation for all four combinations of
+text and image presence; the empty-refused-image session the panel withholds
+editor focus from; and — via `SavePayload` — what Save writes, including the rule
+this spec singled out as needing a test rather than a comment (a mixed session
+whose text was edited saves the edited text *and* the original image), the
+refusal to write an empty payload from an unedited session, and the deliberate
+clear that must still write.
+
+**What that Save coverage does and does not reach, stated plainly.** `SavePayload`
+is a pure function in `PastefixAppCore` from the document to the three things a
+non-Markdown Save writes, so the *decision* is tested. The `NSPasteboard` call
+that carries it out (`ClipboardBridge.write`) and the armed-Markdown branch (which
+renders through `RichOutputRenderer`, throwing and main-actor) stay in the app
+target, which has **no test host (#68)** and therefore no unit coverage at all.
+Those are GUI-verified. An earlier draft of this spec promised a test for the mixed
+rule while the decision lived in `AppModel.save()`, where it could not exist;
+extracting the decision is what turned that promise into a kept one, and the part
+that remains unmet is named here rather than left to be discovered.
 
 The panel's image view is app-target and has no automated coverage by design.
 **Stated plainly because it matters:** the last two defects found on Plan 13 were
@@ -200,16 +221,18 @@ app. This increment's visible half is verified by a GUI pass using the tooling i
 Sources/PastefixAppCore/ClipboardSnapshot.swift      # imagePNG field
 Sources/PastefixAppCore/PasteDocument.swift          # stored display form
 Sources/PastefixAppCore/TransformCoordinator.swift   # form filtering
-Sources/PastefixAppCore/ClipboardImageRead.swift     # NEW — the three "no image" rules, as a pure seam
+Sources/PastefixAppCore/ClipboardImageRead.swift     # NEW — the four "no image" rules, as a pure seam
+Sources/PastefixAppCore/SavePayload.swift            # NEW — what one Save writes, and what "nothing to write" means
 Sources/PastefixAppCore/ImageBytes.swift             # NEW — the one TIFF→PNG conversion and the 25 MP ceiling
 Sources/PastefixCore/Transformer.swift               # ContentForm, acceptedForms
 Pastefix/Pastefix/ClipboardBridge.swift              # read a standalone image
 Pastefix/Pastefix/PanelView.swift                    # image view branch, notice banner
 Pastefix/Pastefix/ImageSessionView.swift             # NEW — the image view itself
-Pastefix/Pastefix/AppModel.swift                     # load an image history item; refusal notice
+Pastefix/Pastefix/AppModel.swift                     # load an image history item (validated through ImageBytes); refusal notice; Save's payload + refusal
 Pastefix/Pastefix/HistoryOverlayView.swift           # ↵ opens image rows
 Pastefix/Pastefix/CommandPaletteView.swift           # says why an image session has no transforms
-Pastefix/Pastefix/PasteboardMonitor.swift            # shares the one conversion
+Pastefix/Pastefix/PasteboardMonitor.swift            # shares the one conversion and the one overflow-safe pixel count
+Pastefix/Pastefix/SidebarView.swift                  # says why it is empty in an image session
 Pastefix/Pastefix/UploadOverlayView.swift            # refuses an image session, naming #48
 README.md                                            # ↵ rule, image sessions
 

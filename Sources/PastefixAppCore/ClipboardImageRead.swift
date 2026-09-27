@@ -14,8 +14,23 @@ public enum ClipboardImageRead {
 
     /// nil for: `public.file-url` present (a Finder file copy, not an image the user copied — see
     /// below); no image type offered; a type offered whose data is nil (advertised but never
-    /// materialised by its provider); or bytes that do not decode. Never an empty `Data` — that
-    /// would be written back over the user's clipboard as a zero-byte image.
+    /// materialised by its provider); empty bytes; or bytes `decodePNG` rejects. Never an empty
+    /// `Data` — that would be written back over the user's clipboard as a zero-byte image.
+    ///
+    /// **What "rejects" covers is asymmetric, and the asymmetry is deliberate.** The adapter's
+    /// `decodePNG` is `ImageBytes.normalise`, which *decodes* a TIFF (it has to, to convert it) but
+    /// validates a PNG by reading its header and its pixel dimensions only, keeping the user's own
+    /// bytes for `Save`. So a header-valid, body-corrupt PNG is accepted here and fails later where
+    /// it is drawn; only a TIFF is rejected for failing to decode. This seam enforces "nil means no
+    /// image", not "everything non-nil draws".
+    ///
+    /// One consequence, named because it is a real loss and not implementing a fallback is the
+    /// choice: a pasteboard offering a corrupt `public.png` *and* a good `public.tiff` is read as
+    /// the PNG, because the adapter orders PNG first, and the TIFF is never consulted. The session
+    /// shows the failure placeholder and `Save` writes the corrupt PNG over that good TIFF. The
+    /// price of PNG-first ordering (which is what keeps every ordinary screenshot free of a
+    /// decode), paid in a case that needs a source that is broken in one representation and fine
+    /// in another.
     ///
     /// - Parameters:
     ///   - hasFileURL: whether the pasteboard carries `public.file-url`. Checked first and
@@ -32,15 +47,16 @@ public enum ClipboardImageRead {
     ///     offered, belongs to the pasteboard adapter (`NSPasteboard.availableType(from:)` takes
     ///     an ordered list and `ClipboardBridge` orders it PNG first).
     ///   - data: the bytes for a type, or nil when the provider never materialised them.
-    ///   - decodePNG: PNG bytes for the given image bytes, or nil when they do not decode. It is
-    ///     both the validator and the TIFF converter: an already-PNG input comes back unchanged,
-    ///     so the user's own bytes are what `Save` writes, and a TIFF comes back re-encoded.
-    ///     Returning the input unchanged is the adapter's promise, not something enforced here;
-    ///     what *is* enforced is that nil means no image.
+    ///   - decodePNG: PNG bytes for the given image bytes, or nil when it will not have them. It
+    ///     is both the validator and the TIFF converter: an already-PNG input comes back unchanged
+    ///     after a header check, so the user's own bytes are what `Save` writes, and a TIFF comes
+    ///     back re-encoded or not at all. Returning the input unchanged is the adapter's promise,
+    ///     not something enforced here; what *is* enforced is that nil means no image.
     ///
-    /// There is deliberately no fallback from one type to the other: a provider that advertises a
-    /// type and then hands back nil is broken, and guessing at its other promise is not a better
-    /// answer than "this clipboard has no image we can use".
+    /// There is deliberately no fallback from one type to the other, in either failure: a provider
+    /// that advertises a type and then hands back nil is broken, and guessing at its other promise
+    /// is not a better answer than "this clipboard has no image we can use" — and the
+    /// corrupt-PNG-beside-good-TIFF case above is the same rule costing something real.
     public static func imagePNG(
         hasFileURL: () -> Bool,
         available: (Set<String>) -> String?,
