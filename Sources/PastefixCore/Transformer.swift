@@ -1,16 +1,29 @@
 import Foundation
 
-/// Content handed to a transform. `text` is the current working buffer.
-/// `richRTFD` carries the original clipboard's rich representation as RTFD
-/// data (Sendable); only `RichToPlain` reads it.
+/// Content handed to a transform. `text` is the current working buffer — `""` when the session is
+/// showing an image. `richRTFD` carries the original clipboard's rich representation as RTFD data
+/// (Sendable); only `RichToPlain` and `RichToMarkdown` read it. `image` is the current image entry's
+/// PNG, or nil when the session is showing text (Plan 20).
 public struct TransformInput: Sendable {
     public let text: String
     public let richRTFD: Data?
+    public let image: Data?
 
-    public init(text: String, richRTFD: Data? = nil) {
+    public init(text: String, richRTFD: Data? = nil, image: Data? = nil) {
         self.text = text
         self.richRTFD = richRTFD
+        self.image = image
     }
+}
+
+/// What a transform produced (Plan 20). Text and image results become the session's next undo
+/// entry; `nothingToDo` pushes nothing and carries the sentence the user sees instead — how
+/// Strip Image Metadata says there was nothing to remove, rather than silently re-encoding.
+/// `note` on an image result is shown after it lands ("Removed location and camera details.").
+public enum TransformOutput: Sendable, Equatable {
+    case text(String)
+    case image(Data, note: String? = nil)
+    case nothingToDo(String)
 }
 
 /// What a transform can run on.
@@ -88,6 +101,11 @@ public protocol Transformer: Identifiable, Sendable {
     /// `maxInputBytes` to keep it short.
     var timeout: TimeInterval { get }
     func apply(_ input: TransformInput) async throws -> String
+    /// The transform's result as text or an image (Plan 20). A protocol **requirement**, not only
+    /// an extension method: the coordinator calls through `any Transformer`, and an extension-only
+    /// method would dispatch statically to the default below, so an image transform's own body
+    /// would never run. Every text transform takes the default and is unchanged.
+    func transform(_ input: TransformInput) async throws -> TransformOutput
 }
 
 public extension Transformer {
@@ -96,6 +114,9 @@ public extension Transformer {
     var category: String? { nil }
     var maxInputBytes: Int { TransformLimits.defaultMaxInputBytes }
     var timeout: TimeInterval { TransformLimits.defaultTimeout }
+    func transform(_ input: TransformInput) async throws -> TransformOutput {
+        .text(try await apply(input))
+    }
 }
 
 /// Category names shared by the built-ins, the grouping code, and tests.
