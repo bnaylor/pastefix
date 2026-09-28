@@ -50,10 +50,16 @@ public enum MarkdownPreview {
         return count
     }
 
+    /// Replaces the importer's fixed colours with the dynamic `labelColor`, leaving links theirs.
+    ///
+    /// Replaced, not removed. Removing them was the original fix for fixed-black text in dark
+    /// mode, on the belief that a colourless run falls back to the text view's `textColor`. It
+    /// doesn't: once `setAttributedString` puts it in the view, a run with no colour draws black,
+    /// so every preview was dark on dark in dark mode (seen in the #52 GUI pass).
     static func stripForegroundColors(_ s: NSMutableAttributedString) {
         let full = NSRange(location: 0, length: s.length)
         s.enumerateAttributes(in: full) { attrs, range, _ in
-            if attrs[.link] == nil, attrs[.foregroundColor] != nil { s.removeAttribute(.foregroundColor, range: range) }
+            if attrs[.link] == nil { s.addAttribute(.foregroundColor, value: NSColor.labelColor, range: range) }
         }
     }
 
@@ -72,6 +78,10 @@ public enum MarkdownPreview {
     }
 
     private static func plain(_ text: String, mono: Bool = false) -> NSAttributedString {
-        NSAttributedString(string: text, attributes: [.font: mono ? NSFont.monospacedSystemFont(ofSize: 12, weight: .regular) : NSFont.systemFont(ofSize: 13)])
+        NSAttributedString(string: text, attributes: [
+            .font: mono ? NSFont.monospacedSystemFont(ofSize: 12, weight: .regular) : NSFont.systemFont(ofSize: 13),
+            // Explicit for the same reason as `stripForegroundColors`: colourless draws black.
+            .foregroundColor: NSColor.labelColor,
+        ])
     }
 }
