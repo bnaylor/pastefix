@@ -6,6 +6,9 @@ import PastefixCore
 public struct PasteDocument: Sendable {
     public let origin: ClipboardSnapshot
     public private(set) var history: [String]
+    /// `history[i].utf8.count`, kept beside it and updated wherever `history` changes, so the
+    /// working text's size is a read rather than a measurement — see `workingByteCount`.
+    private var historyByteCounts: [Int]
     public private(set) var cursor: Int
     /// Detection for `working`. Pending after every discrete event (init, push, undo, redo,
     /// refresh) until the scheduler delivers a result for `detectionRevision`; the struct never
@@ -28,6 +31,7 @@ public struct PasteDocument: Sendable {
     public init(origin: ClipboardSnapshot) {
         self.origin = origin
         self.history = [origin.plainText ?? ""]
+        self.historyByteCounts = [(origin.plainText ?? "").utf8.count]
         self.cursor = 0
         self.outputMode = .plain
         self.displaysAsImage = origin.imagePNG != nil
@@ -35,6 +39,13 @@ public struct PasteDocument: Sendable {
     }
 
     public var working: String { history[cursor] }
+
+    /// The working text's UTF-8 size, stored rather than measured. `utf8.count` is O(1) only on a
+    /// native string, and bridged ones reach `working`: the TextEditor's write-back through
+    /// `setWorking`, non-ASCII pasteboard text, JS transform output — ~1 ms per MB, measured in
+    /// the #101 review. The panel reads this on every render; storing it means a keystroke pays
+    /// once instead of every render paying again.
+    public var workingByteCount: Int { historyByteCounts[cursor] }
     public var canUndo: Bool { cursor > 0 }
     public var canRedo: Bool { cursor < history.count - 1 }
 
@@ -64,6 +75,23 @@ public struct PasteDocument: Sendable {
     /// point: a capture path and a session path that disagree about whether a buffer has text
     /// give two different answers for one clipboard, and nobody notices until they do.
     public let displaysAsImage: Bool
+
+    /// The most working text the panel lays out in its editor (#52). Layout is ~1 s per MB
+    /// (measured: 0.28 s at 256 KB, 1.0 s at 1 MB, 19 s at 17 MB) and blocks the main thread, so
+    /// a huge clipboard kept every overlay waiting on text nobody was going to read — ⌘⇧U took
+    /// ~9 s to say "too large to upload" (#62). The same 1 MB as `ContentDetector.maxBytes`, above
+    /// which detection already stops.
+    public static let editorDisplayLimitBytes = ContentDetector.maxBytes
+
+    /// True when the working text is over `editorDisplayLimitBytes`: the panel shows a placeholder
+    /// in place of the editor (the Markdown preview caps itself at 16 KB already), unless the user asks to see it anyway.
+    /// Save and upload still act on all of it; most transforms refuse at their own input cap
+    /// (`TransformLimits.defaultMaxInputBytes`, the same 1 MB). Computed from the stored
+    /// `workingByteCount`, so it follows transforms, undo and edits — a transform that shrinks the
+    /// text brings the editor back — at no cost per render.
+    public var displaysAsLargeText: Bool {
+        !displaysAsImage && workingByteCount > Self.editorDisplayLimitBytes
+    }
 
     /// True when this session has nothing on screen but the refused-image notice: the clipboard
     /// carried an image too large to convert, and there is no real text in the editor either.
@@ -182,6 +210,8 @@ public struct PasteDocument: Sendable {
         guard text != working else { invalidateDetection(); return }
         history = Array(history.prefix(cursor + 1))
         history.append(text)
+        historyByteCounts = Array(historyByteCounts.prefix(cursor + 1))
+        historyByteCounts.append(text.utf8.count)
         cursor = history.count - 1
         invalidateDetection()
     }
@@ -192,6 +222,7 @@ public struct PasteDocument: Sendable {
     /// the user types and detection isn't run per keystroke.
     public mutating func setWorking(_ text: String) {
         history[cursor] = text
+        historyByteCounts[cursor] = text.utf8.count
     }
 
     public mutating func undo() {

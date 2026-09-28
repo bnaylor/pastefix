@@ -36,7 +36,9 @@ struct MarkdownPreviewView: NSViewRepresentable {
         // Set once, here, and never in `updateNSView`: this setter rewrites `.foregroundColor`
         // on the whole text storage, so applying it after `setAttributedString` would flatten
         // the `.link` runs that `MarkdownPreview.stripForegroundColors` deliberately keeps
-        // coloured. Runs the render leaves uncoloured still pick this up as the view default.
+        // coloured. It is *not* what colours the render: a run with no colour draws black after
+        // `setAttributedString`, so `MarkdownPreview` gives every non-link run `labelColor`
+        // itself. This line only sets the typing default.
         tv.textColor = .labelColor
         tv.delegate = context.coordinator
         // The importer *does* produce `.link` runs (Markdown links), and those stay clickable —

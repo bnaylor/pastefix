@@ -49,7 +49,7 @@ import Foundation
     // exited (measured: 3.01 s for a 3 s linger, 0.00 s for an ordinary script). Enough of them
     // at once starved every other async task in the process, detection included.
     @Test func lingeringScriptsDoNotStarveThePool() async throws {
-        let url = try tempScript("exec >&- 2>&-\nsleep 2\n")
+        let url = try tempScript("exec >&- 2>&-\nsleep 5\n")
         defer { try? FileManager.default.removeItem(at: url) }
         let count = ProcessInfo.processInfo.activeProcessorCount * 2
         let runs = (0..<count).map { _ in
@@ -62,13 +62,19 @@ import Foundation
         // one of three runs against the blocking runner. (The first draft measured a probe task
         // started after the sleep, by which point the starvation was over: it could not fail.)
         var worst = Duration.zero
-        for _ in 0..<30 {
+        for _ in 0..<60 {
             let start = ContinuousClock.now
             try await Task.sleep(nanoseconds: 100_000_000)
             worst = max(worst, ContinuousClock.now - start - .milliseconds(100))
         }
         for run in runs { await run.value }
-        #expect(worst < .seconds(1), "a task waited \(worst) for a thread")
+        // The bound sits between two measured numbers, not near either. A blocking runner pins
+        // the pool for the whole 5 s linger (overshoot ≈ 5 s); in the full parallel suite, other
+        // CPU-heavy tests alone produce up to ~1.4 s of overshoot (2.8 s with every core
+        // saturated by other processes, when every timing test in the suite fails). The first
+        // version lingered 2 s against a 1 s bound — inside that noise — and failed 3 runs in 5
+        // on a correct runner.
+        #expect(worst < .milliseconds(3500), "a task waited \(worst) for a thread")
     }
 
     @Test func pipesStdinToStdout() async throws {

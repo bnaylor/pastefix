@@ -34,17 +34,27 @@ import AppKit
         let family = code?.familyName ?? "nil"
         #expect(family.contains("Menlo"), "expected the stylesheet's Menlo, got \(family)")
     }
-    @Test func foregroundColoursStrippedExceptLinks() {
+    // The importer's colours are fixed (black), so they are replaced — but not with *nothing*.
+    // A run with no colour draws black once `setAttributedString` puts it in the text view, whatever
+    // the view's `textColor`; in dark mode every preview was dark on dark (seen in the #52 GUI
+    // pass). So every non-link run carries the dynamic `labelColor`, and links keep theirs.
+    @Test func textIsLabelColouredExceptLinks() {
         let s = MarkdownPreview.attributedString(markdown: "plain **bold** and [site](https://a.b)")
         for (text, attrs) in runs(s) {
             if attrs[.link] != nil { #expect(text == "site") }
-            else { #expect(attrs[.foregroundColor] == nil, "run \(text) still carries a colour") }
+            else { #expect(attrs[.foregroundColor] as? NSColor == .labelColor, "run \(text) is not labelColor") }
         }
-        // The exception half of the name: without the carve-out in `stripForegroundColors` the
-        // link run comes back colourless like everything else.
+        // The exception half: links keep the importer's link colour rather than labelColor.
         let link = runs(s).first { $0.1[.link] != nil }
         #expect(link != nil)
-        #expect(link?.1[.foregroundColor] != nil, "the link run should keep its colour")
+        #expect(link.map { $0.1[.foregroundColor] as? NSColor != .labelColor } == true,
+                "the link run should keep its own colour")
+    }
+    @Test func noticeAndPlainFallbackAreLabelColoured() {
+        let notice = MarkdownPreview.attributedString(markdown: String(repeating: "a", count: MarkdownPreview.maxBytes + 1))
+        for (text, attrs) in runs(notice) {
+            #expect(attrs[.foregroundColor] as? NSColor == .labelColor, "notice run \(text) is not labelColor")
+        }
     }
     @Test func overCapReturnsNotice() {
         let s = MarkdownPreview.attributedString(markdown: String(repeating: "a", count: MarkdownPreview.maxBytes + 1))
