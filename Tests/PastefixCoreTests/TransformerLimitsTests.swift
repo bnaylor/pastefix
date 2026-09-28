@@ -25,6 +25,9 @@ private struct Bare: Transformer {
             "builtin.urlclean": (262_144, 3),
             "builtin.markdownlink": (262_144, 6),
             "builtin.redactsecrets": (262_144, 3),
+            // An image transform: bounded by the pixel ceiling in the coordinator, not by bytes;
+            // 10 s because a 20 MP decode alone is ~1 s (Plan 20).
+            "builtin.stripimagemetadata": (TransformLimits.defaultMaxInputBytes, 10),
             "builtin.richtoplain": (4_194_304, 3),
             "builtin.richtomarkdown": (4_194_304, 3),
             RegexPresetTransformer.transformerID(for: preset.id): (262_144, 3),

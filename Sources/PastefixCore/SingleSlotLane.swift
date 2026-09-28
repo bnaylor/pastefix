@@ -4,7 +4,8 @@ import Foundation
 /// waiting, and a job superseded before it reaches the front never starts.
 ///
 /// The shape `TIFFConversionSlot` (history capture) established, generalised so it can be tested
-/// here and reused — first by image upload preparation (#48), where a repeated ⌘⇧U rebuilds the
+/// here and reused (in PastefixCore since Plan 20, so image transforms can use it from the
+/// registry's module) — first by image upload preparation (#48), where a repeated ⌘⇧U rebuilds the
 /// overlay and a CG decode cannot be cancelled: unguarded, hammering ⌘⇧U on a 24 MP session runs
 /// N concurrent ~330 MB decodes.
 ///
@@ -53,10 +54,10 @@ public final class SingleSlotLane<Input: Sendable, Output: Sendable>: @unchecked
     }
 
     /// For tests: the generation of the job currently waiting, if any.
-    var waitingGeneration: Int? { lock.lock(); defer { lock.unlock() }; return waiting?.generation }
+    package var waitingGeneration: Int? { lock.lock(); defer { lock.unlock() }; return waiting?.generation }
     /// For tests: a job has been taken off the slot and is running (or about to), with none
     /// waiting — so the next arrival waits rather than displacing it.
-    var isRunningWithNoneWaiting: Bool { lock.lock(); defer { lock.unlock() }; return draining && waiting == nil }
+    package var isRunningWithNoneWaiting: Bool { lock.lock(); defer { lock.unlock() }; return draining && waiting == nil }
 
     private func drain() {
         while true {

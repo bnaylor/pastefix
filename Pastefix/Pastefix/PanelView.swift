@@ -154,6 +154,10 @@ struct PanelView: View {
                         }
                         if let error = model.errorMessage {
                             errorBanner(error)
+                        } else if let note = model.transformNote {
+                            // Informational, like a notice, and transient, unlike one (see
+                            // `AppModel.transformNote`).
+                            noticeBanner(note)
                         } else if let notice = model.noticeMessage {
                             // A separate banner from `errorBanner`, not just a recolor of it: a
                             // notice reports a refusal in which nothing the user can act on has
@@ -293,11 +297,21 @@ struct PanelView: View {
         }
     }
 
+    /// ⌘Z/⌘⇧Z belong to the toolbar's Undo/Redo while an image is showing and no overlay is up.
+    private var imageUndoKeys: Bool {
+        model.document?.displaysAsImage == true && !isPaletteOpen && !isHistoryOpen && !isUploadOpen
+    }
+
     private var toolbar: some View {
         HStack {
             Button("Undo") { model.undo() }
+                // ⌘Z / ⌘⇧Z drive Pastefix's undo only while an image is showing (Plan 20): an image
+                // session has no editor to take them, and nothing else did. In a text session they
+                // stay the editor's typing undo; transform undo there is the button (see the issue).
+                .keyboardShortcut(imageUndoKeys ? KeyboardShortcut("z", modifiers: .command) : nil)
                 .disabled(model.isApplying || model.document?.canUndo != true)
             Button("Redo") { model.redo() }
+                .keyboardShortcut(imageUndoKeys ? KeyboardShortcut("z", modifiers: [.command, .shift]) : nil)
                 .disabled(model.isApplying || model.document?.canRedo != true)
             Button("Refresh") { model.refresh() }
                 .disabled(model.isApplying)

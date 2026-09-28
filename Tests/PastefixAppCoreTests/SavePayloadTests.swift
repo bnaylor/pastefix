@@ -48,14 +48,16 @@ struct SavePayloadTests {
         #expect(payload.isEmpty == false)
     }
 
-    @Test("an image session's real text is written verbatim, whitespace included")
+    // Before Plan 20 this typed "  " into an image session through `setWorking` and expected it
+    // written back. An image session has no editor on screen, and since Plan 20 `setWorking` on an
+    // image entry is ignored — that is what makes a stale TextEditor write-back after ⌘Z harmless.
+    @Test("an image session writes its image, and a write-back onto it is ignored")
     func whitespaceInAnImageSession() {
         var d = doc(text: nil, image: png)
         d.setWorking("  ")
         let payload = SavePayload(document: d)
-        // Written, because there is a buffer and Save is not the place to decide a user's text is
-        // not worth keeping. `isEmpty` still reads false on the image alone.
-        #expect(payload.text == "  ")
+        #expect(payload.text == nil)
+        #expect(payload.imagePNG == png)
         #expect(payload.isEmpty == false)
     }
 

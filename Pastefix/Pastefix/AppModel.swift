@@ -30,6 +30,16 @@ final class AppModel: ObservableObject {
     /// lost: the notice reappears as soon as the error clears (a later successful transform sets
     /// `errorMessage = nil`).
     @Published var noticeMessage: String?
+    /// A transform's sentence about what it just did or why it did nothing ("Removed location and
+    /// camera details.", "This image has no location or camera details to remove."), Plan 20.
+    /// **Not** `noticeMessage`: that is a standing fact about the origin, cleared only at session
+    /// boundaries, and a transform's sentence left there would outlive the ⌘Z that makes it false.
+    /// It follows the entry it describes through undo and redo (`PasteDocument.currentNote`) — a
+    /// stripped image looks identical to its original, so this is how the user tells them apart —
+    /// and is cleared by the next apply and every session boundary. A "nothing to do" sentence has
+    /// no entry, so undo or redo clears it. `PanelView` shows one banner: error first, then this,
+    /// then the notice.
+    @Published var transformNote: String?
     @Published private(set) var isApplying = false
     @Published private(set) var transformers: [any Transformer] = []
     @Published private(set) var allTransformers: [any Transformer] = []
@@ -189,6 +199,7 @@ final class AppModel: ObservableObject {
     func beginSession(from origin: ClipboardSnapshot) {
         errorMessage = nil
         noticeMessage = nil
+        transformNote = nil
         resetSecretSelection()
         abandonInFlightWork()
         sessionGeneration &+= 1
@@ -286,6 +297,7 @@ final class AppModel: ObservableObject {
 
     func apply(_ transformer: any Transformer) {
         guard let current = document, !isApplying else { return }
+        transformNote = nil
         isApplying = true
         let generation = sessionGeneration
         applyTask = Task {
@@ -306,8 +318,17 @@ final class AppModel: ObservableObject {
             // restarts here because the match list belongs to the buffer that just went away.
             self.resetSecretSelection()
             switch outcome {
-            case .applied, .unchanged: self.errorMessage = nil
-            case .failed(let message): self.errorMessage = message
+            case .applied, .unchanged:
+                self.errorMessage = nil
+                // Whatever entry is current now carries its own note (or none): the note
+                // follows its entry, here as on undo and redo (#104 review).
+                self.transformNote = updated.currentNote
+            case .appliedWithNote(let note), .nothingToDo(let note):
+                self.errorMessage = nil
+                self.transformNote = note
+            case .failed(let message):
+                self.errorMessage = message
+                self.transformNote = updated.currentNote
             }
             self.isApplying = false
             self.applyTask = nil
@@ -325,6 +346,8 @@ final class AppModel: ObservableObject {
         let before = doc.detectionRevision
         doc.undo()
         document = doc
+        // The note follows the entry it describes: undo to the original shows none.
+        transformNote = doc.currentNote
         if doc.detectionRevision != before { requestDetection() }
         resetSecretSelection()
     }
@@ -334,6 +357,7 @@ final class AppModel: ObservableObject {
         let before = doc.detectionRevision
         doc.redo()
         document = doc
+        transformNote = doc.currentNote
         if doc.detectionRevision != before { requestDetection() }
         resetSecretSelection()
     }
@@ -350,6 +374,7 @@ final class AppModel: ObservableObject {
         requestDetection()
         errorMessage = nil
         noticeMessage = nil
+        transformNote = nil
         // After the clear, not before: a refused image is news about the buffer that was just
         // installed, and clearing afterwards would throw it away.
         noteRefusedImage(origin)
@@ -383,7 +408,7 @@ final class AppModel: ObservableObject {
         // What this Save writes, decided once, in one pure place, so the write below and the
         // refusal above cannot disagree about what the session holds (see `SavePayload`).
         let payload = SavePayload(document: doc)
-        if doc.outputMode == .renderedMarkdown {
+        if doc.effectiveOutputMode == .renderedMarkdown {
             // MarkdownToRich's own cap only bounds arming (the transform ran against a buffer at
             // or under it), but the buffer can grow afterwards — further edits, or a preset that
             // amplifies text — and this render runs synchronously on the main actor, same as the
@@ -425,7 +450,7 @@ final class AppModel: ObservableObject {
     }
 
     /// True while Save would write HTML + RTF; drives the action-bar badge and the Save tooltip.
-    var isRichOutputArmed: Bool { document?.outputMode == .renderedMarkdown }
+    var isRichOutputArmed: Bool { document?.effectiveOutputMode == .renderedMarkdown }
 
     /// Back to a plain-text Save. `document` is `private(set)`, so mutate a copy and reassign
     /// to publish the change.
@@ -447,6 +472,7 @@ final class AppModel: ObservableObject {
     func load(_ item: HistoryItem) {
         errorMessage = nil
         noticeMessage = nil
+        transformNote = nil
         resetSecretSelection()
         abandonInFlightWork()
         sessionGeneration &+= 1
@@ -573,6 +599,7 @@ final class AppModel: ObservableObject {
         document = nil
         errorMessage = nil
         noticeMessage = nil
+        transformNote = nil
         resetSecretSelection()
         sessionGeneration &+= 1
         onEndSession?()

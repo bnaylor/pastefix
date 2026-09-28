@@ -1,4 +1,5 @@
 import Foundation
+import PastefixCore
 
 /// One preparation per session's image: a rebuilt owner gets the task already in flight, not a
 /// new decode (#48).

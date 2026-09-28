@@ -54,6 +54,7 @@ public struct TransformerRegistry {
             (102, "Color → CSS hsl()", ColorConvert(style: .hsl)),
             (103, "Color → SwiftUI Color", ColorConvert(style: .swift)),
             (110, "Redact Secrets", RedactSecrets()),
+            (111, "Strip Image Metadata", StripImageMetadata()),
         ]
 
         // Presets sit after every built-in (band 900) and before discovered scripts (1000+).
