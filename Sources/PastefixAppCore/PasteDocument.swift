@@ -5,10 +5,17 @@ import PastefixCore
 /// linear history of working-text states with an undo/redo cursor.
 public struct PasteDocument: Sendable {
     public let origin: ClipboardSnapshot
-    public private(set) var history: [String]
-    /// `history[i].utf8.count`, kept beside it and updated wherever `history` changes, so the
-    /// working text's size is a read rather than a measurement — see `workingByteCount`.
-    private var historyByteCounts: [Int]
+    /// One undo state: text, or an image (PNG bytes, never empty). Plan 20: transforms can turn
+    /// one into the other, and one cursor walks both.
+    public enum Entry: Sendable, Equatable {
+        case text(String)
+        case image(Data)
+    }
+    public private(set) var entries: [Entry]
+    /// Each entry's text size in UTF-8 bytes (0 for an image), kept beside `entries` and updated
+    /// wherever they change, so the working text's size is a read rather than a measurement — see
+    /// `workingByteCount`.
+    private var entryByteCounts: [Int]
     public private(set) var cursor: Int
     /// Detection for `working`. Pending after every discrete event (init, push, undo, redo,
     /// refresh) until the scheduler delivers a result for `detectionRevision`; the struct never
@@ -30,51 +37,79 @@ public struct PasteDocument: Sendable {
 
     public init(origin: ClipboardSnapshot) {
         self.origin = origin
-        self.history = [origin.plainText ?? ""]
-        self.historyByteCounts = [(origin.plainText ?? "").utf8.count]
+        let first = Self.initialEntry(for: origin)
+        self.openedAsImage = { if case .image = first { return true }; return false }()
+        self.entries = [first]
+        self.entryByteCounts = [Self.byteCount(of: first)]
         self.cursor = 0
         self.outputMode = .plain
-        self.displaysAsImage = origin.imagePNG != nil
-            && (origin.plainText ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
-    public var working: String { history[cursor] }
+    /// What a fresh session over `origin` shows first: an image when the origin carried one and no
+    /// real text (blank once trimmed), text otherwise. One rule, used by `init` and `isUnedited`.
+    static func initialEntry(for origin: ClipboardSnapshot) -> Entry {
+        let blank = (origin.plainText ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        if let png = origin.imagePNG, blank { return .image(png) }
+        return .text(origin.plainText ?? "")
+    }
+
+    private static func byteCount(of entry: Entry) -> Int {
+        if case .text(let text) = entry { return text.utf8.count }
+        return 0
+    }
+
+    public var currentEntry: Entry { entries[cursor] }
+    /// The current entry's text, or `""` on an image entry — what an image session has always
+    /// effectively had, so detection sees nothing there.
+    public var working: String {
+        if case .text(let text) = currentEntry { return text }
+        return ""
+    }
+    /// The current entry's PNG when it is an image.
+    public var currentImage: Data? {
+        if case .image(let png) = currentEntry { return png }
+        return nil
+    }
 
     /// The working text's UTF-8 size, stored rather than measured. `utf8.count` is O(1) only on a
     /// native string, and bridged ones reach `working`: the TextEditor's write-back through
     /// `setWorking`, non-ASCII pasteboard text, JS transform output — ~1 ms per MB, measured in
     /// the #101 review. The panel reads this on every render; storing it means a keystroke pays
     /// once instead of every render paying again.
-    public var workingByteCount: Int { historyByteCounts[cursor] }
+    public var workingByteCount: Int { entryByteCounts[cursor] }
     public var canUndo: Bool { cursor > 0 }
-    public var canRedo: Bool { cursor < history.count - 1 }
+    public var canRedo: Bool { cursor < entries.count - 1 }
 
-    /// The session's standalone image, if the clipboard had one. Carried whatever the session
-    /// displays as, so an image-aware action reaches it even from a text session.
-    public var imagePNG: Data? { origin.imagePNG }
+    /// The image Save, upload and the view use. A session that **opened as an image** holds its
+    /// image in its entries: the current one, and nil on a text entry — that is what makes OCR
+    /// *replace* the image (Plan 20). A session that opened as text or mixed carries the origin's
+    /// image through every text transform, as it always has, so an image-aware action reaches it
+    /// even from a text session.
+    public var imagePNG: Data? { openedAsImage ? currentImage : origin.imagePNG }
 
-    /// True when this session renders as an image rather than the editor: the origin carried an
-    /// image and carried no real text.
+    /// How Save writes this document right now. An armed mode is document-wide and survives undo,
+    /// so on an image entry it is ignored: otherwise OCR → Markdown → Rich → ⌘Z would render
+    /// `working` (`""`) and write empty HTML/RTF beside the PNG, which rich-aware targets prefer —
+    /// an empty paste. Redo back onto the text entry arms it again.
+    public var effectiveOutputMode: OutputMode { displaysAsImage ? .plain : outputMode }
+
+    /// The init rule, fixed for the session: the origin carried an image and no real text. Decides
+    /// the first entry, which image `imagePNG` means, and whether rich transforms may run.
+    public let openedAsImage: Bool
+
+    /// True when the current entry is an image, so the panel shows `ImageSessionView`.
     ///
-    /// **Decided once, at init, and sticky for the session** — it is a `let`, and deliberately not
-    /// derived from `working`. A live derivation is what the spec originally asked for and it is
-    /// unshippable: `setWorking` pushes no history, so in a *mixed* session (image + text) ⌘A then
-    /// Delete would blank `working`, flip this true on that keystroke, and replace the `TextEditor`
-    /// with the image view — with `canUndo` false, so ⌘Z could not bring the editor back and the
-    /// user could not type again for the rest of the session. Clearing the text in a mixed session
-    /// leaves you in the editor.
-    ///
-    /// Sticky in both directions, and the other one costs nothing: an image session has no editor
-    /// to type into and no transform that accepts an image, so `working` cannot gain text.
-    ///
-    /// A new origin is a new decision, not a mutation of this one: `refresh(origin:)` replaces the
-    /// whole document, so ⌘R re-derives this from the clipboard it just read.
-    ///
-    /// "No real text" is blank-once-trimmed, which is the rule `PendingImage.resolve` and
-    /// `HistoryStore.record` already use. Reusing it rather than writing a second one is the
-    /// point: a capture path and a session path that disagree about whether a buffer has text
-    /// give two different answers for one clipboard, and nobody notices until they do.
-    public let displaysAsImage: Bool
+    /// **Derived, and safe to derive** — the opposite of what this doc said before Plan 20, so
+    /// read why. The trap AGENTS.md records ("a derived display rule is a trap when what it
+    /// derives from is editable") was deriving the display from *editable text*: in a mixed
+    /// session, ⌘A then Delete blanked `working`, flipped the view to the image on that keystroke,
+    /// and `setWorking` pushes no undo, so the editor could not come back. This derives from the
+    /// *form of the current entry*, which only a transform, undo or redo changes — each an undo
+    /// record — and `setWorking` is ignored on an image entry, so no keystroke can flip it. Clearing
+    /// the text of a mixed session still leaves you in the editor: its entry is `.text("")`.
+    /// `refresh` changes the form with no undo record, as it replaces the whole document, which it
+    /// always has; `PanelView`'s `onChange(of: displaysAsImage)` handles the preview then.
+    public var displaysAsImage: Bool { currentImage != nil }
 
     /// The most working text the panel lays out in its editor (#52). Layout is ~1 s per MB
     /// (measured: 0.28 s at 256 KB, 1.0 s at 1 MB, 19 s at 17 MB) and blocks the main thread, so
@@ -165,8 +200,10 @@ public struct PasteDocument: Sendable {
     ///
     /// Deliberately stricter than `working == origin.plainText`, and every extra clause is a way
     /// a user action can leave the text alone:
-    /// - An applied-then-undone transform sits at cursor 0 with the same text, but still holds
-    ///   that transform in `history` as a redo.
+    /// - An applied-then-undone transform sits at cursor 0 with the same entry, but still holds
+    ///   that transform in `entries` as a redo.
+    /// - "The same entry" is the init rule's (`initialEntry`), not `origin.plainText`: an
+    ///   image-first document's first entry is the image (Plan 20).
     /// - An armed output mode (`MarkdownToRich`) changes how Save writes the buffer and not the
     ///   buffer itself, so `pushState` no-ops and `history.count` stays 1. Without this clause a
     ///   re-snapshot would silently disarm it.
@@ -174,7 +211,7 @@ public struct PasteDocument: Sendable {
     /// Both callers below ask "may I replace this document?", where a false negative costs a
     /// re-snapshot that does not happen and a false positive costs the user something they did.
     public var isUnedited: Bool {
-        history.count == 1 && cursor == 0 && history[0] == (origin.plainText ?? "") && outputMode == .plain
+        entries.count == 1 && cursor == 0 && entries[0] == Self.initialEntry(for: origin) && outputMode == .plain
     }
 
     /// Whether this document should be thrown away and re-captured from a pasteboard now holding
@@ -202,27 +239,33 @@ public struct PasteDocument: Sendable {
         origin.changeCount == changeCount && isUnedited
     }
 
-    /// Append a new state (e.g. a transform result). Leaves `history`/`cursor` untouched if
-    /// unchanged, but still invalidates detection: a push is a discrete event even when it lands
-    /// on text a prior `setWorking` already coalesced in, so the scheduler resyncs to what's
-    /// actually working.
-    public mutating func pushState(_ text: String) {
-        guard text != working else { invalidateDetection(); return }
-        history = Array(history.prefix(cursor + 1))
-        history.append(text)
-        historyByteCounts = Array(historyByteCounts.prefix(cursor + 1))
-        historyByteCounts.append(text.utf8.count)
-        cursor = history.count - 1
+    /// Append a new state (e.g. a transform result). Leaves `entries`/`cursor` untouched if it
+    /// equals the current entry, but still invalidates detection: a push is a discrete event even
+    /// when it lands on text a prior `setWorking` already coalesced in, so the scheduler resyncs to
+    /// what's actually working. Compares *entries*: on an image entry `working` is `""`, so
+    /// comparing text would silently drop a pushed `.text("")`.
+    public mutating func push(_ entry: Entry) {
+        guard entry != currentEntry else { invalidateDetection(); return }
+        entries = Array(entries.prefix(cursor + 1))
+        entries.append(entry)
+        entryByteCounts = Array(entryByteCounts.prefix(cursor + 1))
+        entryByteCounts.append(Self.byteCount(of: entry))
+        cursor = entries.count - 1
         invalidateDetection()
     }
 
-    /// Coalesce a manual edit into the current state (no new history entry).
-    /// Deliberately does **not** re-detect: kinds are recomputed only on the discrete
-    /// events (init, push, undo/redo, refresh), so the palette order stays pinned while
-    /// the user types and detection isn't run per keystroke.
+    /// A text result (e.g. a transform's). See `push`.
+    public mutating func pushState(_ text: String) { push(.text(text)) }
+
+    /// Coalesce a manual edit into the current text entry (no new entry). Ignored on an image
+    /// entry: there is no editor on screen, and this is how a stale TextEditor write-back landing
+    /// after ⌘Z moved onto an image is made harmless (Plan 20). Deliberately does **not**
+    /// re-detect: kinds are recomputed only on the discrete events (init, push, undo/redo,
+    /// refresh), so the palette order stays pinned while the user types.
     public mutating func setWorking(_ text: String) {
-        history[cursor] = text
-        historyByteCounts[cursor] = text.utf8.count
+        guard case .text = currentEntry else { return }
+        entries[cursor] = .text(text)
+        entryByteCounts[cursor] = text.utf8.count
     }
 
     public mutating func undo() {
