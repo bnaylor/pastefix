@@ -24,6 +24,7 @@ import Foundation
             "builtin.html.encode", "builtin.html.decode", "builtin.jwt.decode",
             "builtin.color.hex", "builtin.color.rgb", "builtin.color.hsl", "builtin.color.swift",
             "builtin.redactsecrets",
+            "builtin.stripimagemetadata",
         ])
     }
 
@@ -53,7 +54,7 @@ import Foundation
         let dir = FileManager.default.temporaryDirectory
             .appendingPathComponent("does-not-exist-\(UUID().uuidString)")
         let reg = TransformerRegistry(config: .init(scriptsDirectory: dir, wrapWidth: 80))
-        #expect(reg.load().count == 27)   // built-ins only, no crash
+        #expect(reg.load().count == 28)   // built-ins only, no crash
     }
 
     @Test func scriptKindsSurfaceAsApplicableKinds() throws {
