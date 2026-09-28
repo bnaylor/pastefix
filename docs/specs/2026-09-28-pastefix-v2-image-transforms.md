@@ -113,6 +113,7 @@ Built on part 1, planned and shipped after it.
 - A synthetic-render recall suite: text rendered in-process (no committed fixtures) and recognised, asserting on the recovered lines, per the issue's requirement 5.
 - Line reassembly from constructed observations: two observations on one line join in x order; separate lines stay separate.
 - The tiling rule: the over-4096 px dual pass keeps the result with more characters; the fallback runs only on an empty result; tile mapping and overlap de-duplication, on constructed observations.
+- A zero-line result **below** 4096 px triggers the tiled pass: the owner's measured 4095×1200 silent-empty case falls just under the dual-pass threshold, so the fallback is what catches it.
 - An image with no text gives the "nothing to do" result, and pushes nothing.
 - Owner GUI pass: OCR a real terminal screenshot; ⌘Z back to the image; Save writes the text.
 
