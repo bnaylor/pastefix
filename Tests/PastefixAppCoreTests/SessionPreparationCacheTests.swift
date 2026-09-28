@@ -1,5 +1,6 @@
 import Testing
 import Foundation
+import PastefixCore
 @testable import PastefixAppCore
 
 /// #48: a repeat ⌘⇧U rebuilds the overlay; the rebuilt overlay must get the same preparation, not

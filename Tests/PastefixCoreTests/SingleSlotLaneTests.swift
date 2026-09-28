@@ -1,6 +1,6 @@
 import Testing
 import Foundation
-@testable import PastefixAppCore
+@testable import PastefixCore
 
 @Suite("SingleSlotLane", .serialized)
 struct SingleSlotLaneTests {
