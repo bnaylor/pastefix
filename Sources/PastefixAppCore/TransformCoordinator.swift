@@ -3,7 +3,11 @@ import PastefixCore
 
 public enum TransformOutcome: Sendable, Equatable {
     case applied
+    /// Applied, with a sentence for the user ("Removed location and camera details."), Plan 20.
+    case appliedWithNote(String)
     case unchanged
+    /// The transform had nothing to do and pushed nothing; the sentence says so (Plan 20).
+    case nothingToDo(String)
     case failed(String)
 }
 
@@ -15,7 +19,10 @@ public enum TransformCoordinator {
         // for different reasons, and neither subsumes the other.
         let form: ContentForm = document.displaysAsImage ? .image : .text
         guard transformer.acceptedForms.contains(form) else { return false }
-        if transformer.requiresRichInput { return document.origin.hasRichContent }
+        // Rich transforms read the *origin's* rich content, which an image origin can carry too
+        // (Chrome's "Copy Image" writes HTML beside it). After OCR such a session is showing text,
+        // and Rich → Plain would replace the recognised text with a rendering of that HTML.
+        if transformer.requiresRichInput { return !document.openedAsImage && document.origin.hasRichContent }
         return true
     }
 
@@ -24,12 +31,21 @@ public enum TransformCoordinator {
         to document: PasteDocument
     ) async -> (PasteDocument, TransformOutcome) {
         var doc = document
-        let input = TransformInput(text: doc.working, richRTFD: doc.origin.richRTFD)
+        let image = doc.currentImage
+        let input = TransformInput(text: doc.working, richRTFD: doc.origin.richRTFD, image: image)
         // Refuse before running: the cap is the only bound on a body inside an uninterruptible
         // Foundation call, and the user is told the limit rather than watching a spinner. A
         // transform that reads `input.richRTFD` (RichToPlain, RichToMarkdown) is measured on that
         // data, not on `input.text`, which it never touches.
-        if transformer.requiresRichInput {
+        // An image is bounded by the pixel ceiling, not the 1 MB text cap, and never downscaled
+        // (Plan 20); its branch comes first because its `input.text` is "".
+        if let image {
+            let pixels = ImageBytes.pixelSize(of: image)
+                .flatMap { ImageBytes.pixelCount(width: $0.width, height: $0.height) } ?? ImageBytes.unmeasurablePixels
+            guard pixels <= ImageBytes.maxConvertiblePixels else {
+                return (doc, .failed("\(transformer.name) works on images up to \(ImageBytes.megapixelLabel(ImageBytes.maxConvertiblePixels)); this one is \(ImageBytes.megapixelLabel(pixels))."))
+            }
+        } else if transformer.requiresRichInput {
             guard (input.richRTFD?.count ?? 0) <= transformer.maxInputBytes else {
                 return (doc, .failed("\(transformer.name) is limited to \(ByteLimit.describe(transformer.maxInputBytes)) of rich text."))
             }
@@ -42,19 +58,31 @@ public enum TransformCoordinator {
             // A wall-clock bound per transform: the caller resumes at the transform's own
             // deadline even when the body is uninterruptible, and cancelling the caller cancels
             // the body too.
-            let result = try await Deadline.run(seconds: transformer.timeout) { try await transformer.apply(input) }
-            if let arming = transformer as? OutputModeTransformer { doc.outputMode = arming.outputMode }
-            // The outcome is decided before the push, but the push happens either way: on equal
-            // text `pushState` adds no history entry and doesn't truncate the redo stack — it now
-            // only marks detection pending and bumps the revision, requesting the scan, which is
-            // still the only thing that resyncs `detectedKinds`/`secretMatches` after a manual
-            // `setWorking` edit. Short-circuiting here (as this used to) made that unreachable, so
-            // a secret typed into the editor kept an empty badge until the next real push, undo,
-            // redo or refresh.
-            let outcome: TransformOutcome =
-                result == doc.working && !(transformer is OutputModeTransformer) ? .unchanged : .applied
-            doc.pushState(result)
-            return (doc, outcome)
+            let output = try await Deadline.run(seconds: transformer.timeout) { try await transformer.transform(input) }
+            switch output {
+            case .nothingToDo(let sentence):
+                return (doc, .nothingToDo(sentence))
+            case .image(let png, let note):
+                guard ImageBytes.isPNG(png) else {
+                    return (doc, .failed("\(transformer.name) didn't produce a usable image."))
+                }
+                guard PasteDocument.Entry.image(png) != doc.currentEntry else { return (doc, .unchanged) }
+                doc.push(.image(png))
+                return (doc, note.map(TransformOutcome.appliedWithNote) ?? .applied)
+            case .text(let result):
+                if let arming = transformer as? OutputModeTransformer { doc.outputMode = arming.outputMode }
+                // The outcome is decided before the push, but the push happens either way: on equal
+                // text `pushState` adds no entry and doesn't truncate the redo stack — it only marks
+                // detection pending and bumps the revision, requesting the scan, which is still the
+                // only thing that resyncs `detectedKinds`/`secretMatches` after a manual
+                // `setWorking` edit. Short-circuiting here (as this used to) made that unreachable,
+                // so a secret typed into the editor kept an empty badge until the next real push,
+                // undo, redo or refresh. Compared as entries: from an image entry, "" is a change.
+                let outcome: TransformOutcome =
+                    .text(result) == doc.currentEntry && !(transformer is OutputModeTransformer) ? .unchanged : .applied
+                doc.pushState(result)
+                return (doc, outcome)
+            }
         } catch let error as TransformError {
             return (doc, .failed(message(for: error)))
         } catch is CancellationError {

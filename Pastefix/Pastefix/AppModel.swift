@@ -306,7 +306,7 @@ final class AppModel: ObservableObject {
             // restarts here because the match list belongs to the buffer that just went away.
             self.resetSecretSelection()
             switch outcome {
-            case .applied, .unchanged: self.errorMessage = nil
+            case .applied, .unchanged, .appliedWithNote, .nothingToDo: self.errorMessage = nil
             case .failed(let message): self.errorMessage = message
             }
             self.isApplying = false
