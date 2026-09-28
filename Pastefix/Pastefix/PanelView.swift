@@ -154,6 +154,10 @@ struct PanelView: View {
                         }
                         if let error = model.errorMessage {
                             errorBanner(error)
+                        } else if let note = model.transformNote {
+                            // Informational, like a notice, and transient, unlike one (see
+                            // `AppModel.transformNote`).
+                            noticeBanner(note)
                         } else if let notice = model.noticeMessage {
                             // A separate banner from `errorBanner`, not just a recolor of it: a
                             // notice reports a refusal in which nothing the user can act on has
