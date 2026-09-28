@@ -85,6 +85,22 @@ struct PasteDocumentEntryTests {
         #expect(d.effectiveOutputMode == .renderedMarkdown)
     }
 
+    // GUI pass: a stripped image looks identical to the original, so a note cleared on redo left
+    // no way to tell where you were. The note belongs to the entry it describes (Plan 20).
+    @Test("a note belongs to its entry: redo shows it again, undo to the original shows none")
+    func noteFollowsEntry() {
+        var d = imageDoc()
+        #expect(d.currentNote == nil)
+        d.push(.image(png2), note: "Removed location details.")
+        #expect(d.currentNote == "Removed location details.")
+        d.undo()
+        #expect(d.currentNote == nil)
+        d.redo()
+        #expect(d.currentNote == "Removed location details.")
+        d.undo(); d.pushState("text")          // a new branch drops the old entry and its note
+        #expect(d.currentNote == nil && !d.canRedo)
+    }
+
     @Test("byte counts count text only")
     func byteCounts() {
         var d = imageDoc()

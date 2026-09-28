@@ -16,6 +16,11 @@ public struct PasteDocument: Sendable {
     /// wherever they change, so the working text's size is a read rather than a measurement — see
     /// `workingByteCount`.
     private var entryByteCounts: [Int]
+    /// The sentence a transform left with the entry it produced ("Removed location details."),
+    /// kept beside `entries` so it follows that entry through undo and redo. A stripped image looks
+    /// identical to its original, so this is how the user can tell which one they are on — and it
+    /// can never be stale, because it describes the entry it sits beside (Plan 20, GUI pass).
+    private var entryNotes: [String?]
     public private(set) var cursor: Int
     /// Detection for `working`. Pending after every discrete event (init, push, undo, redo,
     /// refresh) until the scheduler delivers a result for `detectionRevision`; the struct never
@@ -41,6 +46,7 @@ public struct PasteDocument: Sendable {
         self.openedAsImage = { if case .image = first { return true }; return false }()
         self.entries = [first]
         self.entryByteCounts = [Self.byteCount(of: first)]
+        self.entryNotes = [nil]
         self.cursor = 0
         self.outputMode = .plain
     }
@@ -59,6 +65,8 @@ public struct PasteDocument: Sendable {
     }
 
     public var currentEntry: Entry { entries[cursor] }
+    /// The note the transform that produced the current entry left, if any.
+    public var currentNote: String? { entryNotes[cursor] }
     /// The current entry's text, or `""` on an image entry — what an image session has always
     /// effectively had, so detection sees nothing there.
     public var working: String {
@@ -244,12 +252,14 @@ public struct PasteDocument: Sendable {
     /// when it lands on text a prior `setWorking` already coalesced in, so the scheduler resyncs to
     /// what's actually working. Compares *entries*: on an image entry `working` is `""`, so
     /// comparing text would silently drop a pushed `.text("")`.
-    public mutating func push(_ entry: Entry) {
+    public mutating func push(_ entry: Entry, note: String? = nil) {
         guard entry != currentEntry else { invalidateDetection(); return }
         entries = Array(entries.prefix(cursor + 1))
         entries.append(entry)
         entryByteCounts = Array(entryByteCounts.prefix(cursor + 1))
         entryByteCounts.append(Self.byteCount(of: entry))
+        entryNotes = Array(entryNotes.prefix(cursor + 1))
+        entryNotes.append(note)
         cursor = entries.count - 1
         invalidateDetection()
     }

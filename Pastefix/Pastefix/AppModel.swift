@@ -34,8 +34,11 @@ final class AppModel: ObservableObject {
     /// camera details.", "This image has no location or camera details to remove."), Plan 20.
     /// **Not** `noticeMessage`: that is a standing fact about the origin, cleared only at session
     /// boundaries, and a transform's sentence left there would outlive the ⌘Z that makes it false.
-    /// Cleared by the next apply, undo, redo, and every session boundary. `PanelView` shows one
-    /// banner: error first, then this, then the notice.
+    /// It follows the entry it describes through undo and redo (`PasteDocument.currentNote`) — a
+    /// stripped image looks identical to its original, so this is how the user tells them apart —
+    /// and is cleared by the next apply and every session boundary. A "nothing to do" sentence has
+    /// no entry, so undo or redo clears it. `PanelView` shows one banner: error first, then this,
+    /// then the notice.
     @Published var transformNote: String?
     @Published private(set) var isApplying = false
     @Published private(set) var transformers: [any Transformer] = []
@@ -337,7 +340,8 @@ final class AppModel: ObservableObject {
         let before = doc.detectionRevision
         doc.undo()
         document = doc
-        transformNote = nil
+        // The note follows the entry it describes: undo to the original shows none.
+        transformNote = doc.currentNote
         if doc.detectionRevision != before { requestDetection() }
         resetSecretSelection()
     }
@@ -347,7 +351,7 @@ final class AppModel: ObservableObject {
         let before = doc.detectionRevision
         doc.redo()
         document = doc
-        transformNote = nil
+        transformNote = doc.currentNote
         if doc.detectionRevision != before { requestDetection() }
         resetSecretSelection()
     }

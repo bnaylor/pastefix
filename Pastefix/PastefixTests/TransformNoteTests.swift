@@ -15,7 +15,7 @@ private struct Noting: ImageTransformer {
 @MainActor
 @Suite("the transform note (Plan 20)")
 struct TransformNoteTests {
-    @Test("a note appears after an apply, and undo, redo and a new session clear it")
+    @Test("a note appears after an apply, follows its entry through undo and redo, and a new session clears it")
     func lifecycle() async throws {
         let f = try ModelFixture(); defer { f.finish() }
         let png = try #require(Pixels.encoded(width: 20, height: 10, type: "public.png"))
@@ -32,7 +32,7 @@ struct TransformNoteTests {
         #expect(await f.eventually { f.model.transformNote == "Nothing to remove." })
         #expect(f.model.errorMessage == nil && f.model.noticeMessage == nil)
         f.model.redo()
-        #expect(f.model.transformNote == nil)
+        #expect(f.model.transformNote == "Removed location details.", "redo lands on the entry the note describes")
         f.model.apply(Noting(result: .nothingToDo("again")))
         #expect(await f.eventually { f.model.transformNote == "again" })
         f.model.beginSession(from: ClipboardSnapshot(plainText: "new", richRTFD: nil))

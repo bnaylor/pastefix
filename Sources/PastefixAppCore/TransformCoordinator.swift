@@ -67,7 +67,7 @@ public enum TransformCoordinator {
                     return (doc, .failed("\(transformer.name) didn't produce a usable image."))
                 }
                 guard PasteDocument.Entry.image(png) != doc.currentEntry else { return (doc, .unchanged) }
-                doc.push(.image(png))
+                doc.push(.image(png), note: note)
                 return (doc, note.map(TransformOutcome.appliedWithNote) ?? .applied)
             case .text(let result):
                 if let arming = transformer as? OutputModeTransformer { doc.outputMode = arming.outputMode }
