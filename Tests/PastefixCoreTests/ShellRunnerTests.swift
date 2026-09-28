@@ -70,9 +70,11 @@ import Foundation
         for run in runs { await run.value }
         // The bound sits between two measured numbers, not near either. A blocking runner pins
         // the pool for the whole 5 s linger (overshoot ≈ 5 s); in the full parallel suite, other
-        // CPU-heavy tests alone produce up to ~1.4 s of overshoot. The first version lingered 2 s
-        // against a 1 s bound — inside that noise — and failed 3 runs in 5 on a correct runner.
-        #expect(worst < .milliseconds(2500), "a task waited \(worst) for a thread")
+        // CPU-heavy tests alone produce up to ~1.4 s of overshoot (2.8 s with every core
+        // saturated by other processes, when every timing test in the suite fails). The first
+        // version lingered 2 s against a 1 s bound — inside that noise — and failed 3 runs in 5
+        // on a correct runner.
+        #expect(worst < .milliseconds(3500), "a task waited \(worst) for a thread")
     }
 
     @Test func pipesStdinToStdout() async throws {

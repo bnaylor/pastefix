@@ -125,7 +125,7 @@ struct PanelView: View {
                             // thread (#52) — what kept a 17 MB ⌘⇧U waiting ~9 s to say "too
                             // large" (#62). After the preview, not before: the preview caps
                             // itself at 16 KB and says so, so ⌘⇧M stays cheap and visible here.
-                            largeTextPlaceholder(bytes: document.working.utf8.count)
+                            largeTextPlaceholder(bytes: document.workingByteCount)
                         } else if let document = model.document, document.displaysAsImage,
                                   let imagePNG = document.imagePNG {
                             // An image session shows the image where the editor would be, and

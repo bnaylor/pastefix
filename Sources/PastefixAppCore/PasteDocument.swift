@@ -6,6 +6,9 @@ import PastefixCore
 public struct PasteDocument: Sendable {
     public let origin: ClipboardSnapshot
     public private(set) var history: [String]
+    /// `history[i].utf8.count`, kept beside it and updated wherever `history` changes, so the
+    /// working text's size is a read rather than a measurement — see `workingByteCount`.
+    private var historyByteCounts: [Int]
     public private(set) var cursor: Int
     /// Detection for `working`. Pending after every discrete event (init, push, undo, redo,
     /// refresh) until the scheduler delivers a result for `detectionRevision`; the struct never
@@ -28,6 +31,7 @@ public struct PasteDocument: Sendable {
     public init(origin: ClipboardSnapshot) {
         self.origin = origin
         self.history = [origin.plainText ?? ""]
+        self.historyByteCounts = [(origin.plainText ?? "").utf8.count]
         self.cursor = 0
         self.outputMode = .plain
         self.displaysAsImage = origin.imagePNG != nil
@@ -35,6 +39,13 @@ public struct PasteDocument: Sendable {
     }
 
     public var working: String { history[cursor] }
+
+    /// The working text's UTF-8 size, stored rather than measured. `utf8.count` is O(1) only on a
+    /// native string, and bridged ones reach `working`: the TextEditor's write-back through
+    /// `setWorking`, non-ASCII pasteboard text, JS transform output — ~1 ms per MB, measured in
+    /// the #101 review. The panel reads this on every render; storing it means a keystroke pays
+    /// once instead of every render paying again.
+    public var workingByteCount: Int { historyByteCounts[cursor] }
     public var canUndo: Bool { cursor > 0 }
     public var canRedo: Bool { cursor < history.count - 1 }
 
@@ -75,12 +86,11 @@ public struct PasteDocument: Sendable {
     /// True when the working text is over `editorDisplayLimitBytes`: the panel shows a placeholder
     /// in place of the editor (the Markdown preview caps itself at 16 KB already), unless the user asks to see it anyway.
     /// Save and upload still act on all of it; most transforms refuse at their own input cap
-    /// (`TransformLimits.defaultMaxInputBytes`, the same 1 MB). Computed, so it follows transforms,
-    /// undo and edits — a transform that shrinks the text brings the editor back. `utf8.count` is
-    /// O(1) on a native string, which the pasteboard and every transform hand us (measured
-    /// < 1 µs on 17 MB).
+    /// (`TransformLimits.defaultMaxInputBytes`, the same 1 MB). Computed from the stored
+    /// `workingByteCount`, so it follows transforms, undo and edits — a transform that shrinks the
+    /// text brings the editor back — at no cost per render.
     public var displaysAsLargeText: Bool {
-        !displaysAsImage && working.utf8.count > Self.editorDisplayLimitBytes
+        !displaysAsImage && workingByteCount > Self.editorDisplayLimitBytes
     }
 
     /// True when this session has nothing on screen but the refused-image notice: the clipboard
@@ -200,6 +210,8 @@ public struct PasteDocument: Sendable {
         guard text != working else { invalidateDetection(); return }
         history = Array(history.prefix(cursor + 1))
         history.append(text)
+        historyByteCounts = Array(historyByteCounts.prefix(cursor + 1))
+        historyByteCounts.append(text.utf8.count)
         cursor = history.count - 1
         invalidateDetection()
     }
@@ -210,6 +222,7 @@ public struct PasteDocument: Sendable {
     /// the user types and detection isn't run per keystroke.
     public mutating func setWorking(_ text: String) {
         history[cursor] = text
+        historyByteCounts[cursor] = text.utf8.count
     }
 
     public mutating func undo() {
