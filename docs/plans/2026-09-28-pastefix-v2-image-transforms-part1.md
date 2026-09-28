@@ -1,6 +1,6 @@
 ---
 type: plan
-status: draft
+status: implemented
 id: 2026-09-28-pastefix-v2-image-transforms-part1
 title: Pastefix v2 — Image Transforms, part 1 (Plan 20, #82)
 description: Transforms that take an image and produce an image or text; PasteDocument history of text-or-image entries; a transient transform note; Strip Image Metadata on ImageSanitizer with ImageMetadata.inspect.

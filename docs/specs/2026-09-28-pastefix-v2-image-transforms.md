@@ -1,6 +1,6 @@
 ---
 type: spec
-status: draft
+status: part 1 implemented (Plan 20); part 2 pending (Plan 21)
 id: 2026-09-28-pastefix-v2-image-transforms
 title: Pastefix v2 — Image Transforms (Plans 20 and 21, #82, #19)
 description: Transforms that take an image and produce an image or text. PasteDocument's undo history holds text or image entries, one cursor across both. Part 1 (Plan 20) builds that and ships "Strip Image Metadata" (#82) on ImageSanitizer; part 2 (Plan 21) ships "Extract Text (OCR)" (#19) on Vision.
