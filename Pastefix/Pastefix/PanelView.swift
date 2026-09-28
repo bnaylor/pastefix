@@ -18,6 +18,9 @@ struct PanelView: View {
     @State private var pinTitle = ""
     @State private var pinError: String?
     @State private var isPreviewing = false
+    /// "Show anyway" on the large-text placeholder (#52): lays the text out after all, for this
+    /// session only. Reset at every session boundary.
+    @State private var showLargeTextAnyway = false
     @State private var previewText = NSAttributedString()
     @State private var previewTask: Task<Void, Never>?
     /// The editor's selection, owned here rather than on the model — see `selectionBinding`.
@@ -116,6 +119,13 @@ struct PanelView: View {
                             // No padding here: the text view carries its own 8 pt
                             // `textContainerInset`, which matches the editor's gutter.
                             MarkdownPreviewView(text: previewText)
+                        } else if let document = model.document, document.displaysAsLargeText,
+                                  !showLargeTextAnyway {
+                            // The editor lays the whole text out, at ~1 s per MB on the main
+                            // thread (#52) — what kept a 17 MB ⌘⇧U waiting ~9 s to say "too
+                            // large" (#62). After the preview, not before: the preview caps
+                            // itself at 16 KB and says so, so ⌘⇧M stays cheap and visible here.
+                            largeTextPlaceholder(bytes: document.working.utf8.count)
                         } else if let document = model.document, document.displaysAsImage,
                                   let imagePNG = document.imagePNG {
                             // An image session shows the image where the editor would be, and
@@ -212,6 +222,7 @@ struct PanelView: View {
             isUploadOpen = false
             // A `String.Index` into the buffer that just went away has no meaning in the new one.
             editorSelection = nil
+            showLargeTextAnyway = false
             // A new summon always starts in the editor: the preview is a view of *this*
             // buffer, and leaving it on would show the previous session's render until the
             // debounce lands. The render is dropped too — the next ⌘⇧M turns the preview on
@@ -598,6 +609,28 @@ struct PanelView: View {
         .foregroundStyle(.white)
         .padding(8)
         .background(Color.red.opacity(0.85))
+    }
+
+    /// What stands in for the editor over `PasteDocument.editorDisplayLimitBytes`. It names the
+    /// size and says what still works — Save and Upload; most transforms refuse at their own 1 MB
+    /// input cap — so nothing about the buffer is hidden but its layout.
+    private func largeTextPlaceholder(bytes: Int) -> some View {
+        VStack(spacing: 10) {
+            Image(systemName: "doc.plaintext")
+                .font(.system(size: 28))
+                .foregroundStyle(.secondary)
+            Text("\(HistoryFormatting.byteLabel(bytes)) of text isn't shown, so the panel stays fast.")
+                .font(.headline)
+            // Not "transforms still work": most refuse above `TransformLimits.defaultMaxInputBytes`,
+            // which is this same 1 MB, and they say so in the error banner when they do.
+            Text("Save and Upload (⌘⇧U) still work on all of it. Most transforms stop at 1 MB and will say so.")
+                .foregroundStyle(.secondary)
+            Button("Show anyway") { showLargeTextAnyway = true }
+                .help("Lay the text out in the editor — about a second per MB")
+        }
+        .multilineTextAlignment(.center)
+        .padding(24)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     /// Amber, not red-and-white: a notice (currently only the refused-image message) reports

@@ -65,6 +65,24 @@ public struct PasteDocument: Sendable {
     /// give two different answers for one clipboard, and nobody notices until they do.
     public let displaysAsImage: Bool
 
+    /// The most working text the panel lays out in its editor (#52). Layout is ~1 s per MB
+    /// (measured: 0.28 s at 256 KB, 1.0 s at 1 MB, 19 s at 17 MB) and blocks the main thread, so
+    /// a huge clipboard kept every overlay waiting on text nobody was going to read — ⌘⇧U took
+    /// ~9 s to say "too large to upload" (#62). The same 1 MB as `ContentDetector.maxBytes`, above
+    /// which detection already stops.
+    public static let editorDisplayLimitBytes = ContentDetector.maxBytes
+
+    /// True when the working text is over `editorDisplayLimitBytes`: the panel shows a placeholder
+    /// in place of the editor (the Markdown preview caps itself at 16 KB already), unless the user asks to see it anyway.
+    /// Save and upload still act on all of it; most transforms refuse at their own input cap
+    /// (`TransformLimits.defaultMaxInputBytes`, the same 1 MB). Computed, so it follows transforms,
+    /// undo and edits — a transform that shrinks the text brings the editor back. `utf8.count` is
+    /// O(1) on a native string, which the pasteboard and every transform hand us (measured
+    /// < 1 µs on 17 MB).
+    public var displaysAsLargeText: Bool {
+        !displaysAsImage && working.utf8.count > Self.editorDisplayLimitBytes
+    }
+
     /// True when this session has nothing on screen but the refused-image notice: the clipboard
     /// carried an image too large to convert, and there is no real text in the editor either.
     ///
