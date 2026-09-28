@@ -82,8 +82,10 @@ struct ImageUndoShortcutTests {
         let window = host(f); defer { window.orderOut(nil) }
         f.model.apply(Upper())
         #expect(await f.eventually { f.model.document?.working == "HELLO" })
-        press(window)
-        try await Task.sleep(nanoseconds: 200_000_000)
-        #expect(f.model.document?.working == "HELLO")
+        // Pressed for the whole window the positive test needs to land one, not once: a single
+        // early press is a no-op whether ⌘Z is bound or not, so this passed about half the time with
+        // ⌘Z wrongly bound in text sessions (#104 review).
+        let undid = await press(window) { f.model.document?.working != "HELLO" }
+        #expect(!undid && f.model.document?.working == "HELLO")
     }
 }

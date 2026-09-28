@@ -83,6 +83,16 @@ public enum ImageMetadata {
                 found.insert(camera.contains(field) ? .cameraAndDate : .other)
             }
         }
+        // A colour profile the sanitiser would replace: the same test `ImageSanitizer` applies
+        // (`standardColorSpaces`), so Strip reports exactly what upload removes. A display's
+        // profile names the monitor model, and a calibrated one is often named after a person —
+        // the spec first called profile normalisation "not privacy", and the #104 review measured a
+        // "DELL P2723DE" profile reporting nothing. `CGImageSourceCreateImageAtIndex` is lazy:
+        // reading `colorSpace` decodes nothing.
+        if let image = CGImageSourceCreateImageAtIndex(source, 0, nil), let space = image.colorSpace,
+           !((space.name as String?).map(ImageSanitizer.standardColorSpaces.contains) ?? false) {
+            found.insert(.other)
+        }
         // XMP beyond what the dictionaries above already showed. Not "an XMP packet exists": ImageIO
         // writes a PNG's EXIF *as* XMP, so every screenshot has one (`exif:UserComment` is where its
         // "Screenshot" lives; measured). Tags in the namespaces the dictionaries surface — `exif`,

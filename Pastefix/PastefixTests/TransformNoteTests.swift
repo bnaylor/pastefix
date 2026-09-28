@@ -12,6 +12,13 @@ private struct Noting: ImageTransformer {
     func transformImage(_ png: Data) throws -> TransformOutput { result }
 }
 
+private struct Failing: ImageTransformer {
+    let id = "test.failing"; let name = "Failing"; let requiresRichInput = false
+    let source: TransformerSource = .builtin
+    let lane = ImageTransformLane.makeLane(label: "test.failing")
+    func transformImage(_ png: Data) throws -> TransformOutput { throw TransformError.invalidInput("nope") }
+}
+
 @MainActor
 @Suite("the transform note (Plan 20)")
 struct TransformNoteTests {
@@ -37,6 +44,21 @@ struct TransformNoteTests {
         #expect(await f.eventually { f.model.transformNote == "again" })
         f.model.beginSession(from: ClipboardSnapshot(plainText: "new", richRTFD: nil))
         #expect(f.model.transformNote == nil)
+    }
+
+    // #104 review: `apply` cleared the note and only a noted outcome set it again, so a failed
+    // apply on the stripped entry dropped "Removed location…" though that entry was still current.
+    @Test("an apply that doesn't move the entry leaves that entry's note")
+    func failedApplyKeepsNote() async throws {
+        let f = try ModelFixture(); defer { f.finish() }
+        let png = try #require(Pixels.encoded(width: 20, height: 10, type: "public.png"))
+        let other = try #require(Pixels.encoded(width: 30, height: 10, type: "public.png"))
+        f.model.beginSession(from: ClipboardSnapshot(plainText: nil, richRTFD: nil, imagePNG: png))
+        f.model.apply(Noting(result: .image(other, note: "Removed location details.")))
+        #expect(await f.eventually { f.model.transformNote == "Removed location details." })
+        f.model.apply(Failing())
+        #expect(await f.eventually { f.model.errorMessage != nil })
+        #expect(f.model.transformNote == "Removed location details.")
     }
 
     @Test("Save on an image entry ignores an armed output mode")

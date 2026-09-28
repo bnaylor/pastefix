@@ -85,6 +85,32 @@ struct ImageMetadataTests {
         #expect(ImageMetadata.inspect(try #require(Self.withXMPCreator())) == [.other])
     }
 
+    /// A PNG with no metadata at all, drawn in a calibrated-display-style ICC profile — what a
+    /// screenshot on an external or calibrated display carries. Built in-test, never from the
+    /// machine's Displays folder.
+    static func displayProfiled() -> Data? {
+        guard let space = Fixture.nonStandardColorSpace(),
+              let ctx = CGContext(data: nil, width: 20, height: 10, bitsPerComponent: 8, bytesPerRow: 0, space: space,
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+        ctx.setFillColor(red: 1, green: 0, blue: 0, alpha: 1); ctx.fill(CGRect(x: 0, y: 0, width: 20, height: 10))
+        guard let image = ctx.makeImage() else { return nil }
+        let out = NSMutableData()
+        guard let dst = CGImageDestinationCreateWithData(out, "public.png" as CFString, 1, nil) else { return nil }
+        CGImageDestinationAddImage(dst, image, nil)
+        return CGImageDestinationFinalize(dst) ? out as Data : nil
+    }
+
+    // #104 review: a display's profile names the monitor model (and, calibrated, often a person).
+    // Upload converts it; Strip said "nothing to remove" and left it. Measured on a real
+    // "DELL P2723DE" profile: inspect() was [].
+    @Test("a non-standard (display) colour profile is metadata, and stripping it leaves nothing")
+    func displayProfile() throws {
+        let data = try #require(Self.displayProfiled())
+        #expect(ImageMetadata.inspect(data) == [.other])
+        let clean = try #require(ImageSanitizer.stripped(data))
+        #expect(ImageMetadata.inspect(clean.data).isEmpty, "stripped to a standard space")
+    }
+
     @Test("the removal sentence names what went")
     func messages() {
         #expect(ImageMetadata.removedMessage([.location]) == "Removed location details.")

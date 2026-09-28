@@ -76,7 +76,7 @@ A session can show an image (#18), but no transform can touch one. `Transformer.
   - Pinned by tests that `inspect(stripped(x))` reports nothing, for `x` = a GPS fixture and a rendered screenshot-shaped PNG.
   - **Something present:** strip, push the stripped image, and show a notice naming what went, e.g. "Removed location and camera details."
   - **Nothing present:** the "nothing to do" result: "This image has no location or camera details to remove." Nothing is pushed.
-  - Orientation and colour-profile normalisation are not privacy and do not count as "present" on their own.
+  - Orientation on its own does not count as "present". **A non-standard colour profile does** — one `ImageSanitizer` would replace, by the same `standardColorSpaces` test — because a display's profile names the monitor model and a calibrated one is often named after a person. *(Reversed in the #104 review: this line first called profile normalisation "not privacy", and a real "DELL P2723DE" profile reported nothing to remove.)* It is reported as "other metadata".
 - **Over 25 MP:** refused with a message; never downscaled.
 - **Save** writes the stripped PNG. **⌘Z** restores the original.
 - **History is not cleaned.** The original was captured into history when it was copied, metadata included, and stays until removed (⌘⌫ in the history overlay). The stripped version is recorded on Save. History never leaves the machine; the notice does not mention it, and the README does.
