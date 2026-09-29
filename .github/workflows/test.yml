@@ -1,0 +1,27 @@
+name: Tests
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    # The app needs the macOS 26 SDK (Xcode 26); the packages build on macOS 14+.
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+      - name: Toolchain
+        run: xcodebuild -version && swift --version
+      - name: Package tests (PastefixCore, PastefixAppCore)
+        run: swift test
+      - name: App tests (hosted by Pastefix.app)
+        run: scripts/test-app.sh
