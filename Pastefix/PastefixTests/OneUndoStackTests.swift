@@ -334,4 +334,61 @@ struct OneUndoStackTests {
         f.model.setWorking("fresh clip!")                           // real typing still lands
         #expect(f.model.document?.working == "fresh clip!")
     }
+
+    /// GUI passes 2–4 (#111): whatever ended a composition from inside the apply path, AppKit left
+    /// the marked insert's undo on the stack, and after the transform was undone it deleted a
+    /// newline. Four attempts to make AppKit settle it depended on event timing. Deterministic
+    /// instead: a transform over a live composition starts from an empty stack. Rare (an accent
+    /// half-typed when a transform is clicked), and it costs history, never text.
+    @Test("a transform over a live composition leaves nothing stale beneath it")
+    func compositionAtApplyEmptiesTheStack() async throws {
+        let f = try ModelFixture(); defer { f.finish() }
+        f.model.beginSession(from: ClipboardSnapshot(plainText: "cafe\nbar   ", richRTFD: nil))
+        let window = host(f); defer { window.orderOut(nil) }
+        let um = try #require(await bound(f, window))
+        #expect(await f.eventually { self.textView(in: window.contentView!)?.string == "cafe\nbar   " })
+        let editor = try #require(textView(in: window.contentView!))
+        window.makeFirstResponder(editor)
+        // Each keystroke in a group of its own, as its event would give it (nothing closes an
+        // automatic group in a test host, and registering outside one throws).
+        if um.groupingLevel > 0 { um.endUndoGrouping() }
+        editor.setSelectedRange(NSRange(location: 0, length: 0))
+        um.beginUndoGrouping()
+        editor.insertText("x", replacementRange: NSRange(location: 0, length: 0))
+        um.endUndoGrouping()
+        editor.setSelectedRange(NSRange(location: 5, length: 0))
+        um.beginUndoGrouping()
+        editor.setMarkedText("\u{00B4}", selectedRange: NSRange(location: 1, length: 0),
+                             replacementRange: NSRange(location: 5, length: 0))
+        um.endUndoGrouping()
+        let cleanup = try #require(f.model.transformers.first { $0.id == "builtin.whitespace" })
+        f.model.apply(cleanup)
+        #expect(await f.eventually { !f.model.isApplying })
+        #expect(um.undoActionName == cleanup.name)
+        um.undo()
+        #expect(!um.canUndo, "\"\(um.undoActionName)\" is still under the transform")
+        #expect(await f.eventually { self.editorIsFocused(window) }, "focus comes back after the apply")
+    }
+
+    @Test("a refresh that ended a composition gives the editor its focus back")
+    func refreshKeepsFocus() async throws {
+        let f = try ModelFixture(); defer { f.finish() }
+        f.copy(text: "fresh clip")
+        f.model.beginSession(from: ClipboardSnapshot(plainText: "cafe", richRTFD: nil))
+        let window = host(f); defer { window.orderOut(nil) }
+        _ = try #require(await bound(f, window))
+        #expect(await f.eventually { self.textView(in: window.contentView!)?.string == "cafe" })
+        let editor = try #require(textView(in: window.contentView!))
+        window.makeFirstResponder(editor)
+        editor.setSelectedRange(NSRange(location: 4, length: 0))
+        editor.setMarkedText("\u{00B4}", selectedRange: NSRange(location: 1, length: 0),
+                             replacementRange: NSRange(location: 4, length: 0))
+        f.model.refresh()
+        #expect(await f.eventually { editor.string == "fresh clip" && self.editorIsFocused(window) })
+    }
+
+    private func editorIsFocused(_ window: NSWindow) -> Bool {
+        guard let text = window.firstResponder as? NSTextView else { return false }
+        return text.isEditable && !text.isFieldEditor
+    }
 }

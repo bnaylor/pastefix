@@ -1,9 +1,13 @@
 import Foundation
 import AppKit
+import OSLog
 import Combine
 import SwiftUI
 import PastefixCore
 import PastefixAppCore
+
+/// `log stream --predicate 'subsystem == "net.scromp.Pastefix" && category == "undo"' --debug`
+private let undoLog = Logger(subsystem: "net.scromp.Pastefix", category: "undo")
 
 @MainActor
 final class AppModel: ObservableObject {
@@ -655,6 +659,9 @@ final class AppModel: ObservableObject {
         // the transform and one ⌘Z would undo both. An explicit group of its own, closed now. Not
         // while undoing or redoing: the manager groups those itself.
         let closesOwnGroup = um.groupingLevel == 0 && !um.isUndoing && !um.isRedoing
+        // Diagnostics for the GUI pass: a registration inside someone else's open group is how
+        // typing could end up undone together with a transform.
+        undoLog.debug("register \(step.name, privacy: .public): level \(um.groupingLevel) undoing \(um.isUndoing) redoing \(um.isRedoing)")
         if closesOwnGroup { um.beginUndoGrouping() }
         defer { if closesOwnGroup { um.endUndoGrouping() } }
         // The target is the model, not the step: the manager does not retain its targets, and a
@@ -713,11 +720,24 @@ final class AppModel: ObservableObject {
     /// a transform over a live composition worked on text without it, and the marked insert's undo,
     /// recorded against text the model never had, later replayed at a stale range (GUI pass: it
     /// deleted a newline).
+    ///
+    /// **And empties the undo stack when it ends one.** Four GUI passes tried to have AppKit settle
+    /// the marked insert's own undo record (unmark, the input context's discard, a focus change);
+    /// from inside the apply path it survived each time, and after the transform was undone it
+    /// replayed at a stale offset and deleted a newline. Emptying the stack is deterministic, and
+    /// costs undo history in a rare case — an accent half-typed when a transform is chosen — never
+    /// text. A landed apply gives the editor its focus back.
     func settleComposition() {
+        var ended = false
         for text in editors() where text.hasMarkedText() {
             endComposition(in: text)
             setWorking(text.string)
+            ended = true
         }
+        guard ended else { return }
+        undoLog.debug("settled a composition: emptying the stack (level \(self.undoManager?.groupingLevel ?? -1))")
+        undoManager?.removeAllActions()
+        refreshUndoState()
     }
 
     /// Ends a composition the way a focus change does: through the input context, which tells the
@@ -753,8 +773,18 @@ final class AppModel: ObservableObject {
     /// has to precede `resetUndo`, because clearing a marked range registers an action of its own.
     private func endComposition() {
         for text in editors() where text.hasMarkedText() {
+            let focused = text.window?.firstResponder === text
             endComposition(in: text)
             endedSessionText = text.string
+            // Ending it took focus away; the session that follows keeps it (GUI pass 4: a Refresh
+            // mid-composition left the editor unfocused and the next keystroke went nowhere). A turn
+            // later, once the new text is in; skipped if the editor has gone (an image session).
+            if focused {
+                Task { @MainActor [weak text] in
+                    guard let text, let window = text.window, window.firstResponder !== text else { return }
+                    window.makeFirstResponder(text)
+                }
+            }
         }
     }
 
