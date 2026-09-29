@@ -130,7 +130,9 @@ public enum TransformCategory {
     public static let colors = "Colors"
     public static let scripts = "Scripts"
     public static let privacy = "Privacy"
+    /// Transforms that read an image (Plan 21): Extract Text (OCR).
+    public static let images = "Images"
     public static let presets = "Presets"
     /// Display order for the built-in categories; custom ones follow alphabetically, then Scripts.
-    public static let builtinOrder = [layout, richText, characters, urls, `case`, data, colors, privacy, presets]
+    public static let builtinOrder = [layout, richText, characters, urls, `case`, data, colors, privacy, images, presets]
 }
