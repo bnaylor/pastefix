@@ -315,7 +315,7 @@ final class AppModel: ObservableObject {
 
     func apply(_ transformer: any Transformer) {
         guard !isApplying else { return }
-        commitMarkedText()
+        settleComposition()
         guard let current = document else { return }
         transformNote = nil
         isApplying = true
@@ -431,7 +431,7 @@ final class AppModel: ObservableObject {
     }
 
     func save() {
-        commitMarkedText()
+        settleComposition()
         guard let doc = document else { endSession(); return }
         // **Save on an unedited session is at best a no-op and at worst destructive, so it must be
         // a no-op whenever the session cannot reproduce everything the clipboard still holds.**
@@ -701,18 +701,29 @@ final class AppModel: ObservableObject {
         refreshUndoState()
     }
 
-    /// Commits IME marked text (a dead key's "´", an unfinished CJK composition) into the buffer.
+    /// Ends any IME composition (a dead key's "´", an unfinished CJK word) before something reads
+    /// the buffer — a transform, Save, the upload snapshot — and writes what the editor then holds
+    /// to the model.
     ///
-    /// Marked text is in the editor and on the undo stack, but the TextEditor doesn't write it to
-    /// its binding until it is committed. Anything that reads the buffer — a transform, Save, the
-    /// upload snapshot — then works on text without it: the character is silently dropped, and the
-    /// marked insert's undo action, recorded against text the model never had, replays at a stale
-    /// range after the transform is undone (GUI pass: it deleted a newline). Called before each.
-    func commitMarkedText() {
+    /// Marked text is in the editor and on the undo stack but never in the TextEditor's binding, so
+    /// a transform over a live composition worked on text without it, and the marked insert's undo,
+    /// recorded against text the model never had, later replayed at a stale range (GUI pass: it
+    /// deleted a newline).
+    func settleComposition() {
         for text in editors() where text.hasMarkedText() {
-            text.unmarkText()
+            endComposition(in: text)
             setWorking(text.string)
         }
+    }
+
+    /// Ends a composition the way a focus change does: through the input context, which tells the
+    /// input method and settles the undo stack. `unmarkText()` alone does neither — measured with a
+    /// real dead key: the "´" was dropped, the method kept composing (the next key extended it), and
+    /// the marked insert's undo stayed on the stack, later deleting a newline. For a dead key the
+    /// accent is discarded, as it is when you click elsewhere; an input method may commit instead.
+    private func endComposition(in text: NSTextView) {
+        text.inputContext?.discardMarkedText()
+        if text.hasMarkedText() { text.unmarkText() }   // no input context (a test host)
     }
 
     /// The editor's whole text while it holds marked text, else nil. `PanelView`'s binding reads
@@ -729,7 +740,7 @@ final class AppModel: ObservableObject {
     /// the new one (measured: a refresh mid-composition put "cafe´" into the fresh session). It also
     /// has to precede `resetUndo`, because clearing a marked range registers an action of its own.
     private func endComposition() {
-        for text in editors() where text.hasMarkedText() { text.unmarkText() }
+        for text in editors() where text.hasMarkedText() { endComposition(in: text) }
     }
 
     /// The panel's editable text views: the TextEditor's, never a field editor.

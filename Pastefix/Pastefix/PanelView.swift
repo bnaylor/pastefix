@@ -301,7 +301,7 @@ struct PanelView: View {
             // left standing with the configuration it read a minute ago.
             uploadGeneration &+= 1
             // The overlay snapshots the buffer when it opens; marked text isn't in it yet.
-            model.commitMarkedText()
+            model.settleComposition()
             isUploadOpen = true
             model.uploadOverlayRequested = false
         }
