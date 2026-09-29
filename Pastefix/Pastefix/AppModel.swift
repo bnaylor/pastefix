@@ -1,9 +1,13 @@
 import Foundation
 import AppKit
+import OSLog
 import Combine
 import SwiftUI
 import PastefixCore
 import PastefixAppCore
+
+/// `log stream --predicate 'subsystem == "net.scromp.Pastefix" && category == "undo"' --debug`
+private let undoLog = Logger(subsystem: "net.scromp.Pastefix", category: "undo")
 
 @MainActor
 final class AppModel: ObservableObject {
@@ -41,6 +45,21 @@ final class AppModel: ObservableObject {
     /// then the notice.
     @Published var transformNote: String?
     @Published private(set) var isApplying = false
+    /// The panel window, set by `WindowUndoBinding`. Its undo manager is the ONE stack for the
+    /// editor's typing and for transforms (#103): the TextEditor's typing undo already lives there,
+    /// so transforms register there too, and ⌘Z — Edit ▸ Undo, up the responder chain — walks both in
+    /// the order they happened, with or without an editor on screen.
+    weak var panelWindow: NSWindow? { didSet { observeUndoManager() } }
+    var undoManager: UndoManager? { panelWindow?.undoManager }
+    /// The toolbar's Undo/Redo, mirrored from `undoManager` (which SwiftUI can't observe). Not
+    /// `document.canUndo`: after an undo and some typing the manager has dropped the redo while the
+    /// model still holds entries past its cursor. Its own object, never republished here — see
+    /// `UndoState`.
+    let undoState = UndoState()
+    private var undoObservers: [NSObjectProtocol] = []
+    /// Identifies the apply in flight; bumped to drop a result that must not land (⌘Z cancelled it,
+    /// or the session moved on).
+    private var applyID = 0
     @Published private(set) var transformers: [any Transformer] = []
     @Published private(set) var allTransformers: [any Transformer] = []
 
@@ -149,6 +168,7 @@ final class AppModel: ObservableObject {
     private func abandonInFlightWork() {
         applyTask?.cancel()
         applyTask = nil
+        applyID &+= 1
         detection.cancelAll()
         isApplying = false
         // Every caller also bumps `sessionGeneration`, so the cached preparation is no longer
@@ -197,6 +217,7 @@ final class AppModel: ObservableObject {
     /// use it directly to start from a snapshot the pasteboard path would never produce — which is
     /// how a defect that validation upstream now hides stays pinned downstream.
     func beginSession(from origin: ClipboardSnapshot) {
+        endComposition()
         errorMessage = nil
         noticeMessage = nil
         transformNote = nil
@@ -204,6 +225,7 @@ final class AppModel: ObservableObject {
         abandonInFlightWork()
         sessionGeneration &+= 1
         document = PasteDocument(origin: origin)
+        resetUndo()
         noteRefusedImage(origin)
         requestDetection()
     }
@@ -296,20 +318,33 @@ final class AppModel: ObservableObject {
     }
 
     func apply(_ transformer: any Transformer) {
-        guard let current = document, !isApplying else { return }
+        guard !isApplying else { return }
+        settleComposition()
+        guard let current = document else { return }
         transformNote = nil
         isApplying = true
         let generation = sessionGeneration
+        applyID &+= 1
+        let id = applyID
         applyTask = Task {
             let (updated, outcome) = await TransformCoordinator.apply(transformer, to: current)
             // The session can end (Save/Cancel/auto-hide) while a slow transform is in
-            // flight, and the user can summon a fresh one before it finishes. Drop the
-            // result unless we are still in the session that asked for it.
-            // `abandonInFlightWork()`/`endSession()` own `isApplying` for that path.
-            guard self.document != nil, self.sessionGeneration == generation else {
+            // flight, and the user can summon a fresh one before it finishes; ⌘Z cancels it
+            // (`observeUndoManager`).
+            // Drop the result unless this is still the apply that was asked for.
+            // `abandonInFlightWork()`, `endSession()` and `cancelApply()` own `isApplying` then.
+            guard self.document != nil, self.sessionGeneration == generation, self.applyID == id else {
                 return
             }
             self.document = updated
+            // Registered on landing, and only when something was pushed: nothing to do, a failure
+            // and the same text leave nothing to undo. (Registering when the apply starts and
+            // removing it on a no-op doesn't work: `removeAllActions(withTarget:)` leaves the empty
+            // group behind, `canUndo` stays true, and the next ⌘Z does nothing — measured.)
+            if updated.cursor != current.cursor {
+                self.breakTypingCoalescing()
+                self.registerUndo(TransformStep(name: transformer.name, generation: generation))
+            }
             // The failure path returns `current` unchanged (same revision), so only request a
             // scan when the buffer actually moved — re-requesting on every refused click would
             // cancel and restart an in-flight summon scan for no reason.
@@ -337,10 +372,16 @@ final class AppModel: ObservableObject {
 
     func setWorking(_ text: String) {
         guard var doc = document else { return }
+        if let echo = endedSessionText, text != doc.working {
+            endedSessionText = nil
+            if text == echo { return }
+        }
         doc.setWorking(text)
         document = doc
     }
 
+    /// The model half of undoing a transform: the window's undo stack calls this (`stepBack`). UI
+    /// goes through `undoManager`, never here, or the stack and the model disagree about what's next.
     func undo() {
         guard var doc = document else { return }
         let before = doc.detectionRevision
@@ -352,6 +393,7 @@ final class AppModel: ObservableObject {
         resetSecretSelection()
     }
 
+    /// The model half of redoing a transform; see `undo()`.
     func redo() {
         guard var doc = document else { return }
         let before = doc.detectionRevision
@@ -363,10 +405,12 @@ final class AppModel: ObservableObject {
     }
 
     func refresh() {
+        endComposition()
         guard var doc = document else { return }
         let origin = ClipboardBridge.snapshot(from: pasteboard)
         doc.refresh(origin: origin)
         document = doc
+        resetUndo()
         // A refresh can replace the image without a new session generation. The cache key
         // includes the bytes, so a stale preparation is never *served* — but it would still be
         // *held* (up to 16 MB) until the next request, so it is dropped here.
@@ -395,6 +439,7 @@ final class AppModel: ObservableObject {
     }
 
     func save() {
+        settleComposition()
         guard let doc = document else { endSession(); return }
         // **Save on an unedited session is at best a no-op and at worst destructive, so it must be
         // a no-op whenever the session cannot reproduce everything the clipboard still holds.**
@@ -470,6 +515,7 @@ final class AppModel: ObservableObject {
     /// An item with both text and an image opens as a text session that still carries the image
     /// through to Save.
     func load(_ item: HistoryItem) {
+        endComposition()
         errorMessage = nil
         noticeMessage = nil
         transformNote = nil
@@ -478,6 +524,7 @@ final class AppModel: ObservableObject {
         sessionGeneration &+= 1
         let origin = historyOrigin(for: item)
         document = PasteDocument(origin: origin)
+        resetUndo()
         // After the clears, for the same reason `refresh` notes its refusal afterwards: this is
         // news about the buffer that was just installed.
         noteUnopenableImage(in: item, origin)
@@ -594,9 +641,231 @@ final class AppModel: ObservableObject {
         endSession()
     }
 
+    // MARK: - One undo stack (#103)
+
+    /// One transform on the window's undo stack. Carries its session so a handler that outlived it
+    /// does nothing: the manager outlives sessions (measured), and every boundary empties it, so
+    /// this is insurance for a boundary that someday forgets to.
+    private struct TransformStep {
+        let name: String
+        let generation: Int
+    }
+
+    private func registerUndo(_ step: TransformStep) {
+        guard let um = undoManager else { return }
+        // A transform lands from a task, not an event, and `groupsByEvent` only groups events: at
+        // grouping level 0 the registration throws ("must begin a group before registering undo",
+        // measured), and inside a group some event left open the user's next keystroke would join
+        // the transform and one ⌘Z would undo both. An explicit group of its own, closed now. Not
+        // while undoing or redoing: the manager groups those itself.
+        let closesOwnGroup = um.groupingLevel == 0 && !um.isUndoing && !um.isRedoing
+        // Diagnostics for the GUI pass: a registration inside someone else's open group is how
+        // typing could end up undone together with a transform.
+        undoLog.debug("register \(step.name, privacy: .public): level \(um.groupingLevel) undoing \(um.isUndoing) redoing \(um.isRedoing)")
+        // …and with `groupsByEvent` off while it is open: with it on, `beginUndoGrouping` at level
+        // 0 first opens an automatic OUTER group that the matching end doesn't close, and that
+        // outer group stayed open until the next event ended — the user's next keystroke, which
+        // joined the transform's step (GUI pass 5: 4/4; measured in-process: level 1 left open).
+        let byEvent = um.groupsByEvent
+        if closesOwnGroup { um.groupsByEvent = false; um.beginUndoGrouping() }
+        defer { if closesOwnGroup { um.endUndoGrouping(); um.groupsByEvent = byEvent } }
+        // The target is the model, not the step: the manager does not retain its targets, and a
+        // step object held only by the stack was freed under it (measured: a crash in popAndInvoke).
+        um.registerUndo(withTarget: self) { model in
+            MainActor.assumeIsolated { model.stepBack(step) }
+        }
+        um.setActionName(step.name)
+        refreshUndoState()
+    }
+
+    private func registerRedo(_ step: TransformStep) {
+        guard let um = undoManager else { return }
+        um.registerUndo(withTarget: self) { model in
+            MainActor.assumeIsolated { model.stepForward(step) }
+        }
+        um.setActionName(step.name)
+        refreshUndoState()
+    }
+
+    /// Undoes `step`. Registering the inverse while the manager is undoing puts it on the redo stack.
+    private func stepBack(_ step: TransformStep) {
+        guard step.generation == sessionGeneration else { return }
+        undo()
+        breakTypingCoalescing()
+        registerRedo(step)
+    }
+
+    private func stepForward(_ step: TransformStep) {
+        guard step.generation == sessionGeneration else { return }
+        redo()
+        breakTypingCoalescing()
+        registerUndo(step)
+    }
+
+    private func cancelApply() {
+        applyTask?.cancel()
+        applyTask = nil
+        applyID &+= 1
+        isApplying = false
+    }
+
+    /// Empties the stack at a session boundary. The typing and transforms on it describe a buffer
+    /// that is gone; left there, ⌘Z would replay them against the new one.
+    private func resetUndo() {
+        undoManager?.removeAllActions()
+        breakTypingCoalescing()
+        refreshUndoState()
+    }
+
+    /// Ends any IME composition (a dead key's "´", an unfinished CJK word) before something reads
+    /// the buffer — a transform, Save, the upload snapshot — and writes what the editor then holds
+    /// to the model.
+    ///
+    /// Marked text is in the editor and on the undo stack but never in the TextEditor's binding, so
+    /// a transform over a live composition worked on text without it, and the marked insert's undo,
+    /// recorded against text the model never had, later replayed at a stale range (GUI pass: it
+    /// deleted a newline).
+    ///
+    /// **And empties the undo stack when it ends one.** Four GUI passes tried to have AppKit settle
+    /// the marked insert's own undo record (unmark, the input context's discard, a focus change);
+    /// from inside the apply path it survived each time, and after the transform was undone it
+    /// replayed at a stale offset and deleted a newline. Emptying the stack is deterministic, and
+    /// costs undo history in a rare case — an accent half-typed when a transform is chosen — never
+    /// text. A landed apply gives the editor its focus back.
+    func settleComposition() {
+        var ended = false
+        for text in editors() where text.hasMarkedText() {
+            endComposition(in: text)
+            setWorking(text.string)
+            ended = true
+        }
+        guard ended else { return }
+        undoLog.debug("settled a composition: emptying the stack (level \(self.undoManager?.groupingLevel ?? -1))")
+        undoManager?.removeAllActions()
+        refreshUndoState()
+    }
+
+    /// Ends a composition the way a focus change does: through the input context, which tells the
+    /// input method and settles the undo stack. `unmarkText()` alone does neither — measured with a
+    /// real dead key: the "´" was dropped, the method kept composing (the next key extended it), and
+    /// the marked insert's undo stayed on the stack, later deleting a newline. For a dead key the
+    /// accent is discarded, as it is when you click elsewhere; an input method may commit instead.
+    ///
+    /// By taking first responder away — the one path GUI-measured clean. Calling
+    /// `inputContext.discardMarkedText()` from here dropped the accent but left the marked insert's
+    /// undo on the stack (it still deleted a newline); a real focus change (the ⌘K field taking it)
+    /// settled both. Whoever needs the editor afterwards gives it focus back, as a landed apply does.
+    private func endComposition(in text: NSTextView) {
+        if text.window?.firstResponder === text { text.window?.makeFirstResponder(nil) }
+        if text.hasMarkedText() {                           // no input method (a test host)
+            text.inputContext?.discardMarkedText()
+            if text.hasMarkedText() { text.unmarkText() }
+        }
+    }
+
+    /// The editor's whole text while it holds marked text, else nil. `PanelView`'s binding reads
+    /// this first: SwiftUI's TextEditor re-sets its text from the binding on every re-render of
+    /// the panel (⌘K opening, a sidebar click), and the binding never holds marked text, so each
+    /// re-render discarded the composition — with no undo record, leaving the marked insert's undo
+    /// to delete whatever later sat at its offset (GUI pass 2: a newline; measured in-process).
+    func composingEditorText() -> String? {
+        editors().first { $0.hasMarkedText() }?.string
+    }
+
+    /// Ends any composition at a session boundary, BEFORE the document is replaced: unmarking
+    /// writes the text through the binding, which must land in the session that is ending, not
+    /// the new one (measured: a refresh mid-composition put "cafe´" into the fresh session). It also
+    /// has to precede `resetUndo`, because clearing a marked range registers an action of its own.
+    private func endComposition() {
+        for text in editors() where text.hasMarkedText() {
+            let focused = text.window?.firstResponder === text
+            endComposition(in: text)
+            endedSessionText = text.string
+            // Ending it took focus away; the session that follows keeps it (GUI pass 4: a Refresh
+            // mid-composition left the editor unfocused and the next keystroke went nowhere). A turn
+            // later, once the new text is in; skipped if the editor has gone (an image session).
+            if focused {
+                Task { @MainActor [weak self, weak text] in
+                    guard let text, let window = text.window, window.firstResponder !== text else { return }
+                    window.makeFirstResponder(text)
+                    // Becoming first responder again restores the selection it resigned with — an
+                    // offset into the old session's text (GUI pass 5: "fresqh clip"). Where a Refresh
+                    // without a composition leaves it: at the end of the new text.
+                    if text.string == self?.document?.working {
+                        text.setSelectedRange(NSRange(location: (text.string as NSString).length, length: 0))
+                    }
+                }
+            }
+        }
+    }
+
+    /// The editor's text when a composition was ended at a session boundary. Ending it makes the
+    /// editor write that text through the binding — sometimes only after the new document is
+    /// installed (GUI pass 3: a refreshed session showed and saved the old buffer). The first write
+    /// equal to it is that late echo and is dropped; any other write retires it.
+    private var endedSessionText: String?
+
+    /// The panel's editable text views: the TextEditor's, never a field editor.
+    private func editors() -> [NSTextView] {
+        guard let root = panelWindow?.contentView else { return [] }
+        var found: [NSTextView] = []
+        func walk(_ view: NSView) {
+            if let text = view as? NSTextView, text.isEditable, !text.isFieldEditor { found.append(text) }
+            view.subviews.forEach(walk)
+        }
+        walk(root)
+        return found
+    }
+
+    /// Closes the editor's open typing group whenever the buffer is replaced programmatically, so
+    /// the next keystroke registers a new action rather than extending one recorded against the
+    /// text that just left — which would put typing ranges for one buffer on top of, or under, a
+    /// transform's step to another.
+    private func breakTypingCoalescing() {
+        editors().forEach { $0.breakUndoCoalescing() }
+    }
+
+    /// Re-reads the manager into `undoState`.
+    func refreshUndoState() {
+        let undo = undoManager?.canUndo ?? false, redo = undoManager?.canRedo ?? false
+        undoState.update(canUndo: undo, canRedo: redo)
+    }
+
+    /// Mirrors the manager into `canUndo`/`canRedo`. `removeAllActions` posts nothing, so its
+    /// callers refresh by hand; so does the editor's teardown (`PanelView`), which removes the
+    /// editor's typing actions.
+    ///
+    /// And ⌘Z or ⌘⇧Z while a transform is running cancels it, before the undo runs, so its result
+    /// can't land on top of whatever the undo restores. The undo itself then goes ahead on the
+    /// previous step (⌘⇧Z brings that back). Cancelling rather than refusing: a typing action on top
+    /// of the stack runs whatever the first responder is, so refusing can't be made to hold.
+    private func observeUndoManager() {
+        undoObservers.forEach(NotificationCenter.default.removeObserver)
+        undoObservers = []
+        refreshUndoState()
+        guard let um = undoManager else { return }
+        let names: [Notification.Name] = [.NSUndoManagerCheckpoint, .NSUndoManagerDidUndoChange,
+                                          .NSUndoManagerDidRedoChange, .NSUndoManagerDidCloseUndoGroup]
+        undoObservers = names.map {
+            NotificationCenter.default.addObserver(forName: $0, object: um, queue: nil) { [weak self] _ in
+                MainActor.assumeIsolated { self?.refreshUndoState() }
+            }
+        }
+        undoObservers += [Notification.Name.NSUndoManagerWillUndoChange, .NSUndoManagerWillRedoChange].map {
+            NotificationCenter.default.addObserver(forName: $0, object: um, queue: nil) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    guard let self, self.isApplying else { return }
+                    self.cancelApply()
+                }
+            }
+        }
+    }
+
     private func endSession() {
+        endComposition()
         abandonInFlightWork()
         document = nil
+        resetUndo()
         errorMessage = nil
         noticeMessage = nil
         transformNote = nil

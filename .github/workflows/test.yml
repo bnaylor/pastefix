@@ -1,0 +1,34 @@
+name: Tests
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    # The app needs the macOS 26 SDK (Xcode 26); the packages build on macOS 14+.
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+      - name: Toolchain
+        run: xcodebuild -version && swift --version
+      - name: Package tests (PastefixCore, PastefixAppCore)
+        # Serial on purpose. The runner has 3 cores, so Swift's cooperative pool is 3 threads, and
+        # the first parallel run deadlocked: tests ran Vision synchronously on pool threads, and
+        # Vision waits on work that needs one (fixed: OffThePool). Timing-sensitive tests (lanes,
+        # deadlines, schedulers) still fail on a pool that narrow; serial takes ~50 s and is exact.
+        run: swift test --no-parallel
+        timeout-minutes: 15
+        env:
+          NSUnbufferedIO: "YES"
+      - name: App tests (hosted by Pastefix.app)
+        run: scripts/test-app.sh

@@ -26,9 +26,9 @@ struct ExtractTextTests {
     }
 
     @Test("recognises rendered lines, top to bottom")
-    func recall() throws {
+    func recall() async throws {
         let png = try #require(Self.render(["export API_TOKEN=abc123", "second line here"]))
-        guard case .text(let text) = try ExtractText().transformImage(png) else {
+        guard case .text(let text) = try await offThePool({ try ExtractText().transformImage(png) }) else {
             Issue.record("expected text"); return
         }
         let lines = text.split(separator: "\n").map(String.init)
@@ -70,18 +70,18 @@ struct ExtractTextTests {
     // they sit — 0/O, 1/l, and letters whose cases look alike (c k o s u v w x y z; measured: "k" read
     // as "K" mid-token) — so a failure here is the seam's, not an ordinary misread.
     @Test("a token across a tile boundary comes out whole from the tiled pass")
-    func straddlingToken() throws {
+    func straddlingToken() async throws {
         let token = "ghp_aB3dE5fG7hJ9mNqR2tA4bD6eF8gHn"
         let image = try #require(Self.straddling([("export GITHUB_TOKEN=\(token) # trailing", 1500)]))
-        let lines = OCRLayout.lines(try TextRecognizer.recognizeTiled(image))
+        let lines = OCRLayout.lines(try await offThePool({ try TextRecognizer.recognizeTiled(image) }))
         let line = try #require(lines.first { $0.contains("ghp_") })
         #expect(line.contains(token), "tiled line was: \(line)")
     }
 
     @Test("an image with no text is nothing to do")
-    func noText() throws {
+    func noText() async throws {
         let png = try #require(Self.render([]))
-        #expect(try ExtractText().transformImage(png) == .nothingToDo(ExtractText.noTextMessage))
+        #expect(try await offThePool({ try ExtractText().transformImage(png) }) == .nothingToDo(ExtractText.noTextMessage))
     }
 
     @Test("bytes that aren't an image are refused")
