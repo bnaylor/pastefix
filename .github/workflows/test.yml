@@ -22,6 +22,10 @@ jobs:
       - name: Toolchain
         run: xcodebuild -version && swift --version
       - name: Package tests (PastefixCore, PastefixAppCore)
-        run: swift test
+        # Serial while the first runs are diagnosed: a hang then names the test that never ends.
+        run: swift test --no-parallel
+        timeout-minutes: 15
+        env:
+          NSUnbufferedIO: "YES"
       - name: App tests (hosted by Pastefix.app)
         run: scripts/test-app.sh
