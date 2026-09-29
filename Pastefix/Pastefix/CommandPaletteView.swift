@@ -86,10 +86,9 @@ struct CommandPaletteView: View {
             }
             Divider()
             HStack(spacing: 16) {
-                // Apply/Choose hint keys that do nothing: an image session has no results to
-                // apply or choose among (see `emptyMessage`), so showing them would advertise
-                // keys the list can never act on. Esc still closes the palette either way.
-                if model.document?.displaysAsImage != true {
+                // No Apply/Choose hints over an empty list: they would advertise keys with
+                // nothing to act on. Esc still closes the palette either way.
+                if !items.isEmpty {
                     Label("Apply", systemImage: "return")
                     Label("Choose", systemImage: "arrow.up.arrow.down")
                 }
@@ -121,17 +120,8 @@ struct CommandPaletteView: View {
         .onAppear { kindsSnapshot = model.document?.detectedKinds ?? [] }
     }
 
-    /// Why the list is empty, which is two different things.
-    ///
-    /// In an image session it is not a failed search: no transform accepts an image
-    /// (`Transformer.acceptedForms`), and this increment deliberately ships none that do. The
-    /// palette opens, the field takes focus, and every keystroke would keep saying "no matching
-    /// transforms" — which reads as a broken panel rather than as an answer. Say the real reason
-    /// instead, whatever is typed.
     private var emptyMessage: String {
-        model.document?.displaysAsImage == true
-            ? "No transforms apply to an image"
-            : "No matching transforms"
+        TransformListEmptyState.message(query: query, showsImage: model.document?.displaysAsImage == true)
     }
 
     private func row(_ result: SearchResult, isSelected: Bool) -> some View {
