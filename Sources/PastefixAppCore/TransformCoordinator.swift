@@ -70,7 +70,7 @@ public enum TransformCoordinator {
                 doc.push(.image(png), note: note)
                 return (doc, note.map(TransformOutcome.appliedWithNote) ?? .applied)
             case .text(let result):
-                if let arming = transformer as? OutputModeTransformer { doc.outputMode = arming.outputMode }
+                if let arming = transformer as? any OutputModeTransformer { doc.outputMode = arming.outputMode }
                 // The outcome is decided before the push, but the push happens either way: on equal
                 // text `pushState` adds no entry and doesn't truncate the redo stack — it only marks
                 // detection pending and bumps the revision, requesting the scan, which is still the
@@ -79,7 +79,7 @@ public enum TransformCoordinator {
                 // so a secret typed into the editor kept an empty badge until the next real push,
                 // undo, redo or refresh. Compared as entries: from an image entry, "" is a change.
                 let outcome: TransformOutcome =
-                    .text(result) == doc.currentEntry && !(transformer is OutputModeTransformer) ? .unchanged : .applied
+                    .text(result) == doc.currentEntry && !(transformer is any OutputModeTransformer) ? .unchanged : .applied
                 doc.pushState(result)
                 return (doc, outcome)
             }
