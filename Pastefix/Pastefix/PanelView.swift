@@ -218,6 +218,8 @@ struct PanelView: View {
         // skipped render, so the transition is never observed and the next summon comes up with
         // the overlay still over it. The counter is monotonic, so a skipped render can't hide it.
         // Must stay above the `historyOverlayRequested` handler: a ⌘⇧V summon resets, then opens.
+        // The hotfix for typing-undo replaying at stale ranges after a transform (see the type).
+        .background(EditorUndoReset(token: [model.sessionGeneration, model.document?.detectionRevision ?? -1]))
         .onChange(of: model.sessionGeneration) { _, _ in
             isPaletteOpen = false
             isHistoryOpen = false
