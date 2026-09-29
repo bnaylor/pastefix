@@ -30,7 +30,10 @@ struct PanelView: View {
 
     private var workingBinding: Binding<String> {
         Binding(
-            get: { model.document?.working ?? "" },
+            // Mid-composition, the editor's own text: the model never holds marked text, and
+            // handing SwiftUI anything else makes it overwrite (and discard) the composition on
+            // the next render (see `AppModel.composingEditorText`).
+            get: { model.composingEditorText() ?? model.document?.working ?? "" },
             set: { model.setWorking($0) }
         )
     }
@@ -151,6 +154,9 @@ struct PanelView: View {
                                 // belt and braces on the one path that sends data off the machine.
                                 .disabled(model.isApplying || isUploadOpen)
                                 .focused($editorFocused)
+                                // Tearing the editor down (preview, an image entry, the placeholder)
+                                // removes its typing actions from the stack without a notification.
+                                .onDisappear { Task { @MainActor in model.refreshUndoState() } }
                         }
                         if let error = model.errorMessage {
                             errorBanner(error)
@@ -218,8 +224,8 @@ struct PanelView: View {
         // skipped render, so the transition is never observed and the next summon comes up with
         // the overlay still over it. The counter is monotonic, so a skipped render can't hide it.
         // Must stay above the `historyOverlayRequested` handler: a ⌘⇧V summon resets, then opens.
-        // The hotfix for typing-undo replaying at stale ranges after a transform (see the type).
-        .background(EditorUndoReset(token: [model.sessionGeneration, model.document?.detectionRevision ?? -1]))
+        // The window's undo manager is the one stack for typing and transforms (#103).
+        .background(WindowUndoBinding(model: model))
         .onChange(of: model.sessionGeneration) { _, _ in
             isPaletteOpen = false
             isHistoryOpen = false
@@ -294,30 +300,19 @@ struct PanelView: View {
             // Bumped before the flag is set, so an already-open overlay is replaced rather than
             // left standing with the configuration it read a minute ago.
             uploadGeneration &+= 1
+            // The overlay snapshots the buffer when it opens; marked text isn't in it yet.
+            model.settleComposition()
             isUploadOpen = true
             model.uploadOverlayRequested = false
         }
     }
 
-    /// ⌘Z/⌘⇧Z belong to the toolbar's Undo/Redo while an image is showing, or while untouched OCR
-    /// text sits over one (Plan 21: until the user types, ⌘Z brings the image back), and no overlay
-    /// is up. Otherwise ⌘Z is the editor's typing undo (#103).
-    private var imageUndoKeys: Bool {
-        guard let document = model.document, !isPaletteOpen, !isHistoryOpen, !isUploadOpen else { return false }
-        return document.displaysAsImage || document.undoRestoresImage
-    }
-
     private var toolbar: some View {
         HStack {
-            Button("Undo") { model.undo() }
-                // ⌘Z / ⌘⇧Z drive Pastefix's undo while an image is showing (Plan 20: no editor to take
-                // them) and while untouched OCR text sits over one (Plan 21). Otherwise they stay the
-                // editor's typing undo; transform undo there is the button (#103).
-                .keyboardShortcut(imageUndoKeys ? KeyboardShortcut("z", modifiers: .command) : nil)
-                .disabled(model.isApplying || model.document?.canUndo != true)
-            Button("Redo") { model.redo() }
-                .keyboardShortcut(imageUndoKeys ? KeyboardShortcut("z", modifiers: [.command, .shift]) : nil)
-                .disabled(model.isApplying || model.document?.canRedo != true)
+            // Through the window's undo manager, like ⌘Z (Edit ▸ Undo): one stack, so the button
+            // undoes typing as readily as a transform (#103). Enabled while a transform runs, since
+            // undoing it then cancels it.
+            UndoButtons(model: model, state: model.undoState)
             Button("Refresh") { model.refresh() }
                 .disabled(model.isApplying)
             Button { showPinPopover = true } label: {
@@ -666,5 +661,19 @@ struct PanelView: View {
         .foregroundStyle(.primary)
         .padding(8)
         .background(Color.orange.opacity(0.18))
+    }
+}
+
+/// The toolbar's Undo/Redo. A view of its own so an undo-state change re-renders these two buttons
+/// and nothing else — in particular not `PanelView`, which owns the TextEditor (see `UndoState`).
+private struct UndoButtons: View {
+    let model: AppModel
+    @ObservedObject var state: UndoState
+
+    var body: some View {
+        Button("Undo") { model.undoManager?.undo() }
+            .disabled(!state.canUndo)
+        Button("Redo") { model.undoManager?.redo() }
+            .disabled(!state.canRedo)
     }
 }
