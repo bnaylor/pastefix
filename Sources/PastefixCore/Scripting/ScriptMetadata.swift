@@ -1,14 +1,25 @@
 import Foundation
 
+/// What a script takes (#67): `# pastefix: accepts = text | image`. An unrecognised value is kept,
+/// not ignored — a key a user wrote that silently does nothing is worse than none.
+public enum ScriptInputForm: Equatable, Sendable {
+    case text
+    case image
+    case invalid(String)
+}
+
 public struct ScriptMetadata: Equatable, Sendable {
     public var name: String?
+    public var accepts: ScriptInputForm = .text
     public var enabled: Bool
     public var order: Int?
     public var kinds: Set<ContentKind>?
     public var category: String?
 
-    public init(name: String? = nil, enabled: Bool = true, order: Int? = nil, kinds: Set<ContentKind>? = nil, category: String? = nil) {
+    public init(name: String? = nil, enabled: Bool = true, order: Int? = nil, kinds: Set<ContentKind>? = nil, category: String? = nil,
+                accepts: ScriptInputForm = .text) {
         self.name = name
+        self.accepts = accepts
         self.enabled = enabled
         self.order = order
         self.kinds = kinds
@@ -41,6 +52,12 @@ public struct ScriptMetadata: Equatable, Sendable {
                     return ContentKind.allCases.first { $0.rawValue.lowercased() == token }
                 }
                 md.kinds = parsed.isEmpty ? nil : Set(parsed)
+            case "accepts":
+                switch value.lowercased() {
+                case "text": md.accepts = .text
+                case "image": md.accepts = .image
+                default: md.accepts = .invalid(value)
+                }
             case "category":
                 let trimmed = value.trimmingCharacters(in: .whitespaces)
                 md.category = trimmed.isEmpty ? nil : trimmed

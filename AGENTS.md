@@ -122,8 +122,9 @@ Sources/PastefixCore/
     URLFinder.swift                   # internal http(s) link ranges (NSDataDetector); 256 KB maxBytes cap (matches SecretDetector), enumerateMatches(options: [.reportProgress]) so a cancelled Task.isCancelled stops the scan early and a partial list is only ever returned to a caller that discards it
     HTMLEntities.swift                # shared entity decode table (HTML Decode + Markdown-link title parser)
   Scripting/
-    ScriptMetadata.swift              # magic-comment header parser
-    ShellRunner.swift / ShellTransformer.swift   # stdin->stdout process engine
+    ScriptMetadata.swift              # magic-comment header parser; `accepts = text|image` (#67) — an unknown value is kept as .invalid, never ignored
+    ShellRunner.swift / ShellTransformer.swift   # stdin->stdout process engine; runData is Data-in/Data-out with extra env and an OUTPUT CAP (32 MB text / 128 MB image; over it the group is signalled, not read into memory; stderr keeps its last 64 KB); non-UTF-8 text output is an error, never ""
+    ShellImageTransformer.swift       # #67: accepts = image shell scripts — input.png in a private 0700 folder via PASTEFIX_IMAGE (+ _WIDTH/_HEIGHT), stdin empty, folder removed on every exit; stdout sniffed by a magic-byte ALLOWLIST (not ImageIO's guess; no BMP — text starts "BM") → header pixel check → decode → PNGEncoder, else UTF-8 text; ≥30 s budget. UnsupportedScriptTransformer lists a JS accepts=image or an unknown accepts value and says why on apply
     JSRunner.swift   / JSTransformer.swift        # JavaScriptCore engine
   Discovery/
     TransformerRegistry.swift         # RegistryConfig + load(): merge & order built-ins + scripts

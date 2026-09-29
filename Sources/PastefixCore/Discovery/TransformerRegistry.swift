@@ -69,10 +69,25 @@ public struct TransformerRegistry {
             let md = ScriptMetadata.parse(source)
             guard md.enabled else { continue }
             let order = md.order ?? Self.scriptDefaultOrder
-            let transformer: any Transformer =
-                url.pathExtension.lowercased() == "js"
-                ? JSTransformer(url: url, metadata: md, timeout: config.timeout)
-                : ShellTransformer(url: url, metadata: md, timeout: config.timeout)
+            let isJS = url.pathExtension.lowercased() == "js"
+            let name = md.name ?? url.deletingPathExtension().lastPathComponent
+            let transformer: any Transformer
+            switch (isJS, md.accepts) {
+            case (_, .invalid(let raw)):
+                // Both forms, so it is listed wherever the user goes looking for it.
+                transformer = UnsupportedScriptTransformer(
+                    id: (isJS ? "js:" : "shell:") + url.lastPathComponent, name: name,
+                    source: isJS ? .javascript(url) : .shell(url), metadata: md, acceptedForms: [.text, .image],
+                    reason: "“accepts = \(raw)” isn't text or image.")
+            case (true, .image):
+                transformer = UnsupportedScriptTransformer(
+                    id: "js:" + url.lastPathComponent, name: name, source: .javascript(url), metadata: md,
+                    acceptedForms: [.image],
+                    reason: "JavaScript transforms can't take images (JavaScriptCore strings aren't byte-safe); use a shell script.")
+            case (true, .text): transformer = JSTransformer(url: url, metadata: md, timeout: config.timeout)
+            case (false, .image): transformer = ShellImageTransformer(url: url, metadata: md, timeout: config.timeout)
+            case (false, .text): transformer = ShellTransformer(url: url, metadata: md, timeout: config.timeout)
+            }
             entries.append((order, transformer.name, transformer))
         }
 
