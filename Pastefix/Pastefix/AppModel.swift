@@ -368,6 +368,10 @@ final class AppModel: ObservableObject {
 
     func setWorking(_ text: String) {
         guard var doc = document else { return }
+        if let echo = endedSessionText, text != doc.working {
+            endedSessionText = nil
+            if text == echo { return }
+        }
         doc.setWorking(text)
         document = doc
     }
@@ -721,9 +725,17 @@ final class AppModel: ObservableObject {
     /// real dead key: the "´" was dropped, the method kept composing (the next key extended it), and
     /// the marked insert's undo stayed on the stack, later deleting a newline. For a dead key the
     /// accent is discarded, as it is when you click elsewhere; an input method may commit instead.
+    ///
+    /// By taking first responder away — the one path GUI-measured clean. Calling
+    /// `inputContext.discardMarkedText()` from here dropped the accent but left the marked insert's
+    /// undo on the stack (it still deleted a newline); a real focus change (the ⌘K field taking it)
+    /// settled both. Whoever needs the editor afterwards gives it focus back, as a landed apply does.
     private func endComposition(in text: NSTextView) {
-        text.inputContext?.discardMarkedText()
-        if text.hasMarkedText() { text.unmarkText() }   // no input context (a test host)
+        if text.window?.firstResponder === text { text.window?.makeFirstResponder(nil) }
+        if text.hasMarkedText() {                           // no input method (a test host)
+            text.inputContext?.discardMarkedText()
+            if text.hasMarkedText() { text.unmarkText() }
+        }
     }
 
     /// The editor's whole text while it holds marked text, else nil. `PanelView`'s binding reads
@@ -740,8 +752,17 @@ final class AppModel: ObservableObject {
     /// the new one (measured: a refresh mid-composition put "cafe´" into the fresh session). It also
     /// has to precede `resetUndo`, because clearing a marked range registers an action of its own.
     private func endComposition() {
-        for text in editors() where text.hasMarkedText() { endComposition(in: text) }
+        for text in editors() where text.hasMarkedText() {
+            endComposition(in: text)
+            endedSessionText = text.string
+        }
     }
+
+    /// The editor's text when a composition was ended at a session boundary. Ending it makes the
+    /// editor write that text through the binding — sometimes only after the new document is
+    /// installed (GUI pass 3: a refreshed session showed and saved the old buffer). The first write
+    /// equal to it is that late echo and is dropped; any other write retires it.
+    private var endedSessionText: String?
 
     /// The panel's editable text views: the TextEditor's, never a field editor.
     private func editors() -> [NSTextView] {

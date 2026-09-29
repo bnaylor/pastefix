@@ -307,4 +307,31 @@ struct OneUndoStackTests {
         #expect(f.model.document?.working == "fresh", "the old composition leaked into the new session")
         #expect(!editor.hasMarkedText() && !um.canUndo)
     }
+
+    /// GUI pass 3 (#111): ending a composition at Refresh made the editor write its old text
+    /// through the binding AFTER the new document was installed — the refreshed session showed,
+    /// and saved, the old buffer. That late write is dropped.
+    @Test("the ended session's late editor write doesn't land in the new one")
+    func lateWriteAfterABoundaryIsDropped() async throws {
+        let f = try ModelFixture(); defer { f.finish() }
+        f.copy(text: "fresh clip")
+        f.model.beginSession(from: ClipboardSnapshot(plainText: "cafe", richRTFD: nil))
+        let window = host(f); defer { window.orderOut(nil) }
+        _ = try #require(await bound(f, window))
+        #expect(await f.eventually { self.textView(in: window.contentView!)?.string == "cafe" })
+        let editor = try #require(textView(in: window.contentView!))
+        window.makeFirstResponder(editor)
+        editor.setSelectedRange(NSRange(location: 4, length: 0))
+        editor.setMarkedText("\u{00B4}", selectedRange: NSRange(location: 1, length: 0),
+                             replacementRange: NSRange(location: 4, length: 0))
+        f.model.refresh()
+        // The late binding write carries whatever the editor held once the composition ended: "cafe"
+        // with a real input method (the accent discarded), "cafe´" here (no input method).
+        let ended = editor.string
+        f.model.setWorking(ended)
+        #expect(f.model.document?.working == "fresh clip")
+        #expect(await f.eventually { editor.string == "fresh clip" })
+        f.model.setWorking("fresh clip!")                           // real typing still lands
+        #expect(f.model.document?.working == "fresh clip!")
+    }
 }
