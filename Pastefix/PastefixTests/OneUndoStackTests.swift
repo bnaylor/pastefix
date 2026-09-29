@@ -128,6 +128,10 @@ struct OneUndoStackTests {
         let um = try #require(await bound(f, window))
         #expect(await f.eventually { self.textView(in: window.contentView!)?.string == "alpha   beta   gamma" })
         let editor = try #require(textView(in: window.contentView!))
+        // The editor takes focus a turn after it appears (#117); let that land before a
+        // composition starts, or re-asserting focus ends it — as it can't in use, where nobody
+        // types in the instant between the editor appearing and its focus request.
+        _ = await f.eventually { window.firstResponder === editor }
         window.makeFirstResponder(editor)
         editor.setSelectedRange(NSRange(location: 0, length: 0))
         editor.insertText("   Q", replacementRange: NSRange(location: 0, length: 0))
@@ -245,6 +249,10 @@ struct OneUndoStackTests {
         let um = try #require(await bound(f, window))
         #expect(await f.eventually { self.textView(in: window.contentView!)?.string == "cafe\nbar   " })
         let editor = try #require(textView(in: window.contentView!))
+        // The editor takes focus a turn after it appears (#117); let that land before a
+        // composition starts, or re-asserting focus ends it — as it can't in use, where nobody
+        // types in the instant between the editor appearing and its focus request.
+        _ = await f.eventually { window.firstResponder === editor }
         window.makeFirstResponder(editor)
         editor.setSelectedRange(NSRange(location: 4, length: 0))
         editor.setMarkedText("\u{00B4}", selectedRange: NSRange(location: 1, length: 0),
@@ -271,6 +279,10 @@ struct OneUndoStackTests {
         let um = try #require(await bound(f, window))
         #expect(await f.eventually { self.textView(in: window.contentView!)?.string == "cafe\nbar   " })
         let editor = try #require(textView(in: window.contentView!))
+        // The editor takes focus a turn after it appears (#117); let that land before a
+        // composition starts, or re-asserting focus ends it — as it can't in use, where nobody
+        // types in the instant between the editor appearing and its focus request.
+        _ = await f.eventually { window.firstResponder === editor }
         window.makeFirstResponder(editor)
         editor.setSelectedRange(NSRange(location: 4, length: 0))
         editor.setMarkedText("\u{00B4}", selectedRange: NSRange(location: 1, length: 0),
@@ -298,6 +310,10 @@ struct OneUndoStackTests {
         let um = try #require(await bound(f, window))
         #expect(await f.eventually { self.textView(in: window.contentView!)?.string == "cafe" })
         let editor = try #require(textView(in: window.contentView!))
+        // The editor takes focus a turn after it appears (#117); let that land before a
+        // composition starts, or re-asserting focus ends it — as it can't in use, where nobody
+        // types in the instant between the editor appearing and its focus request.
+        _ = await f.eventually { window.firstResponder === editor }
         window.makeFirstResponder(editor)
         editor.setSelectedRange(NSRange(location: 4, length: 0))
         editor.setMarkedText("\u{00B4}", selectedRange: NSRange(location: 1, length: 0),
@@ -320,6 +336,10 @@ struct OneUndoStackTests {
         _ = try #require(await bound(f, window))
         #expect(await f.eventually { self.textView(in: window.contentView!)?.string == "cafe" })
         let editor = try #require(textView(in: window.contentView!))
+        // The editor takes focus a turn after it appears (#117); let that land before a
+        // composition starts, or re-asserting focus ends it — as it can't in use, where nobody
+        // types in the instant between the editor appearing and its focus request.
+        _ = await f.eventually { window.firstResponder === editor }
         window.makeFirstResponder(editor)
         editor.setSelectedRange(NSRange(location: 4, length: 0))
         editor.setMarkedText("\u{00B4}", selectedRange: NSRange(location: 1, length: 0),
@@ -348,6 +368,10 @@ struct OneUndoStackTests {
         let um = try #require(await bound(f, window))
         #expect(await f.eventually { self.textView(in: window.contentView!)?.string == "cafe\nbar   " })
         let editor = try #require(textView(in: window.contentView!))
+        // The editor takes focus a turn after it appears (#117); let that land before a
+        // composition starts, or re-asserting focus ends it — as it can't in use, where nobody
+        // types in the instant between the editor appearing and its focus request.
+        _ = await f.eventually { window.firstResponder === editor }
         window.makeFirstResponder(editor)
         // Each keystroke in a group of its own, as its event would give it (nothing closes an
         // automatic group in a test host, and registering outside one throws).
@@ -379,6 +403,10 @@ struct OneUndoStackTests {
         _ = try #require(await bound(f, window))
         #expect(await f.eventually { self.textView(in: window.contentView!)?.string == "cafe" })
         let editor = try #require(textView(in: window.contentView!))
+        // The editor takes focus a turn after it appears (#117); let that land before a
+        // composition starts, or re-asserting focus ends it — as it can't in use, where nobody
+        // types in the instant between the editor appearing and its focus request.
+        _ = await f.eventually { window.firstResponder === editor }
         window.makeFirstResponder(editor)
         editor.setSelectedRange(NSRange(location: 4, length: 0))
         editor.setMarkedText("\u{00B4}", selectedRange: NSRange(location: 1, length: 0),

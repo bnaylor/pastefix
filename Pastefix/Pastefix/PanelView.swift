@@ -154,6 +154,17 @@ struct PanelView: View {
                                 // belt and braces on the one path that sends data off the machine.
                                 .disabled(model.isApplying || isUploadOpen)
                                 .focused($editorFocused)
+                                // The editor exists only while text is showing, so a focus request
+                                // made while an image (or the placeholder) was up landed on nothing
+                                // and it came back without first responder, losing the first
+                                // keystroke (#117). A turn later, as `closePreview` does: the view
+                                // isn't in the window yet when this runs.
+                                .onAppear {
+                                    Task { @MainActor in
+                                        guard !isPaletteOpen, !isHistoryOpen, !isUploadOpen, !isPreviewing else { return }
+                                        focusEditorUnlessRefusedImage()
+                                    }
+                                }
                                 // Tearing the editor down (preview, an image entry, the placeholder)
                                 // removes its typing actions from the stack without a notification.
                                 .onDisappear { Task { @MainActor in model.refreshUndoState() } }
