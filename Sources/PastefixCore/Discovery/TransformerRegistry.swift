@@ -33,6 +33,7 @@ public struct TransformerRegistry {
             (20, "Transliterate to ASCII", Transliterate()),
             (30, "Wrap & Reflow", WrapReflow(width: config.wrapWidth)),
             (40, "Whitespace Cleanup", WhitespaceCleanup()),
+            (45, "Clean Claude Code Paste", CleanClaudePaste()),
             (50, "Clean URL Tracking", URLCleaner()),
             (60, "URL → Markdown Link", MarkdownLink()),
             (70, "camelCase", CaseConvert(style: .camel)),

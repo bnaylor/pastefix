@@ -16,7 +16,7 @@ import Foundation
         let ids = reg.load().map(\.id)
         #expect(ids == [
             "builtin.richtoplain", "builtin.richtomarkdown", "builtin.markdowntorich",
-            "builtin.transliterate", "builtin.wrapreflow", "builtin.whitespace",
+            "builtin.transliterate", "builtin.wrapreflow", "builtin.whitespace", "builtin.claudepaste",
             "builtin.urlclean", "builtin.markdownlink",
             "builtin.case.camel", "builtin.case.snake", "builtin.case.kebab", "builtin.case.constant",
             "builtin.json.pretty", "builtin.json.minify", "builtin.json.escape",
@@ -55,7 +55,7 @@ import Foundation
         let dir = FileManager.default.temporaryDirectory
             .appendingPathComponent("does-not-exist-\(UUID().uuidString)")
         let reg = TransformerRegistry(config: .init(scriptsDirectory: dir, wrapWidth: 80))
-        #expect(reg.load().count == 29)   // built-ins only, no crash
+        #expect(reg.load().count == 30)   // built-ins only, no crash
     }
 
     @Test func scriptKindsSurfaceAsApplicableKinds() throws {
@@ -75,6 +75,7 @@ import Foundation
         let byID = Dictionary(uniqueKeysWithValues: TransformerRegistry(config: .init(scriptsDirectory: dir, wrapWidth: 80)).load().map { ($0.id, $0.category) })
         #expect(byID["builtin.wrapreflow"] == TransformCategory.layout)
         #expect(byID["builtin.whitespace"] == TransformCategory.layout)
+        #expect(byID["builtin.claudepaste"] == TransformCategory.layout)
         #expect(byID["builtin.richtoplain"] == TransformCategory.richText)
         #expect(byID["builtin.richtomarkdown"] == TransformCategory.richText)
         #expect(byID["builtin.markdowntorich"] == TransformCategory.richText)
