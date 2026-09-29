@@ -22,7 +22,10 @@ jobs:
       - name: Toolchain
         run: xcodebuild -version && swift --version
       - name: Package tests (PastefixCore, PastefixAppCore)
-        # Serial while the first runs are diagnosed: a hang then names the test that never ends.
+        # Serial on purpose. The runner has 3 cores, so Swift's cooperative pool is 3 threads, and
+        # the first parallel run deadlocked: tests ran Vision synchronously on pool threads, and
+        # Vision waits on work that needs one (fixed: OffThePool). Timing-sensitive tests (lanes,
+        # deadlines, schedulers) still fail on a pool that narrow; serial takes ~50 s and is exact.
         run: swift test --no-parallel
         timeout-minutes: 15
         env:
