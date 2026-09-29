@@ -7,8 +7,8 @@ import Foundation
 /// clipboard held; the overlay scans it with `SecretDetector.scanIgnoringSizeCap` (a
 /// straight-line run with no cancellation point, on a detached pool thread), `SecretRedactor`
 /// builds a second full copy of it, and the client builds a third as the multipart body. At the
-/// measured 0.85 s per 4 MB, a 100 MB paste is ~20 s of an *uncancellable* thread and roughly
-/// 3× its size resident — and dismissing the overlay drops the result without stopping the work,
+/// measured 0.85 s per 4 MB (debug), a 100 MB paste is ~20 s of an *uncancellable* thread and
+/// several times its size resident — and dismissing the overlay drops the result without stopping the work,
 /// so a second ⌘⇧U starts another one alongside it. This repo's rule is that input caps bound
 /// the work and the deadline bounds the wait; every other `SecretDetector` consumer already has
 /// a cap, and this path had none.
@@ -21,10 +21,17 @@ public enum UploadLimits {
     /// 16 MB of *text*. Generous for a paste — a 16 MB buffer is on the order of two million
     /// words — while bounding what the cap actually buys:
     ///
-    /// - **Work:** ~3.4 s of an uncancellable detached scan at the measured 0.85 s/4 MB, rather
-    ///   than the unbounded ~20 s a 100 MB paste cost.
-    /// - **Memory:** ~3× resident at the peak (source + redacted copy + multipart body), so
-    ///   ~48 MB, not ~300 MB.
+    /// Measured at the ceiling (#64, M4 Max, release build, `UploadPathMeasurement`), not
+    /// extrapolated as it first was:
+    ///
+    /// - **Work:** the uncapped scan is linear all the way — 0.58 s at 4 MB, 2.3 s at 16 MB on a
+    ///   secret-dense ASCII log; 3.0 s with non-ASCII prose mixed in, which takes the confusable
+    ///   fold (#102). Redaction and the multipart body are milliseconds. Against the unbounded
+    ///   ~20 s a 100 MB paste cost.
+    /// - **Memory:** ~7× the payload at the peak, not the ~3× first guessed: ~105–115 MB over
+    ///   baseline at 16 MB. The scan's UTF-16 views of the text (the `NSString` bridge, the JWT
+    ///   walk, the fold) are twice the UTF-8 size each, on top of the source, the redacted copy and
+    ///   the body. Transient, one at a time (`UploadTextScan.lane`), and not ~700 MB.
     /// - **Transfer:** it has to be *sendable*, which is what `resourceTimeout` below exists to
     ///   guarantee. A cap that admits a size the client cannot finish sending is not a cap, it
     ///   is a slower failure.
