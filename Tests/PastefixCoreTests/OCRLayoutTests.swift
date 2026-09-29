@@ -39,12 +39,77 @@ struct OCRLayoutTests {
         #expect(t.allSatisfy { $0.maxX <= 5000 && $0.maxY <= 2100 })
     }
 
-    @Test("an observation seen twice in an overlap is kept once; a fragment inside a whole is dropped")
-    func dedupe() {
-        let a = o("same", x: 2000, y: 10, w: 60), b = o("same", x: 2002, y: 11, w: 60)
-        let whole = o("abcdef", x: 1990, y: 50, w: 120), fragment = o("abc", x: 1990, y: 50, w: 55)
-        let kept = OCRLayout.deduplicated([a, b, whole, fragment, o("other", x: 10, y: 10)])
-        #expect(kept.map(\.text).sorted() == ["abcdef", "other", "same"])
+    /// An observation with one box per character, evenly spaced from `x`, as Vision reports them.
+    private func chars(_ text: String, x: CGFloat, y: CGFloat = 10, charWidth: CGFloat = 17, h: CGFloat = 20) -> OCRObservation {
+        let boxes = (0..<text.count).map { CGRect(x: x + CGFloat($0) * charWidth, y: y, width: charWidth, height: h) }
+        return OCRObservation(text: text, box: CGRect(x: x, y: y, width: CGFloat(text.count) * charWidth, height: h),
+                              characterBoxes: boxes)
+    }
+
+    // #105 review, measured on real tiled Vision output: a token across the 1984–2048 overlap came
+    // out as two halves, overlap characters duplicated, a space inside the token — and each tile
+    // misread the glyph its edge cut. Each tile now owns its half of the overlap, per character.
+    @Test("a token across a tile boundary: each tile keeps only the characters it owns, and the halves join with no space")
+    func ownershipJoinsAStraddlingToken() {
+        let token = "ghp_aB3cD5eF7gH9iJkLmNpQrStUvWxYz"            // 34 chars, 17 px each
+        let start: CGFloat = 1700                                  // straddles the 2016 midline
+        // Left tile [0, 2048): sees the token up to its edge; its last glyph is cut and misread.
+        let leftSeen = String(token.prefix(20)) + "!"               // 21 chars: 1700…2057, clipped reading
+        // Right tile [1984, …): starts mid-glyph, with a misread first glyph.
+        let skip = Int((1984 - start) / 17)                         // first whole char index in the right tile
+        let rightSeen = ")" + String(token.dropFirst(skip + 1))
+        let left = OCRLayout.owned([chars(leftSeen, x: start)],
+                                   tile: CGRect(x: 0, y: 0, width: 2048, height: 2048), imageWidth: 5120, imageHeight: 1400)
+        let right = OCRLayout.owned([chars(rightSeen, x: start + CGFloat(skip) * 17)],
+                                    tile: CGRect(x: 1984, y: 0, width: 2048, height: 2048), imageWidth: 5120, imageHeight: 1400)
+        let line = OCRLayout.lines(left + right)
+        #expect(line == [token])
+    }
+
+    /// Boxes as Vision `.accurate` really reports them (measured, #105 review): every character of a
+    /// word carries the WORD's box, and a space carries an empty one.
+    private func wordBoxed(_ words: [(String, CGFloat, CGFloat)], y: CGFloat = 10, h: CGFloat = 20) -> OCRObservation {
+        var text = "", boxes: [CGRect] = []
+        for (i, (word, minX, maxX)) in words.enumerated() {
+            if i > 0 { text += " "; boxes.append(.zero) }
+            text += word
+            boxes += Array(repeating: CGRect(x: minX, y: y, width: maxX - minX, height: h), count: word.count)
+        }
+        let all = boxes.filter { $0 != .zero }.reduce(CGRect.null) { $0.union($1) }
+        return OCRObservation(text: text, box: all, characterBoxes: boxes)
+    }
+
+    // The measured case, as Vision really boxed it: left tile's word "GITHUB_TOKEN=ghp_aB3cD5eFi"
+    // at 1614–2045 (its "i" a misread of the glyph its edge cut), right tile's "5eF7gH9iJkMnPqRsTuVwXyZ23"
+    // at 1984–2417. Characters are spread across their word's box, and each tile keeps its own.
+    @Test("word-level boxes (what Vision reports): the straddling token comes out whole, spaces kept")
+    func ownershipWithWordLevelBoxes() {
+        let leftTile = CGRect(x: 0, y: 0, width: 2048, height: 1400)
+        let rightTile = CGRect(x: 1984, y: 0, width: 2048, height: 1400)
+        let left = OCRLayout.owned([wordBoxed([("export", 1497, 1610), ("GITHUB_TOKEN=ghp_aB3cD5eFi", 1614, 2045)])],
+                                   tile: leftTile, imageWidth: 5120, imageHeight: 1400)
+        let right = OCRLayout.owned([wordBoxed([("5eF7gH9iJkMnPqRsTuVwXyZ23", 1984, 2417), ("#", 2421, 2450), ("trailing", 2454, 2594)])],
+                                    tile: rightTile, imageWidth: 5120, imageHeight: 1400)
+        #expect(OCRLayout.lines(left + right) == ["export GITHUB_TOKEN=ghp_aB3cD5eF7gH9iJkMnPqRsTuVwXyZ23 # trailing"])
+    }
+
+    @Test("an observation without character boxes is owned by the tile holding its centre")
+    func ownershipWithoutCharacterBoxes() {
+        let tile = CGRect(x: 1984, y: 0, width: 2048, height: 2048)
+        #expect(OCRLayout.owned([o("left of the midline", x: 1900, y: 10, w: 100)], tile: tile, imageWidth: 5120, imageHeight: 1400).isEmpty)
+        #expect(OCRLayout.owned([o("right of it", x: 2100, y: 10, w: 100)], tile: tile, imageWidth: 5120, imageHeight: 1400).count == 1)
+    }
+
+    @Test("the image's own edges are owned outright; only shared overlaps are split")
+    func ownershipAtImageEdges() {
+        let only = CGRect(x: 0, y: 0, width: 1000, height: 800)
+        #expect(OCRLayout.owned([chars("edge", x: 0), chars("tail", x: 930)], tile: only, imageWidth: 1000, imageHeight: 800)
+                    .map(\.text) == ["edge", "tail"])
+    }
+
+    @Test("separate words keep their space")
+    func wordsKeepTheirSpace() {
+        #expect(OCRLayout.lines([chars("hello", x: 10), chars("world", x: 10 + 5 * 17 + 17)]) == ["hello world"])
     }
 
     @Test("under 4096 px: whole only, and tiles only when the whole pass is empty")

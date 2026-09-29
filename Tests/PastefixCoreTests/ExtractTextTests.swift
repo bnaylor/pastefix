@@ -47,6 +47,36 @@ struct ExtractTextTests {
         #expect(request.automaticallyDetectsLanguage)
     }
 
+    /// A wide render with text laid across the first tile boundary (x 1984–2048), as the #105 review
+    /// measured it: 5120 wide so the dual pass runs, Menlo 28.
+    static func straddling(_ lines: [(String, CGFloat)]) -> CGImage? {
+        let width = 5120, height = 1400
+        guard let ctx = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+                                  space: CGColorSpaceCreateDeviceRGB(),
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+        ctx.setFillColor(gray: 1, alpha: 1); ctx.fill(CGRect(x: 0, y: 0, width: width, height: height))
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(cgContext: ctx, flipped: false)
+        for (i, (line, x)) in lines.enumerated() {
+            (line as NSString).draw(at: NSPoint(x: x, y: CGFloat(height) - 200 - CGFloat(i) * 90),
+                                    withAttributes: [.font: NSFont(name: "Menlo", size: 28)!, .foregroundColor: NSColor.black])
+        }
+        NSGraphicsContext.restoreGraphicsState()
+        return ctx.makeImage()
+    }
+
+    // #105 review: tiled output split a token that crossed a tile boundary, duplicated the overlap's
+    // characters, and put a space inside the token. The token avoids 0/O and 1/l, which Menlo's
+    // glyphs make Vision confuse wherever they sit.
+    @Test("a token across a tile boundary comes out whole from the tiled pass")
+    func straddlingToken() throws {
+        let token = "ghp_aB3cD5eF7gH9iJkMnPqRsTuVwXyZ23"
+        let image = try #require(Self.straddling([("export GITHUB_TOKEN=\(token) # trailing", 1500)]))
+        let lines = OCRLayout.lines(try TextRecognizer.recognizeTiled(image))
+        let line = try #require(lines.first { $0.contains("ghp_") })
+        #expect(line.contains(token), "tiled line was: \(line)")
+    }
+
     @Test("an image with no text is nothing to do")
     func noText() throws {
         let png = try #require(Self.render([]))

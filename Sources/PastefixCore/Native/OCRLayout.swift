@@ -2,10 +2,15 @@ import Foundation
 import CoreGraphics
 
 /// One piece of recognised text and where it sits, in image pixels with the origin at the top left.
+/// `characterBoxes` holds one box per `Character` when Vision supplied them (empty otherwise); tiling
+/// uses them to decide, character by character, which tile owns what an overlap saw twice.
 public struct OCRObservation: Sendable, Equatable {
     public let text: String
     public let box: CGRect
-    public init(text: String, box: CGRect) { self.text = text; self.box = box }
+    public let characterBoxes: [CGRect]
+    public init(text: String, box: CGRect, characterBoxes: [CGRect] = []) {
+        self.text = text; self.box = box; self.characterBoxes = characterBoxes
+    }
 }
 
 /// The pure half of OCR (#19): how observations become lines, how an image is tiled, and when to
@@ -32,7 +37,21 @@ public enum OCRLayout {
                 groups.append((obs.box.minY, obs.box.maxY, [obs]))
             }
         }
-        return groups.map { $0.members.sorted { $0.box.minX < $1.box.minX }.map(\.text).joined(separator: " ") }
+        return groups.map { group in
+            // Fragments whose boxes meet (a gap under half a character — estimated positions carry
+            // some slop) are one token cut by a tile boundary and join with no space; anything further
+            // apart, a real space being a whole character wide, is separate words.
+            var line = "", previous: OCRObservation?
+            for obs in group.members.sorted(by: { $0.box.minX < $1.box.minX }) {
+                if let previous {
+                    let charWidth = obs.box.width / CGFloat(max(obs.text.count, 1))
+                    line += obs.box.minX - previous.box.maxX < charWidth / 2 ? "" : " "
+                }
+                line += obs.text
+                previous = obs
+            }
+            return line
+        }
     }
 
     private static func verticalOverlap(_ a0: CGFloat, _ a1: CGFloat, _ b0: CGFloat, _ b1: CGFloat) -> CGFloat {
@@ -52,22 +71,61 @@ public enum OCRLayout {
         }
     }
 
-    /// Drops what the overlaps recognised twice: the same text in boxes that mostly coincide, and a
-    /// fragment whose box lies mostly inside a longer observation that contains its text.
-    public static func deduplicated(_ observations: [OCRObservation]) -> [OCRObservation] {
-        var kept: [OCRObservation] = []
-        for obs in observations.sorted(by: { $0.text.count > $1.text.count }) {
-            let duplicate = kept.contains { k in
-                let shared = k.box.intersection(obs.box)
-                guard !shared.isNull else { return false }
-                let area = shared.width * shared.height
-                let sameText = k.text == obs.text && area >= 0.5 * min(k.box.width * k.box.height, obs.box.width * obs.box.height)
-                let fragment = k.text.contains(obs.text) && area >= 0.8 * obs.box.width * obs.box.height
-                return sameText || fragment
-            }
-            if !duplicate { kept.append(obs) }
+    /// The observations a tile *owns*. Each tile shares half of every overlap with its neighbour
+    /// (the image's own edges are owned outright), so every character belongs to exactly one tile:
+    /// a character is kept when its box's centre lies in the owned region. That drops what an overlap
+    /// saw twice, and the glyph a tile's edge cut in half — which each tile misreads differently, so
+    /// no text comparison could match the two halves (#105 review, measured on real tiled output).
+    /// An observation without character boxes is kept whole when its centre is owned.
+    public static func owned(_ observations: [OCRObservation], tile: CGRect, imageWidth: Int, imageHeight: Int) -> [OCRObservation] {
+        let half = CGFloat(tileOverlap) / 2
+        let region = CGRect(
+            x: tile.minX > 0 ? tile.minX + half : tile.minX,
+            y: tile.minY > 0 ? tile.minY + half : tile.minY,
+            width: 0, height: 0)
+        let maxX = tile.maxX < CGFloat(imageWidth) ? tile.maxX - half : .infinity
+        let maxY = tile.maxY < CGFloat(imageHeight) ? tile.maxY - half : .infinity
+        func isOwned(_ box: CGRect) -> Bool {
+            box.midX >= region.minX && box.midX < maxX && box.midY >= region.minY && box.midY < maxY
         }
-        return kept
+        return observations.compactMap { obs in
+            guard obs.characterBoxes.count == obs.text.count else { return isOwned(obs.box) ? obs : nil }
+            let characters = Array(obs.text)
+            let estimated = estimatedBoxes(characters, obs.characterBoxes)
+            // A space has no box worth judging (Vision gives it an empty one), so it goes with the
+            // character before it — or, at the start, the first character after it that has a box.
+            var decisions: [Bool] = estimated.map { $0.map(isOwned) ?? false }
+            for i in characters.indices where estimated[i] == nil {
+                let before = characters.indices.prefix(i).last { estimated[$0] != nil }
+                let after = characters.indices.suffix(from: i + 1).first { estimated[$0] != nil }
+                decisions[i] = (before ?? after).map { decisions[$0] } ?? false
+            }
+            let kept = characters.indices.filter { decisions[$0] }
+            guard let box = kept.compactMap({ estimated[$0] }).reduce(nil, { (acc: CGRect?, r) in acc.map { $0.union(r) } ?? r })
+            else { return nil }
+            return OCRObservation(text: String(kept.map { characters[$0] }), box: box,
+                                  characterBoxes: kept.map { estimated[$0] ?? box })
+        }
+    }
+
+    /// Where each character really is. Vision's `.accurate` recogniser gives every character of a
+    /// word the WORD's box (measured, #105 review), so a run of characters sharing one box is spread
+    /// evenly across it — exact for monospace, close for proportional text. Whitespace, whose box
+    /// Vision leaves empty, gets nil and inherits its neighbour's ownership.
+    static func estimatedBoxes(_ characters: [Character], _ boxes: [CGRect]) -> [CGRect?] {
+        var out = [CGRect?](repeating: nil, count: characters.count)
+        var i = 0
+        while i < characters.count {
+            if characters[i].isWhitespace || boxes[i].width <= 0 { i += 1; continue }
+            var j = i
+            while j + 1 < characters.count, !characters[j + 1].isWhitespace, boxes[j + 1] == boxes[i] { j += 1 }
+            let run = boxes[i], count = CGFloat(j - i + 1), step = run.width / count
+            for k in i...j {
+                out[k] = CGRect(x: run.minX + CGFloat(k - i) * step, y: run.minY, width: step, height: run.height)
+            }
+            i = j + 1
+        }
+        return out
     }
 
     public static func characterCount(_ observations: [OCRObservation]) -> Int {
