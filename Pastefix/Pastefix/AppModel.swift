@@ -772,6 +772,17 @@ final class AppModel: ObservableObject {
         editors().first { $0.hasMarkedText() }?.string
     }
 
+    /// The editor's own selection while it holds marked text, else nil. `PanelView`'s selection
+    /// binding reads this first, for the same reason as `composingEditorText`: on a re-render
+    /// SwiftUI re-applies the selection binding (`setSelectedRanges` → `_NSClearMarkedRange`), and a
+    /// selection the binding hadn't caught up with ended the composition — the "´" was dropped
+    /// (a 1-in-10 flake of `compositionSurvivesARerender`, caught with a stack of the edit).
+    func composingEditorSelection() -> TextSelection? {
+        guard let text = editors().first(where: { $0.hasMarkedText() }),
+              let range = Range(text.selectedRange(), in: text.string) else { return nil }
+        return TextSelection(range: range)
+    }
+
     /// Ends any composition at a session boundary, BEFORE the document is replaced: unmarking
     /// writes the text through the binding, which must land in the session that is ending, not
     /// the new one (measured: a refresh mid-composition put "cafe´" into the fresh session). It also
