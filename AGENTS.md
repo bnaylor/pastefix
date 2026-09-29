@@ -116,6 +116,7 @@ Sources/PastefixCore/
   Detection/
     ContentKind.swift                 # url | json | color | jwt | base64 | percentEncoded | htmlEntities | markdown | secret (+ displayName)
     ContentDetector.swift             # detect(_:) -> Set<ContentKind>, 1 MB guard; detect(_:secrets:) takes an already-computed scan so a caller needing the ranges too scans once
+    Confusables.swift                 # #102: folds lookalikes (Cyrillic/Greek/fullwidth/dashes/Ø/×) to ASCII for the secret scan's INPUT only; one BMP unit → one ASCII unit, so ranges stay valid in the original
     SecretDetector.swift              # SecretKind, SecretMatch, scan(_:) (256 KB guard, calls scanIgnoringSizeCap) + entropy(_:); scanIgnoringSizeCap(_:) — the uncapped entry point for the one deliberate off-main caller (the Zipline upload path, Plan 13); SecretRedactor.redact(_:matches:)
     MarkdownDetector.swift            # looksLikeMarkdown(_:) heuristic; CRLF/CR normalised to LF first, capped at 64 KB / 400 lines
     URLFinder.swift                   # internal http(s) link ranges (NSDataDetector); 256 KB maxBytes cap (matches SecretDetector), enumerateMatches(options: [.reportProgress]) so a cancelled Task.isCancelled stops the scan early and a partial list is only ever returned to a caller that discards it
