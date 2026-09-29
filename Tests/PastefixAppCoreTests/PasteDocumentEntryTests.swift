@@ -101,6 +101,26 @@ struct PasteDocumentEntryTests {
         #expect(d.currentNote == nil && !d.canRedo)
     }
 
+    // Plan 21: ⌘Z is the editor's typing undo in a text session (#103). While text a transform
+    // produced from an image is untouched, ⌘Z restores the image instead.
+    @Test("undoRestoresImage: untouched text over an image, until the user types")
+    func undoRestoresImage() {
+        var d = imageDoc()
+        #expect(!d.undoRestoresImage, "on the image itself")
+        d.pushState("recognised")
+        #expect(d.undoRestoresImage)
+        // Review Focus 3: a write-back of the same text (focus, end of editing) is not typing.
+        d.setWorking("recognised")
+        #expect(d.undoRestoresImage)
+        d.setWorking("recognised!")
+        #expect(!d.undoRestoresImage)
+        // Review Focus 5: typing back to the recognised text still counts as edited.
+        d.setWorking("recognised")
+        #expect(!d.undoRestoresImage)
+        let text = PasteDocument(origin: ClipboardSnapshot(plainText: "hello", richRTFD: nil))
+        #expect(!text.undoRestoresImage, "a text session never restores an image")
+    }
+
     @Test("byte counts count text only")
     func byteCounts() {
         var d = imageDoc()

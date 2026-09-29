@@ -21,6 +21,10 @@ public struct PasteDocument: Sendable {
     /// identical to its original, so this is how the user can tell which one they are on — and it
     /// can never be stale, because it describes the entry it sits beside (Plan 20, GUI pass).
     private var entryNotes: [String?]
+    /// Whether each entry has been typed into since it was pushed. Only `setWorking` with
+    /// *different* text sets it — the TextEditor writes the same text back on focus and at the end
+    /// of editing, and that is not typing. Decides `undoRestoresImage` (Plan 21).
+    private var entryEdited: [Bool]
     public private(set) var cursor: Int
     /// Detection for `working`. Pending after every discrete event (init, push, undo, redo,
     /// refresh) until the scheduler delivers a result for `detectionRevision`; the struct never
@@ -47,6 +51,7 @@ public struct PasteDocument: Sendable {
         self.entries = [first]
         self.entryByteCounts = [Self.byteCount(of: first)]
         self.entryNotes = [nil]
+        self.entryEdited = [false]
         self.cursor = 0
         self.outputMode = .plain
     }
@@ -65,6 +70,15 @@ public struct PasteDocument: Sendable {
     }
 
     public var currentEntry: Entry { entries[cursor] }
+    /// True when ⌘Z should restore an image rather than undo typing: the current entry is text a
+    /// transform pushed over an image entry (OCR), and the user hasn't typed into it. In a text
+    /// session ⌘Z is the editor's typing undo (#103); until there is typing to undo, the image is
+    /// what the user expects back. Typing back to the original text still counts as edited.
+    public var undoRestoresImage: Bool {
+        guard cursor > 0, case .text = currentEntry, case .image = entries[cursor - 1] else { return false }
+        return !entryEdited[cursor]
+    }
+
     /// The note the transform that produced the current entry left, if any.
     public var currentNote: String? { entryNotes[cursor] }
     /// The current entry's text, or `""` on an image entry — what an image session has always
@@ -260,6 +274,8 @@ public struct PasteDocument: Sendable {
         entryByteCounts.append(Self.byteCount(of: entry))
         entryNotes = Array(entryNotes.prefix(cursor + 1))
         entryNotes.append(note)
+        entryEdited = Array(entryEdited.prefix(cursor + 1))
+        entryEdited.append(false)
         cursor = entries.count - 1
         invalidateDetection()
     }
@@ -273,7 +289,8 @@ public struct PasteDocument: Sendable {
     /// re-detect: kinds are recomputed only on the discrete events (init, push, undo/redo,
     /// refresh), so the palette order stays pinned while the user types.
     public mutating func setWorking(_ text: String) {
-        guard case .text = currentEntry else { return }
+        guard case .text(let current) = currentEntry else { return }
+        if current != text { entryEdited[cursor] = true }
         entries[cursor] = .text(text)
         entryByteCounts[cursor] = text.utf8.count
     }

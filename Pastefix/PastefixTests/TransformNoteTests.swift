@@ -61,6 +61,15 @@ struct TransformNoteTests {
         #expect(f.model.transformNote == "Removed location details.")
     }
 
+    @Test("OCR output containing a secret gets the badge, like any other text")
+    func ocrSecretBadge() async throws {
+        let f = try ModelFixture(); defer { f.finish() }
+        let png = try #require(Pixels.encoded(width: 20, height: 10, type: "public.png"))
+        f.model.beginSession(from: ClipboardSnapshot(plainText: nil, richRTFD: nil, imagePNG: png))
+        f.model.apply(Noting(result: .text("token: ABCD1234EFGH5678ijkl")))
+        #expect(await f.eventually { f.model.document?.secretMatches.isEmpty == false })
+    }
+
     @Test("Save on an image entry ignores an armed output mode")
     func saveIgnoresArmedMode() async throws {
         let f = try ModelFixture(); defer { f.finish() }
