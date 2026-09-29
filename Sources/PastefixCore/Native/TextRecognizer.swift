@@ -39,18 +39,18 @@ enum TextRecognizer {
         }
     }
 
-    /// Recognises each tile, maps its observations back into the whole image, and keeps only what
-    /// each tile owns (`OCRLayout.owned`), so an overlap contributes every character exactly once.
+    /// Recognises each tile, maps its observations back into the whole image, and merges them
+    /// (`OCRLayout.merged`): whole words taken as Vision read them, each once.
     static func recognizeTiled(_ image: CGImage) throws -> [OCRObservation] {
-        var all: [OCRObservation] = []
+        var perTile: [(tile: CGRect, observations: [OCRObservation])] = []
         for tile in OCRLayout.tiles(width: image.width, height: image.height) {
             guard let cropped = image.cropping(to: tile) else { continue }
             let mapped = try recognize(cropped).map {
                 OCRObservation(text: $0.text, box: $0.box.offsetBy(dx: tile.minX, dy: tile.minY),
                                characterBoxes: $0.characterBoxes.map { $0.offsetBy(dx: tile.minX, dy: tile.minY) })
             }
-            all += OCRLayout.owned(mapped, tile: tile, imageWidth: image.width, imageHeight: image.height)
+            perTile.append((tile, mapped))
         }
-        return all
+        return OCRLayout.merged(perTile, imageWidth: image.width, imageHeight: image.height)
     }
 }

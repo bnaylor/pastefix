@@ -66,11 +66,12 @@ struct ExtractTextTests {
     }
 
     // #105 review: tiled output split a token that crossed a tile boundary, duplicated the overlap's
-    // characters, and put a space inside the token. The token avoids 0/O and 1/l, which Menlo's
-    // glyphs make Vision confuse wherever they sit.
+    // characters, and put a space inside the token. The token avoids glyphs Vision confuses wherever
+    // they sit — 0/O, 1/l, and letters whose cases look alike (c k o s u v w x y z; measured: "k" read
+    // as "K" mid-token) — so a failure here is the seam's, not an ordinary misread.
     @Test("a token across a tile boundary comes out whole from the tiled pass")
     func straddlingToken() throws {
-        let token = "ghp_aB3cD5eF7gH9iJkMnPqRsTuVwXyZ23"
+        let token = "ghp_aB3dE5fG7hJ9mNqR2tA4bD6eF8gHn"
         let image = try #require(Self.straddling([("export GITHUB_TOKEN=\(token) # trailing", 1500)]))
         let lines = OCRLayout.lines(try TextRecognizer.recognizeTiled(image))
         let line = try #require(lines.first { $0.contains("ghp_") })

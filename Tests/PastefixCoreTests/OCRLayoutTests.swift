@@ -28,15 +28,13 @@ struct OCRLayoutTests {
                 == ["export TOKEN=xoxb- 1234abcd"])
     }
 
-    @Test("tiles cover the image, overlap by 64 px, and clip at the edges")
+    @Test("tiles cover the image, overlap by 768 px, and clip at the edges")
     func tiles() {
         #expect(OCRLayout.tiles(width: 1000, height: 800) == [CGRect(x: 0, y: 0, width: 1000, height: 800)])
-        let t = OCRLayout.tiles(width: 5000, height: 2100)
-        #expect(t.count == 3 * 2)
-        #expect(t.contains(CGRect(x: 0, y: 0, width: 2048, height: 2048)))
-        #expect(t.contains(CGRect(x: 1984, y: 0, width: 2048, height: 2048)))       // 2048 - 64
-        #expect(t.contains(CGRect(x: 3968, y: 1984, width: 1032, height: 116)))     // clipped
-        #expect(t.allSatisfy { $0.maxX <= 5000 && $0.maxY <= 2100 })
+        let t = OCRLayout.tiles(width: 5000, height: 1400)
+        #expect(t.map(\.minX) == [0, 1280, 2560, 3840])                  // step 2048 - 768
+        #expect(t.last == CGRect(x: 3840, y: 0, width: 1160, height: 1400))
+        #expect(t.allSatisfy { $0.maxX <= 5000 && $0.maxY <= 1400 })
     }
 
     /// An observation with one box per character, evenly spaced from `x`, as Vision reports them.
@@ -59,9 +57,9 @@ struct OCRLayoutTests {
         let skip = Int((1984 - start) / 17)                         // first whole char index in the right tile
         let rightSeen = ")" + String(token.dropFirst(skip + 1))
         let left = OCRLayout.owned([chars(leftSeen, x: start)],
-                                   tile: CGRect(x: 0, y: 0, width: 2048, height: 2048), imageWidth: 5120, imageHeight: 1400)
+                                   tile: CGRect(x: 0, y: 0, width: 2048, height: 2048), imageWidth: 5120, imageHeight: 1400, overlap: 64)
         let right = OCRLayout.owned([chars(rightSeen, x: start + CGFloat(skip) * 17)],
-                                    tile: CGRect(x: 1984, y: 0, width: 2048, height: 2048), imageWidth: 5120, imageHeight: 1400)
+                                    tile: CGRect(x: 1984, y: 0, width: 2048, height: 2048), imageWidth: 5120, imageHeight: 1400, overlap: 64)
         let line = OCRLayout.lines(left + right)
         #expect(line == [token])
     }
@@ -87,24 +85,81 @@ struct OCRLayoutTests {
         let leftTile = CGRect(x: 0, y: 0, width: 2048, height: 1400)
         let rightTile = CGRect(x: 1984, y: 0, width: 2048, height: 1400)
         let left = OCRLayout.owned([wordBoxed([("export", 1497, 1610), ("GITHUB_TOKEN=ghp_aB3cD5eFi", 1614, 2045)])],
-                                   tile: leftTile, imageWidth: 5120, imageHeight: 1400)
+                                   tile: leftTile, imageWidth: 5120, imageHeight: 1400, overlap: 64)
         let right = OCRLayout.owned([wordBoxed([("5eF7gH9iJkMnPqRsTuVwXyZ23", 1984, 2417), ("#", 2421, 2450), ("trailing", 2454, 2594)])],
-                                    tile: rightTile, imageWidth: 5120, imageHeight: 1400)
+                                    tile: rightTile, imageWidth: 5120, imageHeight: 1400, overlap: 64)
         #expect(OCRLayout.lines(left + right) == ["export GITHUB_TOKEN=ghp_aB3cD5eF7gH9iJkMnPqRsTuVwXyZ23 # trailing"])
     }
 
     @Test("an observation without character boxes is owned by the tile holding its centre")
     func ownershipWithoutCharacterBoxes() {
         let tile = CGRect(x: 1984, y: 0, width: 2048, height: 2048)
-        #expect(OCRLayout.owned([o("left of the midline", x: 1900, y: 10, w: 100)], tile: tile, imageWidth: 5120, imageHeight: 1400).isEmpty)
-        #expect(OCRLayout.owned([o("right of it", x: 2100, y: 10, w: 100)], tile: tile, imageWidth: 5120, imageHeight: 1400).count == 1)
+        #expect(OCRLayout.owned([o("left of the midline", x: 1900, y: 10, w: 100)], tile: tile, imageWidth: 5120, imageHeight: 1400, overlap: 64).isEmpty)
+        #expect(OCRLayout.owned([o("right of it", x: 2100, y: 10, w: 100)], tile: tile, imageWidth: 5120, imageHeight: 1400, overlap: 64).count == 1)
     }
 
     @Test("the image's own edges are owned outright; only shared overlaps are split")
     func ownershipAtImageEdges() {
         let only = CGRect(x: 0, y: 0, width: 1000, height: 800)
-        #expect(OCRLayout.owned([chars("edge", x: 0), chars("tail", x: 930)], tile: only, imageWidth: 1000, imageHeight: 800)
+        #expect(OCRLayout.owned([chars("edge", x: 0), chars("tail", x: 930)], tile: only, imageWidth: 1000, imageHeight: 800, overlap: 64)
                     .map(\.text) == ["edge", "tail"])
+    }
+
+    // #105 review, second sweep: estimating character positions left a one-character error at the
+    // seam in 30 of 105 lines. With an overlap wider than a word, every word is whole in at least one
+    // tile — keep Vision's own word, never estimate.
+    private let left = CGRect(x: 0, y: 0, width: 2048, height: 1400)
+    private let right = CGRect(x: 1280, y: 0, width: 2048, height: 1400)
+    private func merged(_ l: [OCRObservation], _ r: [OCRObservation]) -> [String] {
+        OCRLayout.lines(OCRLayout.merged([(left, l), (right, r)], imageWidth: 3328, imageHeight: 1400))
+    }
+
+    @Test("a word cut by one tile's edge is taken whole from the tile that holds it")
+    func cutWordFromTheOtherTile() {
+        // Left tile cuts "ghp_token…" at its edge (2048) and misreads the cut glyph; right holds it.
+        let l = [wordBoxed([("before", 1500, 1600), ("ghp_tokenAB!", 1700, 2046)])]
+        let r = [wordBoxed([("before", 1500, 1600), ("ghp_tokenABCDEFG", 1700, 2150)])]
+        #expect(merged(l, r) == ["before ghp_tokenABCDEFG"])
+    }
+
+    @Test("a word whole in both tiles is kept once")
+    func wholeInBoth() {
+        #expect(merged([wordBoxed([("shared", 1500, 1700)])], [wordBoxed([("shared", 1501, 1699)])]) == ["shared"])
+    }
+
+    @Test("a word longer than the overlap is cut in both tiles, and falls back to the owned halves")
+    func overlongWord() {
+        // 1100–2300: left view cut at 2048, right view cut at 1280. Monospace, 20 px a character.
+        let token = String(repeating: "abcdefghij", count: 6)          // 60 chars, 1200 px
+        let l = [wordBoxed([(String(token.prefix(47)), 1100, 2046)])]
+        let r = [wordBoxed([(String(token.dropFirst(9)), 1280, 2300)])]
+        #expect(merged(l, r) == [token])
+    }
+
+    // The sweep's two seam failures (Menlo 28 and Times 30, shift −150): each tile split the text into
+    // words differently. The left tile read "…ghp_aB3dE5f" whole and "G7hJ…" cut at its edge; the
+    // right tile read one fragment cut at ITS edge covering both. That fragment overlapped the whole
+    // word by just over half, was taken for a duplicate, and the rest of the token was lost.
+    // Whole words are authoritative; fragments fill only the gaps between them.
+    @Test("a fragment fills the gap next to a whole word instead of being dropped as its duplicate")
+    func fragmentFillsTheGap() {
+        // The sweep's geometry: 17 px a character, "export " at 1150, so "GITHUB…" starts at 1269 and
+        // the 47-character word runs to 2068 — past the left tile's edge (2048). Left tile
+        // [0, 2048), right tile [1280, 3328), midline 1664.
+        let l = [wordBoxed([("export", 1150, 1252), ("GITHUB_TOKEN=ghp_aB3dE5f", 1269, 1677),
+                            ("G7hJ9mNqR2tA4bD6eF8g", 1677, 2045)])]
+        let r = [wordBoxed([("ITHUB_TOKEN=ghp_aB3dE5fG7hJ9mNqR2tA4bD6eF8gHn", 1286, 2068), ("#", 2085, 2102)])]
+        #expect(merged(l, r) == ["export GITHUB_TOKEN=ghp_aB3dE5fG7hJ9mNqR2tA4bD6eF8gHn #"])
+    }
+
+    @Test("whole wins unless it is empty or tiled beats it by more than 5%")
+    func choiceMargin() throws {
+        let whole = [o(String(repeating: "x", count: 262), x: 0, y: 0)]
+        let tiled3 = [o(String(repeating: "y", count: 271), x: 0, y: 0)]      // +3%: seam duplicates
+        let tiledMore = [o(String(repeating: "z", count: 400), x: 0, y: 0)]
+        #expect(try OCRLayout.recognize(width: 5120, height: 1400, whole: { whole }, tiled: { tiled3 }) == whole)
+        #expect(try OCRLayout.recognize(width: 5120, height: 1400, whole: { whole }, tiled: { tiledMore }) == tiledMore)
+        #expect(try OCRLayout.recognize(width: 5120, height: 1400, whole: { [] }, tiled: { tiled3 }) == tiled3)
     }
 
     @Test("separate words keep their space")
