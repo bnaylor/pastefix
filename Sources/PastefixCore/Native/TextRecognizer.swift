@@ -27,27 +27,19 @@ enum TextRecognizer {
             CGRect(x: b.minX * width, y: (1 - b.maxY) * height, width: b.width * width, height: b.height * height)
         }
         return (request.results ?? []).compactMap { observation in
-            guard let candidate = observation.topCandidates(1).first, !candidate.string.isEmpty else { return nil }
-            let text = candidate.string
-            // One box per character, for tile ownership (`OCRLayout.owned`). Kept only if Vision
-            // answers for every character; otherwise ownership falls back to the whole box.
-            let boxes = text.indices.compactMap { i in
-                (try? candidate.boundingBox(for: i..<text.index(after: i))).flatMap { $0 }.map { pixels($0.boundingBox) }
-            }
-            return OCRObservation(text: text, box: pixels(observation.boundingBox),
-                                  characterBoxes: boxes.count == text.count ? boxes : [])
+            guard let text = observation.topCandidates(1).first?.string, !text.isEmpty else { return nil }
+            return OCRObservation(text: text, box: pixels(observation.boundingBox))
         }
     }
 
-    /// Recognises each tile, maps its observations back into the whole image, and merges them
-    /// (`OCRLayout.merged`): whole words taken as Vision read them, each once.
+    /// Recognises each tile, maps its observations back into the whole image, and splices the tiles'
+    /// readings into one (`OCRLayout.merged`).
     static func recognizeTiled(_ image: CGImage) throws -> [OCRObservation] {
         var perTile: [(tile: CGRect, observations: [OCRObservation])] = []
         for tile in OCRLayout.tiles(width: image.width, height: image.height) {
             guard let cropped = image.cropping(to: tile) else { continue }
             let mapped = try recognize(cropped).map {
-                OCRObservation(text: $0.text, box: $0.box.offsetBy(dx: tile.minX, dy: tile.minY),
-                               characterBoxes: $0.characterBoxes.map { $0.offsetBy(dx: tile.minX, dy: tile.minY) })
+                OCRObservation(text: $0.text, box: $0.box.offsetBy(dx: tile.minX, dy: tile.minY))
             }
             perTile.append((tile, mapped))
         }
