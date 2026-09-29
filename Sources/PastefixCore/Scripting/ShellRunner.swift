@@ -109,7 +109,12 @@ public enum ShellRunner {
             let stderr = Self.truncatedTail(rawStderr, limit: 8 * 1024)
             throw TransformError.nonZeroExit(code: process.terminationStatus, stderr: stderr)
         }
-        return String(data: outBytes, encoding: .utf8) ?? ""
+        // Not `?? ""`: that turned output that isn't UTF-8 into an empty string with no error, and
+        // the empty string replaced the buffer. (Stderr above stays lossy: it is only diagnostics.)
+        guard let text = String(data: outBytes, encoding: .utf8) else {
+            throw TransformError.scriptFailed("the script's output isn't UTF-8 text")
+        }
+        return text
     }
 
     /// The child's exit, as something to await: `terminationHandler` fires it, `wait()` suspends
