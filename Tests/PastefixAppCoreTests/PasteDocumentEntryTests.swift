@@ -135,6 +135,15 @@ struct PasteDocumentEntryTests {
         #expect(TextRangeClamp.remap(caret, from: d.working, to: d.working) == nil)
     }
 
+    // #105 review: `push` is public, and a future `push(.text(x))` must not bring the crash back.
+    @Test("push re-encodes text too, not only pushState")
+    func pushReencodes() {
+        var d = imageDoc()
+        d.push(.text("naïve café"))
+        let editor = NSString(string: d.working + "x") as String
+        #expect(TextRangeClamp.remap(editor.endIndex..<editor.endIndex, from: d.working, to: d.working) == nil)
+    }
+
     @Test("byte counts count text only")
     func byteCounts() {
         var d = imageDoc()

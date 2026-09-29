@@ -70,7 +70,10 @@ public struct PasteDocument: Sendable {
     /// bounds guard and then trapped measuring it — typing after any Swift transform that left
     /// non-ASCII text crashed the app (found in Plan 21's GUI pass; `String.Index(_:within:)` traps
     /// too, so no check after the fact is safe). ASCII needs nothing: its offsets agree in both.
-    /// One copy per transform, not per keystroke — typed text arrives in the editor's encoding.
+    /// One copy per transform, not per keystroke. `setWorking` does not re-encode: typed text arrives
+    /// as the TextEditor's own string, already UTF-16 — an observation about SwiftUI's TextEditor, not
+    /// a guarantee, pinned only by `TypingAfterTransformTests` (a real keystroke into a hosted editor).
+    /// Cost measured in the #105 review: `utf8.count` on a foreign string is ~1.2 ms per MB.
     static func inEditorEncoding(_ text: String) -> String {
         text.utf8.count == text.utf16.count ? text : NSString(string: text) as String
     }
@@ -278,6 +281,10 @@ public struct PasteDocument: Sendable {
     /// what's actually working. Compares *entries*: on an image entry `working` is `""`, so
     /// comparing text would silently drop a pushed `.text("")`.
     public mutating func push(_ entry: Entry, note: String? = nil) {
+        // Text is re-encoded here, not only in `pushState`: `push` is public, and one caller that
+        // skipped the re-encoding would bring back the typing crash (see `inEditorEncoding`).
+        var entry = entry
+        if case .text(let text) = entry { entry = .text(Self.inEditorEncoding(text)) }
         guard entry != currentEntry else { invalidateDetection(); return }
         entries = Array(entries.prefix(cursor + 1))
         entries.append(entry)
@@ -292,7 +299,7 @@ public struct PasteDocument: Sendable {
     }
 
     /// A text result (e.g. a transform's). See `push`.
-    public mutating func pushState(_ text: String) { push(.text(Self.inEditorEncoding(text))) }
+    public mutating func pushState(_ text: String) { push(.text(text)) }
 
     /// Coalesce a manual edit into the current text entry (no new entry). Ignored on an image
     /// entry: there is no editor on screen, and this is how a stale TextEditor write-back landing
