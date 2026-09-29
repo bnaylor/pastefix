@@ -1,6 +1,6 @@
 ---
 type: plan
-status: draft
+status: implemented
 id: 2026-09-28-pastefix-v2-image-transforms-part2
 title: Pastefix v2 — Image Transforms, part 2 (Plan 21, #19)
 description: "Extract Text (OCR)": Vision .accurate recognition, lines rebuilt by bounding box, size-dependent tiling with an empty-result fallback, and ⌘Z undoing OCR until the user types.
