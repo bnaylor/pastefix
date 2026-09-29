@@ -27,9 +27,9 @@ struct ImageUploadPreparationTests {
     }
 
     @Test("an image with legible text is ready and flagged as containing text")
-    func textFlagged() throws {
+    func textFlagged() async throws {
         let input = try #require(Self.png(width: 900, height: 200, text: "password=Tr0ub4dor3xKcd9zQ"))
-        guard case .ready(let image, let hasText) = ImageUploadPreparation.prepare(input) else {
+        guard case .ready(let image, let hasText) = await OffPool.prepare(input) else {
             Issue.record("expected ready"); return
         }
         #expect(hasText)
@@ -37,23 +37,23 @@ struct ImageUploadPreparationTests {
     }
 
     @Test("a blank image is ready and not flagged — which is not a claim that it is safe")
-    func blankNotFlagged() throws {
+    func blankNotFlagged() async throws {
         let input = try #require(Self.png(width: 900, height: 200))
-        guard case .ready(_, let hasText) = ImageUploadPreparation.prepare(input) else {
+        guard case .ready(_, let hasText) = await OffPool.prepare(input) else {
             Issue.record("expected ready"); return
         }
         #expect(!hasText)
     }
 
     @Test("small text is missed — pinned, because it is why the verdict never reassures")
-    func smallTextMissed() throws {
+    func smallTextMissed() async throws {
         // Measured: one line at 11 px produces zero text regions (detected from ~16 px up). The
         // card must therefore never say "no text found" — `hasText == false` means "not detected",
         // and the not-checked verdict is shown regardless. If Vision improves and this starts
         // detecting, the limitation note can be revisited; it must never be read as permission to
         // show a clean verdict.
         let input = try #require(Self.png(width: 900, height: 200, text: "password=Tr0ub4dor3xKcd9zQ", fontSize: 11))
-        guard case .ready(_, let hasText) = ImageUploadPreparation.prepare(input) else {
+        guard case .ready(_, let hasText) = await OffPool.prepare(input) else {
             Issue.record("expected ready"); return
         }
         withKnownIssue("Vision text-region detection misses ~11 px text; the verdict never reassures because of this") {
@@ -62,29 +62,29 @@ struct ImageUploadPreparationTests {
     }
 
     @Test("over the pixel ceiling: refused with the figure")
-    func overCeiling() throws {
+    func overCeiling() async throws {
         let input = try #require(Self.png(width: 400, height: 300))
-        #expect(ImageUploadPreparation.prepare(input, maxPixels: 400 * 300 - 1) == .refused(.tooManyPixels(400 * 300)))
+        #expect(await OffPool.prepare(input, maxPixels: 400 * 300 - 1) == .refused(.tooManyPixels(400 * 300)))
     }
 
     @Test("over the byte cap after stripping, even as JPEG: refused with the JPEG's size")
-    func overByteCap() throws {
+    func overByteCap() async throws {
         let input = try #require(Self.png(width: 400, height: 300))
         let jpeg = try #require(ImageSanitizer.encodings(input)?.jpeg.image)
-        #expect(ImageUploadPreparation.prepare(input, maxBytes: 10) == .refused(.tooManyBytes(jpeg.data.count, .jpeg)))
+        #expect(await OffPool.prepare(input, maxBytes: 10) == .refused(.tooManyBytes(jpeg.data.count, .jpeg)))
     }
 
     @Test("an image with transparency over the cap: refused with the PNG's size, never flattened")
-    func transparentOverByteCap() throws {
+    func transparentOverByteCap() async throws {
         let input = try #require(PhotoFixture.png(PhotoFixture.photo(alpha: 254)))
         let png = try #require(ImageSanitizer.stripped(input))
-        #expect(ImageUploadPreparation.prepare(input, maxBytes: 10) == .refused(.tooManyBytes(png.data.count, .pngWithTransparency)))
+        #expect(await OffPool.prepare(input, maxBytes: 10) == .refused(.tooManyBytes(png.data.count, .pngWithTransparency)))
     }
 
     @Test("undecodable bytes: refused, never an upload of the original")
-    func unusable() {
-        #expect(ImageUploadPreparation.prepare(Data("not an image".utf8)) == .refused(.unusable))
-        #expect(ImageUploadPreparation.prepare(Data()) == .refused(.unusable))
+    func unusable() async {
+        #expect(await OffPool.prepare(Data("not an image".utf8)) == .refused(.unusable))
+        #expect(await OffPool.prepare(Data()) == .refused(.unusable))
     }
 }
 
@@ -95,8 +95,8 @@ struct ImageUploadPreparationTests {
 /// for a terminal screenshot (~1.37), and a text window over a photographic wallpaper (~0.33).
 @Suite("ImageUploadPreparation format")
 struct ImageUploadPreparationFormatTests {
-    static func prepared(_ input: Data, maxBytes: Int = UploadLimits.maxPayloadBytes) -> PreparedImage? {
-        guard case .ready(let prepared, _) = ImageUploadPreparation.prepare(input, maxBytes: maxBytes) else { return nil }
+    static func prepared(_ input: Data, maxBytes: Int = UploadLimits.maxPayloadBytes) async -> PreparedImage? {
+        guard case .ready(let prepared, _) = await OffPool.prepare(input, maxBytes: maxBytes) else { return nil }
         return prepared
     }
 
@@ -106,11 +106,11 @@ struct ImageUploadPreparationFormatTests {
     }
 
     @Test("a photo goes as JPEG, with the PNG offered as the escape")
-    func photoIsJPEGWithEscape() throws {
+    func photoIsJPEGWithEscape() async throws {
         let input = try #require(PhotoFixture.png(PhotoFixture.photo()))
         let (png, jpeg) = try #require(Self.sizes(input))
         #expect(Double(jpeg) / Double(png) < 0.3)   // fixture sanity: photo-like, not near 0.5
-        let prepared = try #require(Self.prepared(input))
+        let prepared = try #require(await Self.prepared(input))
         #expect(prepared.choice == .jpegWithPNGEscape)
         #expect(prepared.chosen.format == .jpeg)
         #expect(prepared.pngAlternative?.format == .png)
@@ -119,45 +119,45 @@ struct ImageUploadPreparationFormatTests {
     }
 
     @Test("a text screenshot goes as PNG, with nothing else kept")
-    func screenshotIsPNG() throws {
+    func screenshotIsPNG() async throws {
         let input = try #require(PhotoFixture.png(PhotoFixture.screenshot()))
         let (png, jpeg) = try #require(Self.sizes(input))
         #expect(Double(jpeg) / Double(png) > 1)     // fixture sanity: screenshot-like
-        let prepared = try #require(Self.prepared(input))
+        let prepared = try #require(await Self.prepared(input))
         #expect(prepared.choice == .png)
         #expect(prepared.chosen.format == .png)
         #expect(prepared.pngAlternative == nil)
     }
 
     @Test("a screenshot over a photographic wallpaper goes as JPEG with the escape — the owner's call")
-    func wallpaperScreenshotIsJPEGWithEscape() throws {
+    func wallpaperScreenshotIsJPEGWithEscape() async throws {
         // The case no ratio can separate from a photo (a real full-screen capture measured 0.28).
         // Pinned so the escape stays the answer, not a threshold tweak.
         let input = try #require(PhotoFixture.png(PhotoFixture.windowOverWallpaper(inset: CGSize(width: 150, height: 100))))
         let (png, jpeg) = try #require(Self.sizes(input))
         #expect(Double(jpeg) / Double(png) < 0.5)
-        let prepared = try #require(Self.prepared(input))
+        let prepared = try #require(await Self.prepared(input))
         #expect(prepared.choice == .jpegWithPNGEscape)
         #expect(prepared.pngAlternative != nil)
     }
 
     @Test("an RGBA photo with every alpha at 255 goes as JPEG; one pixel at 254 sends it as PNG")
-    func opaqueAlphaIsPixelTest() throws {
+    func opaqueAlphaIsPixelTest() async throws {
         let opaque = try #require(PhotoFixture.png(PhotoFixture.photo(alpha: nil)))
         let translucent = try #require(PhotoFixture.png(PhotoFixture.photo(alpha: 254)))
         #expect(PhotoFixture.hasAlphaChannel(opaque))       // fixture sanity: a channel, all opaque
         #expect(PhotoFixture.hasAlphaChannel(translucent))
-        #expect(Self.prepared(opaque)?.choice == .jpegWithPNGEscape)
-        let prepared = try #require(Self.prepared(translucent))
+        #expect(await Self.prepared(opaque)?.choice == .jpegWithPNGEscape)
+        let prepared = try #require(await Self.prepared(translucent))
         #expect(prepared.choice == .png)
         #expect(prepared.chosen.format == .png)
     }
 
     @Test("PNG over the cap, JPEG under it: JPEG with no escape, for a photo")
-    func overCapPhotoForcedJPEG() throws {
+    func overCapPhotoForcedJPEG() async throws {
         let input = try #require(PhotoFixture.png(PhotoFixture.photo()))
         let (png, jpeg) = try #require(Self.sizes(input))
-        let prepared = try #require(Self.prepared(input, maxBytes: (png + jpeg) / 2))
+        let prepared = try #require(await Self.prepared(input, maxBytes: (png + jpeg) / 2))
         #expect(prepared.choice == .jpegForcedByCap)
         #expect(prepared.chosen.format == .jpeg)
         #expect(prepared.pngAlternative == nil)
@@ -165,25 +165,25 @@ struct ImageUploadPreparationFormatTests {
     }
 
     @Test("PNG over the cap, JPEG under it: JPEG even when the ratio alone would say PNG")
-    func overCapForcesJPEGWhateverTheRatio() throws {
+    func overCapForcesJPEGWhateverTheRatio() async throws {
         // A window with a thin border of wallpaper: opaque, JPEG smaller than PNG, but well over
         // the 0.5 threshold — so under the cap it goes as PNG, and over it, as JPEG.
         let input = try #require(PhotoFixture.png(PhotoFixture.windowOverWallpaper(inset: CGSize(width: 25, height: 25))))
         let (png, jpeg) = try #require(Self.sizes(input))
         let ratio = Double(jpeg) / Double(png)
         #expect(ratio > 0.55 && ratio < 0.95, "fixture ratio \(ratio)")
-        #expect(Self.prepared(input)?.choice == .png)
-        let prepared = try #require(Self.prepared(input, maxBytes: (png + jpeg) / 2))
+        #expect(await Self.prepared(input)?.choice == .png)
+        let prepared = try #require(await Self.prepared(input, maxBytes: (png + jpeg) / 2))
         #expect(prepared.choice == .jpegForcedByCap)
         #expect(prepared.chosen.format == .jpeg)
     }
 
     @Test("the cap applies to the JPEG that is sent")
-    func capAppliesToJPEG() throws {
+    func capAppliesToJPEG() async throws {
         let input = try #require(PhotoFixture.png(PhotoFixture.photo()))
         let (_, jpeg) = try #require(Self.sizes(input))
-        #expect(Self.prepared(input, maxBytes: jpeg)?.chosen.data.count == jpeg)
-        #expect(ImageUploadPreparation.prepare(input, maxBytes: jpeg - 1) == .refused(.tooManyBytes(jpeg, .jpeg)))
+        #expect(await Self.prepared(input, maxBytes: jpeg)?.chosen.data.count == jpeg)
+        #expect(await OffPool.prepare(input, maxBytes: jpeg - 1) == .refused(.tooManyBytes(jpeg, .jpeg)))
     }
 }
 
@@ -191,16 +191,16 @@ struct ImageUploadPreparationFormatTests {
 /// lossless image; and a failed encode says nothing about transparency, so nothing claims it.
 @Suite("ImageUploadPreparation JPEG failure")
 struct ImageUploadPreparationJPEGFailureTests {
-    static func prepareWithFailingJPEG(_ input: Data, maxBytes: Int = UploadLimits.maxPayloadBytes) -> ImageUploadPreparation.Outcome {
-        ImageUploadPreparation.prepare(input, maxPixels: PixelLimits.maxConvertiblePixels, maxBytes: maxBytes) { data, maxPixels in
+    static func prepareWithFailingJPEG(_ input: Data, maxBytes: Int = UploadLimits.maxPayloadBytes) async -> ImageUploadPreparation.Outcome {
+        await OffPool.prepare(input, maxPixels: PixelLimits.maxConvertiblePixels, maxBytes: maxBytes) { data, maxPixels in
             ImageSanitizer.encodings(data, maxPixels: maxPixels, jpegEncoder: { _, _ in nil })
         }
     }
 
     @Test("an opaque photo whose JPEG fails goes as PNG, marked as a fallback, with no escape")
-    func photoFallsBackToPNG() throws {
+    func photoFallsBackToPNG() async throws {
         let input = try #require(PhotoFixture.png(PhotoFixture.photo()))
-        guard case .ready(let prepared, _) = Self.prepareWithFailingJPEG(input) else {
+        guard case .ready(let prepared, _) = await Self.prepareWithFailingJPEG(input) else {
             Issue.record("expected ready — a failed JPEG must not refuse"); return
         }
         #expect(prepared.choice == .png)
@@ -214,10 +214,10 @@ struct ImageUploadPreparationJPEGFailureTests {
     }
 
     @Test("PNG over the cap with a failed JPEG: refused, naming the PNG, with no transparency claim")
-    func overCapFailedJPEGRefusesNamingPNG() throws {
+    func overCapFailedJPEGRefusesNamingPNG() async throws {
         let input = try #require(PhotoFixture.png(PhotoFixture.photo()))
         let png = try #require(ImageSanitizer.stripped(input))
-        let outcome = Self.prepareWithFailingJPEG(input, maxBytes: png.data.count - 1)
+        let outcome = await Self.prepareWithFailingJPEG(input, maxBytes: png.data.count - 1)
         #expect(outcome == .refused(.tooManyBytes(png.data.count, .pngWithoutJPEG)))
         let line = ImageUploadCard.refusal(.tooManyBytes(png.data.count, .pngWithoutJPEG))
         #expect(!line.lowercased().contains("transparen"))
@@ -225,11 +225,11 @@ struct ImageUploadPreparationJPEGFailureTests {
     }
 
     @Test("a transparent image over the cap is the only refusal that says transparency")
-    func transparencyWordingOnlyForNotOpaque() throws {
+    func transparencyWordingOnlyForNotOpaque() async throws {
         let input = try #require(PhotoFixture.png(PhotoFixture.photo(alpha: 254)))
         let png = try #require(ImageSanitizer.stripped(input))
         // Even with the JPEG encoder failing, a non-opaque image never reaches it: still transparency.
-        #expect(Self.prepareWithFailingJPEG(input, maxBytes: 10) == .refused(.tooManyBytes(png.data.count, .pngWithTransparency)))
+        #expect(await Self.prepareWithFailingJPEG(input, maxBytes: 10) == .refused(.tooManyBytes(png.data.count, .pngWithTransparency)))
         #expect(ImageUploadCard.refusal(.tooManyBytes(png.data.count, .pngWithTransparency)).contains("transparency"))
     }
 }
@@ -330,7 +330,7 @@ enum PhotoFixture {
 @Suite("Chrome-shaped snapshot")
 struct ChromeShapedSnapshotTests {
     @Test("a Chrome Copy Image snapshot displays as an image despite its rich attachment")
-    func chromeIsImage() throws {
+    func chromeIsImage() async throws {
         let png = try #require(ImageUploadPreparationTests.png(width: 40, height: 30))
         let attachment = NSAttributedString(string: "\u{FFFC}")
         let snapshot = ClipboardSnapshot(plainText: nil, rich: attachment, imagePNG: png)
