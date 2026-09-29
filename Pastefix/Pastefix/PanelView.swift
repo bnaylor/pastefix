@@ -297,6 +297,8 @@ struct PanelView: View {
             // Bumped before the flag is set, so an already-open overlay is replaced rather than
             // left standing with the configuration it read a minute ago.
             uploadGeneration &+= 1
+            // The overlay snapshots the buffer when it opens; marked text isn't in it yet.
+            model.commitMarkedText()
             isUploadOpen = true
             model.uploadOverlayRequested = false
         }
@@ -307,10 +309,7 @@ struct PanelView: View {
             // Through the window's undo manager, like ⌘Z (Edit ▸ Undo): one stack, so the button
             // undoes typing as readily as a transform (#103). Enabled while a transform runs, since
             // undoing it then cancels it.
-            Button("Undo") { model.undoManager?.undo() }
-                .disabled(!model.canUndo)
-            Button("Redo") { model.undoManager?.redo() }
-                .disabled(!model.canRedo)
+            UndoButtons(model: model, state: model.undoState)
             Button("Refresh") { model.refresh() }
                 .disabled(model.isApplying)
             Button { showPinPopover = true } label: {
@@ -659,5 +658,19 @@ struct PanelView: View {
         .foregroundStyle(.primary)
         .padding(8)
         .background(Color.orange.opacity(0.18))
+    }
+}
+
+/// The toolbar's Undo/Redo. A view of its own so an undo-state change re-renders these two buttons
+/// and nothing else — in particular not `PanelView`, which owns the TextEditor (see `UndoState`).
+private struct UndoButtons: View {
+    let model: AppModel
+    @ObservedObject var state: UndoState
+
+    var body: some View {
+        Button("Undo") { model.undoManager?.undo() }
+            .disabled(!state.canUndo)
+        Button("Redo") { model.undoManager?.redo() }
+            .disabled(!state.canRedo)
     }
 }

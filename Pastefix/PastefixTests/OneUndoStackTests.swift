@@ -1,5 +1,6 @@
 import Testing
 import AppKit
+import Combine
 import SwiftUI
 import PastefixCore
 import PastefixAppCore
@@ -97,11 +98,11 @@ struct OneUndoStackTests {
         f.model.apply(Upper())
         #expect(await f.eventually { f.model.document?.working == "HELLO" && !f.model.isApplying })
         #expect(um.canUndo && um.undoActionName == "Upper")
-        #expect(await f.eventually { f.model.canUndo && !f.model.canRedo }, "the toolbar mirrors the manager")
+        #expect(await f.eventually { f.model.undoState.canUndo && !f.model.undoState.canRedo }, "the toolbar mirrors the manager")
         um.undo()
         #expect(f.model.document?.working == "hello")
         #expect(!um.canUndo && um.canRedo && um.redoActionName == "Upper")
-        #expect(await f.eventually { !f.model.canUndo && f.model.canRedo })
+        #expect(await f.eventually { !f.model.undoState.canUndo && f.model.undoState.canRedo })
         um.redo()
         #expect(f.model.document?.working == "HELLO")
         #expect(um.canUndo && !um.canRedo)
@@ -116,7 +117,7 @@ struct OneUndoStackTests {
         f.model.apply(which == "same" ? Same() as any Transformer : Fails())
         #expect(await f.eventually { !f.model.isApplying })
         #expect(!um.canUndo, "\"\(um.undoActionName)\" left on the stack")
-        #expect(await f.eventually { !f.model.canUndo })
+        #expect(await f.eventually { !f.model.undoState.canUndo })
     }
 
     @Test("typing, then a transform: ⌘Z undoes the transform back to the typed text, alone")
@@ -165,7 +166,7 @@ struct OneUndoStackTests {
         default: f.model.cancel()
         }
         #expect(!um.canUndo && !um.canRedo, "\"\(um.undoActionName)\" survived \(boundary)")
-        #expect(!f.model.canUndo && !f.model.canRedo)
+        #expect(!f.model.undoState.canUndo && !f.model.undoState.canRedo)
     }
 
     /// The undo itself goes ahead on the previous step; ⌘⇧Z brings it back.
@@ -180,7 +181,7 @@ struct OneUndoStackTests {
         let gate = Gate()
         f.model.apply(Held(gate: gate))
         #expect(f.model.isApplying)
-        #expect(await f.eventually { f.model.canUndo }, "Undo stays available while applying")
+        #expect(await f.eventually { f.model.undoState.canUndo }, "Undo stays available while applying")
         um.undo()
         #expect(!f.model.isApplying, "cancelled")
         #expect(f.model.document?.working == "hello")
@@ -206,5 +207,55 @@ struct OneUndoStackTests {
         #expect(sendUndo(window, redo: true))
         #expect(f.model.document?.working == "recognised")
         #expect(um.canUndo && !um.canRedo)
+    }
+    /// GUI pass (#111): the first keystroke flips Undo on, and publishing that on the model
+    /// re-rendered the view that owns the TextEditor mid-keystroke; a fast "   Q" came out as
+    /// "  one two three Q" (caret thrown to the end). Undo state is its own object, which the
+    /// model never republishes.
+    @Test("an undo-state change doesn't publish on the model")
+    func undoStateIsNotModelState() async throws {
+        let f = try ModelFixture(); defer { f.finish() }
+        f.model.beginSession(from: ClipboardSnapshot(plainText: "one two three", richRTFD: nil))
+        let window = host(f); defer { window.orderOut(nil) }
+        let um = try #require(await bound(f, window))
+        #expect(await f.eventually { !f.model.undoState.canUndo })
+        try? await Task.sleep(nanoseconds: 100_000_000)
+        var published = 0
+        let watch = f.model.objectWillChange.sink { _ in published += 1 }
+        defer { watch.cancel() }
+        final class Target {}
+        let target = Target()
+        um.beginUndoGrouping()
+        um.registerUndo(withTarget: target) { _ in }
+        um.endUndoGrouping()
+        #expect(await f.eventually { f.model.undoState.canUndo })
+        #expect(published == 0, "the model published \(published)× for an undo-state change")
+        um.removeAllActions()
+    }
+
+    /// GUI pass (#111): IME marked text lives in the editor and on the undo stack but not in the
+    /// model, so a transform ran on text without it — the "´" was dropped — and ⌘Z later replayed
+    /// the marked insert's undo at a stale range, deleting a newline. Marked text is committed
+    /// before a transform reads the buffer.
+    @Test("marked text is committed before a transform reads the buffer")
+    func markedTextCommittedBeforeApply() async throws {
+        let f = try ModelFixture(); defer { f.finish() }
+        f.model.beginSession(from: ClipboardSnapshot(plainText: "cafe\nbar   ", richRTFD: nil))
+        let window = host(f); defer { window.orderOut(nil) }
+        let um = try #require(await bound(f, window))
+        #expect(await f.eventually { self.textView(in: window.contentView!)?.string == "cafe\nbar   " })
+        let editor = try #require(textView(in: window.contentView!))
+        window.makeFirstResponder(editor)
+        editor.setSelectedRange(NSRange(location: 4, length: 0))
+        editor.setMarkedText("\u{00B4}", selectedRange: NSRange(location: 1, length: 0),
+                             replacementRange: NSRange(location: 4, length: 0))
+        #expect(editor.hasMarkedText(), "precondition: marked text is up")
+        let cleanup = try #require(f.model.transformers.first { $0.id == "builtin.whitespace" })
+        f.model.apply(cleanup)
+        #expect(await f.eventually { !f.model.isApplying })
+        #expect(f.model.document?.working == "cafe\u{00B4}\nbar", "the marked character reached the transform")
+        #expect(!editor.hasMarkedText())
+        um.undo()
+        #expect(f.model.document?.working == "cafe\u{00B4}\nbar   ")
     }
 }

@@ -49,9 +49,9 @@ final class AppModel: ObservableObject {
     var undoManager: UndoManager? { panelWindow?.undoManager }
     /// The toolbar's Undo/Redo, mirrored from `undoManager` (which SwiftUI can't observe). Not
     /// `document.canUndo`: after an undo and some typing the manager has dropped the redo while the
-    /// model still holds entries past its cursor.
-    @Published private(set) var canUndo = false
-    @Published private(set) var canRedo = false
+    /// model still holds entries past its cursor. Its own object, never republished here — see
+    /// `UndoState`.
+    let undoState = UndoState()
     private var undoObservers: [NSObjectProtocol] = []
     /// Identifies the apply in flight; bumped to drop a result that must not land (⌘Z cancelled it,
     /// or the session moved on).
@@ -313,7 +313,9 @@ final class AppModel: ObservableObject {
     }
 
     func apply(_ transformer: any Transformer) {
-        guard let current = document, !isApplying else { return }
+        guard !isApplying else { return }
+        commitMarkedText()
+        guard let current = document else { return }
         transformNote = nil
         isApplying = true
         let generation = sessionGeneration
@@ -427,6 +429,7 @@ final class AppModel: ObservableObject {
     }
 
     func save() {
+        commitMarkedText()
         guard let doc = document else { endSession(); return }
         // **Save on an unedited session is at best a no-op and at worst destructive, so it must be
         // a no-op whenever the session cannot reproduce everything the clipboard still holds.**
@@ -695,6 +698,25 @@ final class AppModel: ObservableObject {
         refreshUndoState()
     }
 
+    /// Commits IME marked text (a dead key's "´", an unfinished CJK composition) into the buffer.
+    ///
+    /// Marked text is in the editor and on the undo stack, but the TextEditor doesn't write it to
+    /// its binding until it is committed. Anything that reads the buffer — a transform, Save, the
+    /// upload snapshot — then works on text without it: the character is silently dropped, and the
+    /// marked insert's undo action, recorded against text the model never had, replays at a stale
+    /// range after the transform is undone (GUI pass: it deleted a newline). Called before each.
+    func commitMarkedText() {
+        guard let root = panelWindow?.contentView else { return }
+        func walk(_ view: NSView) {
+            if let text = view as? NSTextView, text.isEditable, !text.isFieldEditor, text.hasMarkedText() {
+                text.unmarkText()
+                setWorking(text.string)
+            }
+            view.subviews.forEach(walk)
+        }
+        walk(root)
+    }
+
     /// Closes the editor's open typing group whenever the buffer is replaced programmatically, so
     /// the next keystroke registers a new action rather than extending one recorded against the
     /// text that just left — which would put typing ranges for one buffer on top of, or under, a
@@ -708,12 +730,10 @@ final class AppModel: ObservableObject {
         walk(root)
     }
 
-    /// Re-reads the manager. Assigns only on change: the checkpoint notification fires on every
-    /// registration, and an unconditional assignment would re-render the panel each time.
+    /// Re-reads the manager into `undoState`.
     func refreshUndoState() {
         let undo = undoManager?.canUndo ?? false, redo = undoManager?.canRedo ?? false
-        if canUndo != undo { canUndo = undo }
-        if canRedo != redo { canRedo = redo }
+        undoState.update(canUndo: undo, canRedo: redo)
     }
 
     /// Mirrors the manager into `canUndo`/`canRedo`. `removeAllActions` posts nothing, so its
