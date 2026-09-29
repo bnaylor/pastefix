@@ -1,174 +1,322 @@
-# PastefixCore
+# Pastefix
 
-PastefixCore is a macOS clipboard transform engine that unifies native Swift transforms, shell scripts, and JavaScript functions under a single `Transformer` protocol. It powers the transform pipeline of Pastefix v2, a clipboard utility that applies transformations on demand.
+Pastefix is a small macOS menu-bar app for fixing up whatever you just copied before you paste it.
 
-> **Note:** This package documents the transform engine. The Pastefix v2 app UI is described in the section below.
+Copy something, press **⌘⇧C**, and a panel opens over the app you're in with your clipboard in it. Clean it up with a transform or edit it by hand, press **⌘S**, and the fixed version is back on your clipboard, ready to paste. No window switching, no Dock icon, no pasting into a scratch file first.
 
-## The app (Plan 2a)
+Things you can do with it:
 
-Pastefix runs as a macOS menu-bar app. A clipboard icon sits in the menu bar; pressing **⌘⇧C** summons a floating panel over whatever app is in the foreground (no Space-switch, no Dock icon).
+- **Clean up text:** strip stray whitespace, reflow paragraphs, turn smart quotes and accents into plain ASCII, or convert between camelCase, snake_case, kebab-case and CONSTANT_CASE.
+- **Read data:** prettify or minify JSON, decode a JWT, decode Base64, percent-encoding or HTML entities.
+- **Tidy links:** strip `utm_*`, `fbclid` and other tracking parameters from every URL, or turn a URL into a Markdown link with the page's title.
+- **Work with screenshots:** pull the text out of an image (OCR), or strip a photo's location and camera metadata before you share it.
+- **Catch secrets:** Pastefix flags API keys, tokens, private keys and passwords in what you copied, and one transform redacts them all before you paste or share.
+- **Get back what you copied earlier:** a searchable clipboard history, with pinned snippets that never age out and can each have their own global hotkey.
+- **Share it:** upload the text or image to your own self-hosted [Zipline](https://zipline.diced.sh) server and get a short link on your clipboard.
+- **Add your own:** any shell script or JavaScript function in your scripts folder shows up as a transform.
 
-**Requirements:** macOS 15 or later to run the app. (`PastefixCore` and `PastefixAppCore`, the underlying packages, build and test on macOS 14+ if you're working on the engine without the app.)
+<!--
+docs/media/pastefix-tour.gif: window-only captures of planted demo content (no real clipboard or
+history), 720 px wide, ~21 s. Scenes: the ⌘K palette on messy text; JSON Prettify; Clean URL
+Tracking (before/after); a secret found and redacted; Extract Text on a screenshot (before/after);
+Strip Image Metadata; the history overlay with a pinned snippet. Rebuild from 1440×920 PNGs with
+ffmpeg concat + palettegen (256 colours, bayer dither), -fps_mode vfr.
+-->
+![Pastefix in action](docs/media/pastefix-tour.gif)
 
-**Install:** download the latest notarized DMG from [GitHub Releases](https://github.com/bnaylor/pastefix/releases), drag Pastefix to Applications. The app keeps itself up to date via Sparkle.
+## Contents
 
-**Core flow:**
+- [Install and set up](#install-and-set-up)
+- [Using Pastefix](#using-pastefix)
+- [Known limitations and gotchas](#known-limitations-and-gotchas)
+- [Privacy: what leaves your Mac](#privacy-what-leaves-your-mac)
+- [Contributing](#contributing)
 
-1. **Summon** — ⌘⇧C snapshots the clipboard and opens the editor panel.
+## Install and set up
 
-   **Images.** A clipboard holding only a picture opens the panel as a picture instead of an empty editor; Save puts it back unchanged. What you see follows the content, not a mode you pick: anything with real text opens the editor, and an image alongside that text is carried along for Save even though it isn't shown. ⌘K on a picture offers **Strip Image Metadata**, which removes its location, camera and other metadata, says what it removed (or that there was nothing to remove), and puts the clean image back on the clipboard when you Save. ⌘Z brings the original back. Your history still holds the original you copied, metadata and all, until you remove it (⌘⌫ in the history overlay). It also offers **Extract Text (OCR)**, which reads the text in the picture and puts it in the editor in place of the picture. Until you type into it, ⌘Z brings the picture back; after that, ⌘Z undoes your typing and the Undo button brings the picture back. If nothing is found it says so rather than emptying the editor. Two things deliberately don't count as an image: copying a *file* in Finder (what lands on the clipboard is a rendering of the file's icon, not the file), and a picture embedded in formatted text. A photo copied from Photos does open as a picture, even though Photos also puts a file reference on the clipboard. **Copying a file and then pressing Save without editing does nothing**, the way macOS does when there's nothing it can meaningfully write back. Pastefix can't put a file back on the clipboard, and writing its name as text instead would replace the file you copied. If you edit the text first, Save writes your edit. A picture that has to be converted before it can be shown and is over 25 megapixels says so instead of opening blank — the limit is on the conversion, so a PNG, the usual screenshot format, is carried whatever its size. Nothing is written over your clipboard in that case, so you can still paste the picture directly — until you save text over it, which Pastefix deliberately still lets you do.
-2. **Transform** — a "Transform… ⌘K" bar along the bottom of the panel opens an in-panel command palette listing every enabled transformer (built-ins + user scripts). Click a result, or press ↵ on the selected one, to apply it; the monospaced editor updates instantly. An error banner appears in red if a transformer fails.
+### Requirements
 
-   **Finding transforms.** Press ⌘K (or click the Transform… bar) for a command palette: type to filter, ↑↓ to choose, ↵ to apply, Esc to close; transforms that apply to the detected content are listed first. Typing matches a prefix, a word start, or (failing those) a loose subsequence — camel-case boundaries count as word starts too, so typing `case` finds `camelCase`. Esc closes the palette first; only a second Esc (with the palette already closed) cancels the panel. Toggle the sidebar (⌘⇧L or the toolbar button) to browse all enabled transforms grouped by category; the sidebar state is remembered. The panel window is resizable: it widens by the sidebar's width when the sidebar opens and gives that width back when it closes, so the editor doesn't get squeezed — and you can also resize the window yourself. The sidebar always keeps your configured order, so it doesn't reshuffle as you copy different things; the ⌘K palette lists transforms that apply to the detected content first.
+macOS 15 or later.
 
-   **Content detection.** When the buffer matches a recognised kind, a `Detected: …` label appears beside the Transform… bar and transforms that apply to that kind are listed first in the ⌘K palette. (The sidebar deliberately stays in your configured order.) Nothing is hidden; your enable/reorder settings still apply. Recognised kinds (a buffer whose first line is a `#!` shebang is never treated as Markdown):
+### Download
 
-   - **URL** — the buffer contains a link.
-   - **JSON** — the whole buffer parses as JSON.
-   - **Color** — the whole buffer is a colour literal (`#hex`, `rgb()`, `hsl()`, …); a 14×14 swatch showing the colour appears next to the badge.
-   - **JWT** — the whole buffer is three base64url segments whose header decodes to JSON with an `alg` key.
-   - **Base64** — the whole buffer is 16+ characters that decode to printable text.
-   - **Percent-encoded** — the buffer contains a `%XX` sequence.
-   - **HTML entities** — the buffer contains a `&name;` or `&#n;` reference.
-   - **Markdown** — the buffer contains an ATX heading or fence line, or at least two of: a list line, a `> ` quote, a pipe-table row, a `[text](url)` link, `**strong**`/`` `code` `` inline.
+Download the latest notarized DMG from [GitHub Releases](https://github.com/bnaylor/pastefix/releases) and drag Pastefix to Applications.
 
-   A decode transform that can't interpret its input shows a red error banner and leaves the text unchanged.
+Pastefix keeps itself up to date with [Sparkle](https://sparkle-project.org). It checks once a day and asks before installing anything. **Check for Updates…** in the menu-bar menu checks on demand. Settings → General has an **Automatically check for updates** toggle, a **Check Now** button, and the installed version. Updates are EdDSA-signed and Developer-ID-verified.
 
-3. **Edit** — the editor is freely editable. Undo/Redo/Refresh controls are in the toolbar.
-4. **Save (⌘S)** — writes the working text back to the clipboard and dismisses the panel.
-5. **Cancel (Esc)** — discards changes and dismisses the panel.
+### First run
 
-## Clipboard history (Plan 6)
+Launch Pastefix and a clipboard icon appears in the menu bar. There's no Dock icon and no main window: everything starts from a hotkey or the menu-bar menu.
 
-Pastefix remembers what you copy: plain text, formatted (rich) text, and images, up to 200 items and 50 MB total (256 KB per text item, 1 MB per rich item, 5 MB per image; oversize items are dropped, not truncated). Press **⌘⇧V** anywhere, or **⌘Y** inside the panel, to open the history overlay and search it — type to filter, ↑↓ to choose. **↵** loads the selected item into a new session; what you then see follows what the item has, not its label — any real text, plain or rich, opens in the editor (formatting preserved for the Rich → Plain Text transform), with an attached image carried along for Save even though it isn't shown, and only a bare image with no text at all opens as a picture in the panel, in place of the editor. **⌘↵** puts any item back on the clipboard and dismisses the panel without opening it; **⌘⌫** forgets the selected item; Esc closes the overlay.
+### Global hotkeys
 
-Copying the same thing again moves it back to the top of the list rather than adding a duplicate, and keeps crediting the app that originally put it on the clipboard — reusing an item from history doesn't relabel it as coming from Pastefix. Items that password managers and similar tools mark as concealed, transient, or auto-generated are never recorded, including a few legacy marker conventions older apps still use.
+| Hotkey | What it does |
+|---|---|
+| **⌘⇧C** | Open the panel with what's on the clipboard |
+| **⌘⇧V** | Open clipboard history |
+| **⌘⇧U** | Upload to Zipline |
 
-History lives in `~/Library/Application Support/Pastefix/history/`, readable only by your user account. **Settings → Privacy** has a History section to turn capture off, change how many items are kept, or clear everything; **Settings → Shortcut** rebinds ⌘⇧V. Note that ⌘⇧V is also "Paste and Match Style" in some apps — that conflict is a deliberate tradeoff for the more memorable default, and the hotkey is rebindable if it collides with something you use. The menu bar also carries a **Clipboard History** checkmark item that toggles capture on the fly; while it's off the menu-bar icon switches to a pause glyph so it's obvious at a glance that nothing is being recorded.
+Rebind any of them in **Settings → Shortcut**. ⌘⇧V and ⌘⇧U collide with shortcuts in some other apps; see [Known limitations](#known-limitations-and-gotchas).
 
-**Excluded apps.** Settings → Privacy also has an Excluded Apps list, seeded with common password managers (1Password, Bitwarden, Keychain Access, Apple Passwords, and others) — copies made in a listed app are never read into history, let alone recorded. (Summoning the editor with ⌘⇧C still reads whatever is on the clipboard, because you asked for it; saving from the editor writes it back, and that write is recorded like any other.) Add an app from `/Applications` or by typing its bundle identifier, remove entries, or **Restore Defaults** to get back the seed list. The app you copied from is decided *before* the clipboard is read, from whichever app was frontmost; if you switch apps within a second of copying, both the app you copied from and the app you switched to are treated as possible sources and the copy is skipped if either is excluded. One caveat: a browser extension's copy comes from the browser itself, not the password manager, so bundle-id exclusion can't catch it — those are instead skipped whenever the extension marks the copy concealed, which 1Password, Bitwarden, and Apple's own extensions all do.
+### Accessibility permission
 
-## Pinned snippets (Plan 9)
+Pastefix asks for Accessibility permission for one thing only: pasting a pinned snippet for you (a snippet hotkey, or ⇧↵ in the history overlay), which means sending ⌘V to the frontmost app. It asks the first time that actually happens. Everything else works without it, and snippet hotkeys still copy the snippet if you never grant it. Settings → Snippets shows the current status and links to System Settings.
 
-Pin anything you want to keep past the normal history cap. Pin from the history overlay by highlighting a row and pressing **⌘P** (untitled), or from the editor with the pin button in the toolbar / **⌘⇧P**, which opens a popover for an optional title. Pinned items get their own **Pinned** section above History in the ⌘⇧V/⌘Y overlay, sorted newest-pinned first, and are exempt from the item cap and byte eviction — they never age out. **⇧↵** works on any row, pinned or not: it copies the item, hides the panel, and pastes it into whichever app was frontmost before you summoned Pastefix.
+### Scripts folder
 
-**Per-snippet hotkeys.** Settings → Snippets lists every pin with an editable title, its own global-shortcut recorder, and Unpin. Recording a shortcut there and pressing it anywhere writes the snippet to the clipboard and sends ⌘V to the frontmost app; two pins can't be bound to the same combo. The first time a snippet hotkey (or ⇧↵) actually needs to press ⌘V for you, Pastefix asks for Accessibility permission — the only thing that permission is used for. Until it's granted, hotkeys still copy the snippet and beep once so you know to paste it yourself; ⇧↵ from the overlay copies and hides silently, and beeps only if the paste it lined up never lands. Unpinning is reversible: the title and the recorded shortcut stay with the item, so re-pinning it brings both back — they're forgotten only when the item itself leaves your history. Images can't be pinned yet.
+Your own transforms live in `~/.config/pastefix/scripts/` by default. Change the folder in Settings → General. Pastefix watches it, so adding or editing a script updates the palette without a relaunch. See [User scripts](#user-scripts).
 
-Clear History (Settings → Privacy) keeps your pinned snippets; only "Clear Everything" removes them too.
+### Zipline setup
 
-## Secrets (Plan 11)
+To use ⌘⇧U, open **Settings → Upload** and enter your Zipline v4 server URL, then type your API token and press **Set Token**. The token is stored in the Keychain, never in Settings. A token you type and then quit without pressing Set Token is not saved. **Clear Token** removes it.
 
-Pastefix watches the working buffer for credentials: AWS access keys, AWS secret keys, GitHub tokens, Anthropic keys, OpenAI keys, Slack tokens, Stripe keys, Google API keys, private key blocks, JWTs, passwords embedded in URLs, and generic high-entropy `key = value` credential assignments — including passwords full of punctuation, like `password: hunter2!SuperSecret99`. When it finds one, an orange "N secret(s)" badge appears in the action bar (the `Detected: …` label never lists secrets — that's what this badge is for); its tooltip lists the kinds found, and clicking it selects the next match in the editor, cycling through all of them. **Redact Secrets**, in the **Privacy** category of the ⌘K palette, replaces every match with a `[REDACTED <kind>]` token — a password embedded in a URL keeps its `user:`/host and redacts only the password — and is idempotent (running it again on already-redacted text is a no-op). Clipboard history flags captured and pinned items the same way: a small shield glyph appears on a history row in the ⌘⇧V/⌘Y overlay when the item contains a secret.
+Private, LAN and Tailscale addresses are the expected way to reach a self-hosted Zipline. Plain `http` works for an IP address (a Tailscale 100.x one included) and for a `.local` name. A named host such as `box.tailnet.ts.net` needs `https`, which Tailscale issues a certificate for. There's no certificate-trust bypass, so a self-signed certificate fails the upload by design.
 
-Nothing is blocked: Pastefix never refuses to capture or save something because it looks like a credential, and **⌘S is unchanged**.
+### Settings
 
-The scan only covers buffers up to 256 KB. Over that it doesn't run, and rather than leave the action bar looking clean Pastefix shows a grey **"Not scanned for secrets"** badge; Redact Secrets refuses the buffer with an error instead of quietly doing nothing, and a history row that was never examined carries no shield either way. Known limits: a credential value made only of letters — no digit anywhere — is not flagged, and neither is anything over 256 KB, which says "Not scanned" instead.
+Open Settings with ⌘, or **Settings…** in the menu. All settings persist in `UserDefaults`. There are seven tabs:
 
-## Regex presets (Plan 12)
+- **General:** wrap width (default 400 columns), hide the panel when it loses focus, the user scripts folder (default `~/.config/pastefix/scripts/`), and updates.
+- **Privacy:** a **History** section (remember-history toggle, how many items to keep, and Clear History, which offers "Clear N items" for unpinned items only, or "Clear Everything") and an **Excluded Apps** section (add or remove apps whose copies are never read into history; Restore Defaults).
+- **Snippets:** the Accessibility status ("ready" or "needs Accessibility permission", with a shortcut to System Settings) and your pinned snippets, each with an editable title, its own global-shortcut recorder, and Unpin.
+- **Shortcut:** rebind ⌘⇧C, ⌘⇧V and ⌘⇧U with a keyboard recorder.
+- **Transforms:** enable or disable individual transforms and drag to reorder them.
+- **Presets:** your regex find & replace rules. See [Regex presets](#regex-presets).
+- **Upload:** the Zipline server URL, API token, and the defaults ⌘⇧U opens with (expiration, burn after reading, file type).
 
-Settings → **Presets** lets you define your own find & replace rules as regular expressions — no script, no shell, no JavaScript required. Pick a preset from the menu at the top, or start one with the **+** button — **+** opens an unsaved draft, marked *(unsaved)*, and nothing reaches the palette until you press Save. Each preset has a name, a pattern, a replacement, and four flags: **Case-insensitive**, **^ and $ match at line boundaries** (anchors), **. matches newlines** (dot-all), and **Replace all matches** (off replaces only the first match). Patterns and replacements are `NSRegularExpression` syntax, so a replacement can reference capture groups with `$1`, `$2`, and so on; the replacement field understands a few escapes, since it is a single-line field that can't hold a literal newline: `\n` gives a newline, `\t` a tab, `\\` one literal backslash, and `\$` a literal dollar (rather than a group reference). Any other escape is kept verbatim, so a replacement of `\d` inserts the two characters `\d`.
+## Using Pastefix
 
-Below the fields, a sample-input box shows a **live preview**: the transformed sample and a match count, debounced as you type, or an inline error if the pattern doesn't compile. The preview runs against at most 16 KB of the sample and gives up after 1 second — its own limits, separate from the real transform's, so an expensive pattern can only ever stall the preview, never the panel. Save is disabled while the pattern doesn't compile or the name is blank; an empty pattern doesn't compile either, and says so ("Pattern is empty"). A preset with unsaved edits is marked with a **•**, and changing the selection — or removing it — asks before discarding them. Leaving the tab or closing the Settings window saves an unsaved preset automatically if it is valid; if it is not (blank name, or a pattern that doesn't compile) it is kept while you switch tabs, but not once the window closes.
+### The basic flow
 
-Once saved, a preset behaves like any other transform: it appears in the ⌘K palette and in the sidebar under a **Presets** group, and can be enabled, disabled, and reordered in Settings → Transforms. Deleting a preset also forgets whatever you had set for it there. Running a preset against the clipboard buffer is capped at 256 KB of input, 2 MB of output (a pattern that matches the empty string applies its replacement at every position) and a 3-second timeout; over any of those it fails with an error instead of hanging the panel.
+1. **Summon.** ⌘⇧C snapshots the clipboard and opens the panel.
+2. **Transform.** Press ⌘K (or click the **Transform… ⌘K** bar at the bottom) to open the command palette. Pick a transform and the editor updates at once. If a transform fails, a red banner says why and your text is left as it was.
+3. **Edit.** The monospaced editor is freely editable. Undo, Redo and Refresh are in the toolbar.
+4. **Save (⌘S).** Writes the working text back to the clipboard and closes the panel.
+5. **Cancel (Esc).** Discards your changes and closes the panel.
 
-## Zipline upload (Plan 13)
+**Undo.** Typing and transforms share one undo stack. ⌘Z and ⌘⇧Z (and the toolbar Undo and Redo) step back and forward through both, in the order they happened, in text and image sessions alike. Pressing ⌘Z while a transform is still running cancels it first.
 
-Press **⌘⇧U** (rebindable in Settings → Shortcut, like the other two global hotkeys) to upload the working text to a self-hosted [Zipline](https://zipline.diced.sh) v4 instance and replace the clipboard with the short URL it returns. With the panel closed, ⌘⇧U takes a fresh snapshot of the clipboard, the same as ⌘⇧C. With the panel already open and its buffer unedited, it re-reads the clipboard if that has moved on since the buffer was taken; once you've edited the buffer, your edits win over a newer clipboard, however stale that makes the upload. The overlay's header always names which one it is about to send — "the clipboard" or "the panel buffer" — and its size, so what's about to leave the machine is never a guess. Zipline v4 only. When the session is showing an image, ⌘⇧U uploads the image instead (#48). Before anything leaves, its location and camera details are stripped, and the overlay says so. Images are **not** checked for secrets, and the overlay says that every time; if it detects text in the image, it says that too and the button reads "Upload without checking". Return uploads it, unless the image looks like it contains text: then the button reads "Upload without checking" and Return cancels instead. A photo goes up as JPEG (quality 0.85) and anything else as PNG (#21). The choice is measured, not guessed: an image with every pixel opaque whose JPEG is at most half the size of its PNG goes as JPEG, and the overlay says so with both sizes ("Sending as JPEG (1.6 MB; as PNG it would be 10.1 MB)") and a one-click **Send as PNG instead**. A full-screen screenshot with the wallpaper showing compresses like a photo, so that button is how to send one losslessly. Anything with a transparent pixel always goes as PNG. When the PNG is over the 16 MB upload limit, an opaque image goes as JPEG whatever the ratio, and the overlay says why; an image still over 16 MB in the format it would be sent in is refused rather than sent. On success the short URL replaces the image on the clipboard. Note that ⌘⇧U is also "Mark as Unread/Read" in Mail and "Show Output" in VS Code; a global hotkey shadows both while Pastefix runs, and — as with ⌘⇧V — it's rebindable if it collides with something you use.
+### Images
 
-Every upload is scanned for secrets first, in full, with no size cap — deliberately unlike the 256 KB-capped badge under Secrets above, because a scan that runs once per deliberate upload can afford more than one that runs on every capture and summon. When something is found, you get the kinds found and a choice: **Redact** (preselected — Return uploads the redacted copy) or send as-is. Redaction only changes the uploaded copy; your buffer and the clipboard are untouched.
+A clipboard holding only a picture opens the panel as a picture instead of an empty editor. Save puts it back unchanged. What you see follows the content, not a mode you pick: anything with real text opens the editor, and an image alongside that text is carried along for Save even though it isn't shown.
 
-**Expires** (Never / 1 hour / 1 day / 7 days) and **Burn after reading** are separate controls, because Zipline treats them as separate headers — a paste can be both one-view and gone in an hour. Burn after reading means *only the first person to open the link can see it*: Zipline remembers who viewed it first, lets them open it again, and deletes it for anyone else. So **don't open a burn-after-reading link yourself to check it** — that uses it up, and the person you send it to gets nothing. **Link previews count too:** pasting one into Slack, Discord or iMessage lets the app fetch a preview, and that fetch is the one view (measured) — the recipient's click then gets nothing. Burn after reading suits links sent where nothing previews them. The Open button after such an upload says so.
+Two image transforms appear in the palette for a picture:
 
-**File type** sets the uploaded file's extension, which is how Zipline v4 picks syntax highlighting; there's no separate language control. It defaults to `json` when the buffer looks like JSON and `txt` otherwise, but your **Settings → Upload** default wins whenever you've set one away from `txt`, and anything you type into the field yourself wins over both.
+- **Strip Image Metadata** removes location, camera and other metadata, tells you what it removed (or that there was nothing to remove), and puts the clean image on the clipboard when you Save. ⌘Z brings the original back. Your history still holds the original you copied, metadata and all, until you remove it (⌘⌫ in the history overlay).
+- **Extract Text (OCR)** reads the text in the picture and puts it in the editor in place of the picture. If it finds nothing, it says so rather than emptying the editor. ⌘Z undoes any typing you've done since, then brings the picture back.
 
-On success, the clipboard becomes the short URL and the overlay shows it with buttons to copy it again and to open it; the URL is captured into clipboard history like any other copy.
+A photo copied from Photos opens as a picture, even though Photos also puts a file reference on the clipboard. A file copied in Finder and a picture embedded in formatted text do not; see [Known limitations](#known-limitations-and-gotchas).
 
-**Settings → Upload** holds the server URL, the API token, and the defaults ⌘⇧U opens with (expiration, burn-on-read, file type — all still changeable per upload in the overlay). The token lives in the Keychain, never in Settings: press **Set Token** to store it — a token you type and then quit without pressing it is not saved — and **Clear Token** to remove it. Private, LAN, and Tailscale addresses are the expected way to reach a self-hosted Zipline, not something to work around. Plain `http` works for an IP address (a Tailscale 100.x one included) and for a `.local` name; a named host such as `box.tailnet.ts.net` needs `https`, which Tailscale issues a certificate for. There's no certificate-trust bypass, so a self-signed certificate fails the upload by design.
+### Finding transforms
 
-## Settings (Plan 2b)
+**Palette (⌘K).** Type to filter, ↑↓ to choose, ↵ (or a click) to apply, Esc to close. Typing matches a prefix, a word start, or, failing those, a loose subsequence. Camel-case boundaries count as word starts, so `case` finds `camelCase`. Transforms that apply to the detected content are listed first. In an image session the palette lists the image transforms. When nothing is listed, it says "No matching transforms" (your search matched nothing), "No transforms enabled", or "No image transforms enabled". Esc closes the palette first; a second Esc, with the palette already closed, cancels the panel.
 
-Pastefix includes a Settings window (⌘, or "Settings…" in the menu) with seven tabs:
+**Sidebar (⌘⇧L or the toolbar button).** Browse every enabled transform grouped by category. The sidebar always keeps your configured order, so it doesn't reshuffle as you copy different things. Whether it's open is remembered. The panel widens by the sidebar's width when it opens and gives the width back when it closes, and you can resize the panel yourself.
 
-- **General:** Configure wrap width (default 400 columns), toggle auto-hide-on-blur (dismisses the panel when focus leaves), and choose a custom folder for user scripts (default `~/.config/pastefix/scripts/`).
-- **Privacy:** A **History** section (remember-history toggle, item-count stepper, and a Clear History dialog offering "Clear N items" — unpinned only — or "Clear Everything") and an **Excluded Apps** section (add/remove apps whose copies are never read into history, Restore Defaults).
-- **Snippets:** An Accessibility status line ("ready" / "needs Accessibility permission", with a shortcut to open System Settings) and a list of pinned snippets, each with an editable title, a per-snippet global-shortcut recorder, and Unpin.
-- **Presets:** A menu of your regex find & replace rules (+ / − to add/remove) above a full-width editor with the four flags and a live preview; see Regex presets above.
-- **Shortcut:** Rebind the global hotkey (default ⌘⇧C), the history hotkey (default ⌘⇧V), and the upload hotkey (default ⌘⇧U), each using an interactive keyboard recorder.
-- **Transforms:** Enable/disable individual transforms and drag to reorder them in the palette.
-- **Upload:** The Zipline server URL, API token, and the expiration/burn/file-type defaults ⌘⇧U opens with; see Zipline upload above.
+### Content detection
 
-All settings persist via `UserDefaults`. User scripts are watched for changes; editing a script under `~/.config/pastefix/scripts/` updates the palette instantly without relaunch.
+When the buffer matches a recognised kind, a `Detected: …` label appears beside the Transform… bar and matching transforms are listed first in the palette. Nothing is hidden, and your enable and reorder settings still apply. The kinds:
 
-### Updates (Plan 2c)
+- **URL:** the buffer contains a link.
+- **JSON:** the whole buffer parses as JSON.
+- **Color:** the whole buffer is a colour literal (`#hex`, `rgb()`, `hsl()`, …). A 14×14 swatch of the colour appears next to the label.
+- **JWT:** the whole buffer is three base64url segments whose header decodes to JSON with an `alg` key.
+- **Base64:** the whole buffer is 16+ characters that decode to printable text.
+- **Percent-encoded:** the buffer contains a `%XX` sequence.
+- **HTML entities:** the buffer contains a `&name;` or `&#n;` reference.
+- **Markdown:** the buffer contains an ATX heading or fence line, or at least two of: a list line, a `> ` quote, a pipe-table row, a `[text](url)` link, `**strong**` or `` `code` `` inline. A buffer whose first line is a `#!` shebang is never treated as Markdown.
 
-Pastefix checks for updates once a day via [Sparkle](https://sparkle-project.org) and asks before installing anything. **Check for Updates…** in the menu bar runs a check on demand; Settings → General has an **Automatically check for updates** toggle, a **Check Now** button, and the installed version. Updates are EdDSA-signed and Developer-ID-verified; the feed is `https://bnaylor.github.io/pastefix/appcast.xml`. Maintainers: see [docs/RELEASING.md](docs/RELEASING.md).
+Secrets have their own badge instead; see [Secrets](#secrets).
 
-## Overview
+### Markdown preview
 
-The engine provides:
+The eye button (⌘⇧M) swaps the editor for a read-only rendering of the buffer as Markdown. It's tinted when Markdown is detected. Esc returns to the editor. Links you click in the preview open in your browser (http, https and mailto only).
 
-- **Twenty-six built-in native transforms** written in Swift, fast and dependency-free
-- **User scripts** discovered from `~/.config/pastefix/scripts/`, with automatic engine selection (shell or JavaScript) by file extension
-- **Unified error handling** via typed `TransformError`; all transforms run off the main thread with configurable timeouts
-- **Large-buffer safety** — every transform has an input cap and a timeout (1 MB and 3 s by default). Markdown → Rich Text is limited to 64 KB. Clean URL Tracking and URL → Markdown Link are limited to 256 KB, because URL detection itself stops scanning at 256 KB: `Detected: URL` will not appear on a larger buffer, and those two transforms refuse with a banner naming the limit rather than running blind. Redact Secrets and the regex presets keep their own 256 KB caps. Rich → Plain Text and Rich → Markdown are limited to 4 MB of rich content, measured on the RTFD rather than the text, and refuse with a banner saying so. On a very large paste the panel appears first; the `Detected:` label and any secret badges fill in a moment later once the scan lands. Over 1 MB of text, the panel doesn't lay the text out at all — that costs about a second per megabyte — and shows its size instead, with **Show anyway** if you do want to scroll or edit it. Save and ⌘⇧U work on all of it; most transforms stop at their 1 MB input cap and say so.
-- **Script metadata** via magic comments (name, enabled flag, execution order)
-- **Filesystem watching** with debouncing for dynamic script discovery
-- **Content detection** — the panel recognises URLs, JSON, colour literals, JWTs, Base64, percent-encoding, HTML entities, and Markdown, and lists the transforms that apply to them first
+### Clipboard history
 
-## Built-in Transforms
+Pastefix remembers what you copy: plain text, formatted (rich) text and images, up to 200 items and 50 MB total. Per item, the limits are 256 KB of text, 1 MB of rich text, and 5 MB per image. Oversize items are dropped, not truncated.
 
-Each is a zero-configuration `Transformer` conforming to the protocol:
+Press **⌘⇧V** anywhere, or **⌘Y** inside the panel, to open the history overlay:
 
-- **Transliterate to ASCII:** Converts smart punctuation, diacritics, and non-ASCII characters to ASCII equivalents (e.g., é → e, "curly quotes" → straight quotes, emoji dropped).
-- **Wrap & Reflow:** Rewraps text to a configurable width (default 400 columns), respecting paragraph breaks.
-- **Whitespace Cleanup:** Trims leading/trailing spaces and tabs from each line; collapses repeated blank lines.
-- **Clean URL Tracking:** Removes tracking parameters (`utm_*`, `fbclid`, `gclid`, `si`, `mc_cid`, … ) from every URL in the text; other parameters, fragments, and surrounding text are untouched. HTML-escaped `&amp;` query separators (as found in links copied from email or HTML source) are normalised to `&` before stripping, which counts as a change on its own.
-- **URL → Markdown Link:** Replaces each URL with `[Page Title](url)`. The title is fetched over the network with a 4-second timeout and a 256 KB cap; if that fails the link text is `host/path`. URLs already inside Markdown links are skipped. Up to 16 unique URLs per apply are fetched; any beyond that fall back to `host/path` without a network call. The link target always includes a scheme, so `www.example.com` becomes `[…](http://www.example.com)`. Titles are always fetched over `https`, even for an `http://` link (App Transport Security blocks cleartext, so a plain-`http` fetch could only ever fail) — the link target keeps the scheme the text had. Requests carry a `Pastefix` User-Agent and no cookies, and these are never contacted: loopback, link-local, private (RFC 1918 and CGNAT), multicast and reserved IPv4 ranges — including legacy numeric spellings such as `2130706433`, `0x7f.0.0.1` and `127.1` — their IPv6 equivalents (including IPv4-mapped addresses), and `localhost`, `*.local` and `*.localhost` names; redirects to any of those are refused. Hostnames are not resolved before fetching. Links to a blocked host just get the `host/path` fallback.
-- **camelCase / snake_case / kebab-case / CONSTANT_CASE:** Rewrites each line as one identifier phrase. Splits on separators and camel boundaries (`HTTPServerError` → `http_server_error`), keeps digits with their word (`utf8Decoder`), preserves indentation and non-ASCII letters.
+| Key | Action |
+|---|---|
+| type | filter |
+| ↑↓ | choose |
+| ↵ | load the item into a new session |
+| ⌘↵ | put the item back on the clipboard and close, without opening it |
+| ⇧↵ | copy the item, close, and paste it into the app you were in |
+| ⌘P | pin the item |
+| ⌘⌫ | forget the item |
+| Esc | close the overlay |
 
-### Markdown and rich text
+A loaded item opens the way a fresh copy would: any real text, plain or rich, opens in the editor (formatting is kept for Rich → Plain Text), with an attached image carried along for Save; only an image with no text at all opens as a picture.
 
-- **Rich → Plain Text:** Extracts plain text from rich RTFD data (requires original clipboard rich content; others work on the text buffer).
-- **Rich → Markdown:** Converts the clipboard's original rich text (RTFD) to GitHub-flavoured Markdown: headings, bulleted and numbered lists (with nesting), bold/italic/strikethrough, links, and inline/fenced code from monospaced runs. Headings come from an HTML-imported `headerLevel` when present (browser copies); otherwise from a size/weight heuristic — a whole-paragraph-bold run is measured against the dominant point size of the surrounding *non-bold* text and becomes `#`/`##`/`###` at 1.8×/1.4×/1.15× that size, falling back to a 13pt baseline when the document is all bold and there's no non-bold text to measure against. Tables are flattened to `|`-joined lines, one per row, with no header separator; images are dropped. Requires original clipboard rich content.
-- **Markdown → Rich Text:** Doesn't rewrite the buffer — it arms an output mode. While armed, a "Rich text on save" badge appears in the action bar; the next ⌘S writes `public.html` (the rendered fragment), `public.rtf` (AppKit's conversion of that HTML), and the Markdown source itself as `public.utf8-plain-text` — so a formatted target (Mail, Pages, a browser) gets rich text and a plain-text target still gets the Markdown. Click the badge to disarm and go back to a plain-text save; a new session always starts disarmed. `Detected: Markdown` appears when the buffer looks like Markdown (see Content detection above).
+Copying the same thing again moves it back to the top instead of adding a duplicate, and keeps crediting the app that originally put it on the clipboard. Reusing an item from history doesn't relabel it as coming from Pastefix. Items that password managers and similar tools mark as concealed, transient or auto-generated are never recorded, including a few legacy marker conventions older apps still use.
 
-These three make up the **Rich Text** category (see the table below).
+History lives in `~/Library/Application Support/Pastefix/history/`, readable only by your user account. The **Clipboard History** checkmark in the menu-bar menu turns capture on and off on the fly. While it's off, the menu-bar icon switches to a pause glyph so you can see nothing is being recorded.
 
-**Preview.** The eye button (⌘⇧M) swaps the editor for a read-only rendering of the buffer as Markdown; it's tinted when Markdown is detected. Images aren't shown, and previews are limited to 16 KB and 200 list items — the HTML importer runs on the main thread, and past that a render is slow enough to stutter the panel. Esc returns to the editor.
+**Excluded apps.** Settings → Privacy has an Excluded Apps list, seeded with common password managers (1Password, Bitwarden, Keychain Access, Apple Passwords, Dashlane, LastPass, KeePassXC, Enpass, NordPass, Proton Pass, Strongbox). Copies made in a listed app are never read into history. Add an app from `/Applications` or by typing its bundle identifier, remove entries, or press **Restore Defaults** to get the seed list back. ⌘⇧C still reads whatever is on the clipboard, because you asked for it, and saving from the panel writes it back, which is recorded like any other copy.
 
-### Data
+The source app is decided from whichever app was frontmost *before* the clipboard is read. If you switch apps within a second of copying, both apps count as possible sources and the copy is skipped if either is excluded.
 
-- **JSON Prettify:** Reformats JSON with 2-space indentation. Output keys are always sorted, so runs are deterministic.
-- **JSON Minify:** Reformats JSON onto a single line, no whitespace. Output keys are always sorted.
-- **Escape as JSON String:** Wraps the entire buffer as one JSON string literal (quotes, backslashes, control characters escaped); never fails.
-- **Base64 Encode:** Encodes the buffer as standard Base64 text.
-- **Base64 Decode:** Decodes Base64 to text only — never binary. Tolerates whitespace, missing padding, and the URL-safe alphabet; fails if the result isn't valid UTF-8.
-- **URL Encode:** Percent-encodes everything except the RFC 3986 unreserved characters (`A–Z a–z 0–9 - . _ ~`); a space becomes `%20`.
-- **URL Decode:** Reverses percent-encoding; leaves `+` alone (no form-encoding assumption); rejects malformed `%` sequences.
-- **HTML Encode:** Escapes `& < > " '` to `&amp; &lt; &gt; &quot; &#39;`.
-- **HTML Decode:** Decodes named, decimal, and hex character references, including the HTML4 Latin-1 named entities (`&eacute;`, `&nbsp;`, …); unknown entities are left verbatim.
-- **Decode JWT:** Shows a JWT's header and payload as pretty JSON. Never verifies the signature. `exp`/`iat`/`nbf`, when present as plausible numbers, are printed as UTC comment lines below the JSON, with `exp` also noting `(expired)`/`(valid)`.
+### Pinned snippets
 
-### Colors
+Pin anything you want to keep past the history limits. Pin from the history overlay with **⌘P** (untitled), or from the panel with the toolbar pin button or **⌘⇧P**, which lets you add a title. Pinned items get their own **Pinned** section above History in the overlay, newest-pinned first, and never age out.
 
-All four accept `#hex`, `rgb()`/`rgba()`, and `hsl()`/`hsla()` input, either comma-separated or CSS4 space/slash syntax, and rewrite it in a different notation:
+**Per-snippet hotkeys.** In Settings → Snippets, record a shortcut for a pin. Pressing it anywhere writes the snippet to the clipboard and sends ⌘V to the frontmost app. Two pins can't share a shortcut. Without Accessibility permission, a snippet hotkey still copies the snippet and beeps once so you know to paste it yourself. ⇧↵ in the overlay copies and closes silently, and beeps only if the paste it lined up never lands.
 
-- **Color → CSS Hex:** `#rrggbb`, or `#rrggbbaa` when there's an alpha channel.
+Unpinning is reversible: the title and shortcut stay with the item, so pinning it again brings both back. They're forgotten only when the item leaves your history. Clear History keeps your pins; only Clear Everything removes them.
+
+### Secrets
+
+Pastefix watches the working buffer for credentials: AWS access keys, AWS secret keys, GitHub tokens, Anthropic keys, OpenAI keys, Slack tokens, Stripe keys, Google API keys, private key blocks, JWTs, passwords embedded in URLs, and generic high-entropy `key = value` assignments, including passwords full of punctuation such as `password: hunter2!SuperSecret99`.
+
+The scan also sees through lookalike characters: Cyrillic and Greek letters that look Latin, fullwidth characters, dash variants, `Ø` for `0` and `×` for `x`. OCR output often contains these, and so does a deliberately disguised paste. Redaction replaces the characters actually in your text.
+
+When a secret is found:
+
+- An orange **N secret(s)** badge appears in the action bar. Its tooltip lists the kinds found, and clicking it selects the next match in the editor, cycling through all of them.
+- **Redact Secrets** (Privacy category) replaces every match with a `[REDACTED <kind>]` token. A password in a URL keeps its `user:` and host and loses only the password. Running it again on redacted text changes nothing.
+- In the history overlay, a small shield marks any item, pinned or not, that contains a secret.
+
+Nothing is blocked. Pastefix never refuses to capture or save something because it looks like a credential, and ⌘S behaves the same.
+
+### Regex presets
+
+**Settings → Presets** lets you define find & replace rules as regular expressions, with no script needed. Choose a preset from the menu at the top, or press **+** for a new one. A new preset is an unsaved draft, marked *(unsaved)*, and doesn't reach the palette until you press Save.
+
+Each preset has a name, a pattern, a replacement, and four flags:
+
+- **Case-insensitive**
+- **^ and $ match at line boundaries**
+- **. matches newlines**
+- **Replace all matches** (off replaces only the first)
+
+Patterns and replacements use `NSRegularExpression` syntax, so a replacement can reference capture groups with `$1`, `$2` and so on. The replacement field is one line, so it understands a few escapes: `\n` is a newline, `\t` a tab, `\\` a literal backslash, and `\$` a literal dollar sign instead of a group reference. Any other escape is kept as typed, so `\d` inserts the two characters `\d`.
+
+Under the fields, a sample box shows a **live preview**: the transformed sample and a match count as you type, or an inline error if the pattern doesn't compile. The preview uses at most 16 KB of the sample and gives up after 1 second, so an expensive pattern can only stall the preview, never the panel.
+
+Save is disabled while the name is blank or the pattern doesn't compile. An empty pattern counts as not compiling ("Pattern is empty"). A preset with unsaved edits is marked **•**, and switching away from it or removing it asks first. Leaving the tab or closing Settings saves a valid unsaved preset automatically. An invalid one is kept while you switch tabs, but not once the window closes.
+
+A saved preset works like any other transform: it's in the palette and in the sidebar under **Presets**, and you can enable, disable and reorder it in Settings → Transforms. Deleting a preset also forgets its settings there. Presets have their own limits; see [Transform limits](#transform-limits).
+
+### Zipline upload
+
+**⌘⇧U** uploads the working text to your self-hosted [Zipline](https://zipline.diced.sh) v4 server and replaces the clipboard with the short URL it returns. Zipline v4 only.
+
+**What gets sent.** With the panel closed, ⌘⇧U snapshots the clipboard, the same as ⌘⇧C. With the panel open and the buffer unedited, it re-reads the clipboard if that has changed since. Once you've edited the buffer, your edits win over a newer clipboard. The overlay's header always names what it's about to send ("the clipboard" or "the panel buffer") and its size.
+
+**Secret check.** Text is scanned for secrets in full before upload, with no size cap. If something is found, you see the kinds found and a choice: **Redact** (preselected; Return uploads the redacted copy) or send as-is. Redaction only changes the uploaded copy. Your buffer and clipboard are untouched.
+
+**Images.** When the session is showing an image, ⌘⇧U uploads the image. Its location and camera details are stripped first, and the overlay says so. Images are **not** checked for secrets, and the overlay says that every time. If it detects text in the image, it says so, the button reads "Upload without checking", and Return cancels instead of uploading.
+
+A photo goes up as JPEG (quality 0.85), anything else as PNG. The choice is measured: an image with every pixel opaque whose JPEG is at most half the size of its PNG goes as JPEG. The overlay then shows both sizes ("Sending as JPEG (1.6 MB; as PNG it would be 10.1 MB)") and a one-click **Send as PNG instead**. A full-screen screenshot with the wallpaper showing compresses like a photo, so that button is how to send one losslessly. Anything with a transparent pixel always goes as PNG. When the PNG is over the 16 MB upload limit, an opaque image goes as JPEG whatever the ratio, and the overlay says why. An image still over 16 MB in the format it would be sent in is refused.
+
+**Expires** (Never, 1 hour, 1 day, 7 days) and **Burn after reading** are separate controls, because Zipline treats them separately; a paste can be both.
+
+**Burn after reading** means *only the first person to open the link can see it*: Zipline remembers who viewed it first, lets them open it again, and deletes it for anyone else.
+
+- **Don't open a burn-after-reading link yourself to check it.** That uses it up, and the person you send it to gets nothing.
+- **Link previews count.** Pasting one into Slack, Discord or iMessage lets the app fetch a preview, and that fetch is the one view. Burn after reading suits links sent where nothing previews them.
+- The Open button after such an upload warns you.
+
+**File type** sets the uploaded file's extension, which is how Zipline v4 picks syntax highlighting. It defaults to `json` when the buffer looks like JSON and `txt` otherwise. Your Settings → Upload default wins whenever you've set it to something other than `txt`, and anything you type into the field wins over both.
+
+On success, the clipboard holds the short URL and the overlay shows it with buttons to copy it again and to open it. The URL is recorded in clipboard history like any other copy.
+
+### Large clipboards
+
+On a very large paste the panel appears first, and the `Detected:` label and secret badge fill in a moment later. Over 1 MB of text, the panel doesn't lay the text out at all, since that costs about a second per megabyte; it shows the size instead, with **Show anyway** if you want to scroll or edit it. Save and ⌘⇧U work on all of it. Most transforms stop at their 1 MB input cap and say so.
+
+### Built-in transforms
+
+Twenty-nine built-in transforms, grouped in the sidebar by category in this order. Your regex presets follow under **Presets**, then any custom script categories alphabetically, then **Scripts**.
+
+| Category | Transforms |
+|---|---|
+| Layout | Wrap & Reflow, Whitespace Cleanup |
+| Rich Text | Rich → Plain Text, Rich → Markdown, Markdown → Rich Text |
+| Characters | Transliterate to ASCII |
+| URLs | Clean URL Tracking, URL → Markdown Link |
+| Case | camelCase, snake_case, kebab-case, CONSTANT_CASE |
+| Data | JSON Prettify, JSON Minify, Escape as JSON String, Base64 Encode, Base64 Decode, URL Encode, URL Decode, HTML Encode, HTML Decode, Decode JWT |
+| Colors | Color → CSS Hex, Color → CSS rgb(), Color → CSS hsl(), Color → SwiftUI Color |
+| Privacy | Redact Secrets, Strip Image Metadata |
+| Images | Extract Text (OCR) |
+
+#### Layout
+
+- **Wrap & Reflow:** rewraps text to the configured width (default 400 columns), respecting paragraph breaks.
+- **Whitespace Cleanup:** trims leading and trailing spaces and tabs from each line, and collapses repeated blank lines.
+
+#### Rich Text
+
+- **Rich → Plain Text:** extracts plain text from the clipboard's original rich (RTFD) content.
+- **Rich → Markdown:** converts the clipboard's original rich text to GitHub-flavoured Markdown: headings, bulleted and numbered lists (with nesting), bold, italic, strikethrough, links, and inline or fenced code from monospaced runs. Headings come from the HTML heading level when there is one (browser copies). Otherwise a whole-paragraph bold run is measured against the most common point size of the surrounding non-bold text and becomes `#`, `##` or `###` at 1.8×, 1.4× or 1.15× that size, falling back to a 13 pt baseline when everything is bold. Tables are flattened to `|`-joined lines, one per row, with no header separator. Images are dropped.
+- **Markdown → Rich Text:** doesn't change the buffer; it sets how the next Save writes it. While it's on, a **Rich text on save** badge appears in the action bar, and ⌘S writes `public.html` (the rendered fragment), `public.rtf` (AppKit's conversion of that HTML), and the Markdown source as `public.utf8-plain-text`. A formatted target such as Mail, Pages or a browser gets rich text, and a plain-text target still gets the Markdown. Click the badge to turn it off. Every new session starts with it off.
+
+#### Characters
+
+- **Transliterate to ASCII:** converts smart punctuation, diacritics and other non-ASCII characters to ASCII equivalents (é → e, curly quotes → straight quotes, emoji dropped).
+
+#### URLs
+
+- **Clean URL Tracking:** removes tracking parameters (`utm_*`, `fbclid`, `gclid`, `si`, `mc_cid`, …) from every URL in the text. Other parameters, fragments and surrounding text are untouched. HTML-escaped `&amp;` query separators (from links copied out of email or HTML source) become `&` first, which counts as a change on its own.
+- **URL → Markdown Link:** replaces each URL with `[Page Title](url)`, fetching the title over the network.
+  - If the fetch fails, the link text is `host/path`. URLs already inside Markdown links are skipped.
+  - Up to 16 unique URLs are fetched per run, in parallel, with a 4-second bound. Only the first 256 KB of each page is read. URLs beyond the first 16 get `host/path` without a network call.
+  - The link target always has a scheme, so `www.example.com` becomes `[…](http://www.example.com)`.
+  - Titles are always fetched over `https`, even for an `http://` link, because App Transport Security blocks cleartext fetches. The link target keeps the scheme your text had.
+  - Requests carry a `Pastefix` User-Agent and no cookies.
+  - Never contacted: loopback, link-local, private (RFC 1918 and CGNAT), multicast and reserved IPv4 ranges, including legacy numeric spellings such as `2130706433`, `0x7f.0.0.1` and `127.1`; their IPv6 equivalents, including IPv4-mapped addresses; and `localhost`, `*.local` and `*.localhost`. Redirects to any of those are refused. Hostnames are not resolved before fetching. A link to a blocked host gets the `host/path` fallback.
+
+#### Case
+
+- **camelCase, snake_case, kebab-case, CONSTANT_CASE:** rewrite each line as one identifier. They split on separators and camel boundaries (`HTTPServerError` → `http_server_error`), keep digits with their word (`utf8Decoder`), and preserve indentation and non-ASCII letters.
+
+#### Data
+
+- **JSON Prettify:** reformats JSON with 2-space indentation. Keys are always sorted, so output is deterministic.
+- **JSON Minify:** reformats JSON onto one line with no whitespace. Keys are always sorted.
+- **Escape as JSON String:** wraps the whole buffer as one JSON string literal, escaping quotes, backslashes and control characters. Never fails.
+- **Base64 Encode:** encodes the buffer as standard Base64.
+- **Base64 Decode:** decodes Base64 to text only, never binary. Tolerates whitespace, missing padding and the URL-safe alphabet. Fails if the result isn't valid UTF-8.
+- **URL Encode:** percent-encodes everything except the RFC 3986 unreserved characters (`A–Z a–z 0–9 - . _ ~`). A space becomes `%20`.
+- **URL Decode:** reverses percent-encoding. Leaves `+` alone (no form-encoding assumption) and rejects malformed `%` sequences.
+- **HTML Encode:** escapes `& < > " '` to `&amp; &lt; &gt; &quot; &#39;`.
+- **HTML Decode:** decodes named, decimal and hex character references, including the HTML4 Latin-1 named entities (`&eacute;`, `&nbsp;`, …). Unknown entities are left as they are.
+- **Decode JWT:** shows a JWT's header and payload as pretty JSON. It never verifies the signature. `exp`, `iat` and `nbf`, when present as plausible numbers, are printed as UTC comment lines below the JSON, with `exp` also marked `(expired)` or `(valid)`.
+
+A decode transform that can't read its input shows a red banner and leaves the text unchanged.
+
+#### Colors
+
+All four accept `#hex`, `rgb()`/`rgba()` and `hsl()`/`hsla()`, in comma-separated or CSS4 space/slash syntax, and rewrite the colour in another notation:
+
+- **Color → CSS Hex:** `#rrggbb`, or `#rrggbbaa` with an alpha channel.
 - **Color → CSS rgb():** `rgb(r g b)`, or `rgb(r g b / a)` with an alpha channel.
 - **Color → CSS hsl():** `hsl(h s% l%)`, or `hsl(h s% l% / a)` with an alpha channel.
 - **Color → SwiftUI Color:** `Color(red:green:blue:opacity:)` with 3-decimal literals.
 
-## User Scripts
+#### Privacy
 
-Scripts are discovered automatically from `~/.config/pastefix/scripts/`. The engine selects the interpreter by file extension:
+- **Redact Secrets:** see [Secrets](#secrets).
+- **Strip Image Metadata:** see [Images](#images).
 
-- **`.js` files** → JavaScriptCore
-- **Any other extension** (or no extension) → shell, honored by shebang
+#### Images
 
-### Shell Script Contract
+- **Extract Text (OCR):** see [Images](#images). Recognition runs on your Mac with Apple's Vision framework.
 
-A shell script receives the working text on stdin and must write the transformed text to stdout:
+### User scripts
+
+Put a script in your scripts folder (default `~/.config/pastefix/scripts/`) and it appears as a transform. Hidden files are skipped. The file extension picks how it runs:
+
+- **`.js`** runs in JavaScriptCore.
+- **Anything else**, or no extension, runs as a shell script, honouring its shebang.
+
+#### Shell scripts
+
+A shell script reads the working text on stdin and writes the result to stdout:
 
 ```bash
 #!/bin/bash
@@ -176,15 +324,33 @@ A shell script receives the working text on stdin and must write the transformed
 tr '[:lower:]' '[:upper:]'
 ```
 
-- **Input:** text on stdin
-- **Output:** transformed text on stdout
-- **Error handling:** non-zero exit code signals an error; stderr is captured and surfaced in the error
-- **Environment:** minimal (`PATH`, `HOME` only); runs in the script directory; the shebang is honored by the kernel
-- **Timeout:** configured per registry (default 3 seconds); on timeout, the shell process is sent SIGTERM, then SIGKILL after a 0.5 s grace period — a hard upper bound that fires even if the script traps SIGTERM. Contrast with JavaScript, which cannot be interrupted and is abandoned best-effort.
+- **Input:** text on stdin.
+- **Output:** transformed text on stdout.
+  - stdout must be UTF-8 text. Output that isn't fails with "Script error: the script's output isn't UTF-8 text", and your buffer is left as it was.
+  - Output over 32 MB stops the script and is an error.
+- **Errors:** a non-zero exit code is an error. stderr is captured and shown in the error.
+- **Environment:** minimal (`PATH` and `HOME` only). The script runs in the scripts folder, and the kernel honours the shebang.
+- **Timeout:** 3 seconds. On timeout the process gets SIGTERM, then SIGKILL after a 0.5-second grace period, so a script that traps SIGTERM still stops.
 
-### JavaScript Contract
+#### Image scripts
 
-A JavaScript file must define a top-level `function transform(text)` that returns the transformed string:
+A shell script with `# pastefix: accepts = image` works on the picture in an image session instead of on text:
+
+```bash
+#!/bin/sh
+# pastefix: name = Half size
+# pastefix: accepts = image
+sips --resampleWidth "$(( PASTEFIX_IMAGE_WIDTH / 2 ))" "$PASTEFIX_IMAGE" --out half.png >/dev/null && cat half.png && rm half.png
+```
+
+- **Input:** the image as a PNG file, `input.png`, whose path is in `PASTEFIX_IMAGE`; its size is in `PASTEFIX_IMAGE_WIDTH` and `PASTEFIX_IMAGE_HEIGHT`. stdin is empty. A path rather than stdin, because image tools (`sips`, `magick`, `exiftool`, `tesseract`) take paths. The file is deleted after the run.
+- **Output:** stdout. An image (PNG, JPEG, GIF, TIFF, WebP or HEIC) becomes the new picture. It is re-encoded as PNG, so metadata your script *adds* (a copyright tag, say) doesn't survive. Anything else must be UTF-8 text, which replaces the picture the way Extract Text does, so `tesseract "$PASTEFIX_IMAGE" -` is an OCR script. No output, or output that is neither, is an error.
+- **Limits:** the output image is held to the same 25-megapixel limit as any image session, and output over 128 MB stops the script. Image scripts get at least 30 seconds; ⌘Z or Esc stops one early.
+- **Shell only.** JavaScriptCore strings can't carry bytes, so a `.js` script with `accepts = image` is listed but refuses to run, and says why.
+
+#### JavaScript
+
+A `.js` file defines a top-level `function transform(text)` that returns the new string:
 
 ```javascript
 /* pastefix: name = Reverse */
@@ -193,15 +359,15 @@ function transform(text) {
 }
 ```
 
-- **Input:** text passed as the sole argument to `transform(text)`
-- **Output:** the return value must be a string
-- **Error handling:** exceptions or non-string returns are caught and surfaced as script errors
-- **Context:** JavaScript runs in a fresh JSContext per invocation; no globals or state persist between calls
-- **Timeout caveat:** JavaScriptCore cannot be interrupted. If a JS script runs past the timeout, the best-effort strategy is to abandon the continuation and let the thread finish on process exit. Shell scripts, by contrast, receive SIGTERM followed by SIGKILL after a short grace period, enforcing a hard upper bound on wall-clock duration.
+- **Input:** the text, as the only argument to `transform(text)`.
+- **Output:** the return value, which must be a string.
+- **Errors:** exceptions and non-string returns are caught and shown as script errors.
+- **Context:** a fresh JavaScript context per run. No globals or state carry over between runs.
+- **Timeout:** 3 seconds, but JavaScriptCore can't be interrupted. See [Known limitations](#known-limitations-and-gotchas).
 
-## Script Metadata
+#### Script metadata
 
-Magic comments in the first 30 lines define script behavior. Recognized keys are `name`, `enabled`, and `order`:
+Magic comments in the first 30 lines set a script's name and behaviour:
 
 ```bash
 #!/bin/bash
@@ -211,71 +377,24 @@ Magic comments in the first 30 lines define script behavior. Recognized keys are
 ```
 
 ```javascript
-/* pastefix: name = My JS Transform, order = 600 */
+// pastefix: name = My JS Transform
+// pastefix: order = 600
 ```
 
-- **Comment syntax:** lines are tolerant of comment markers (`#`, `//`, `*`, `/*`); the parser strips leading whitespace and any run of the individual characters space, tab, `#`, `/`, `*`
-- **Keys:** `name` (display name), `enabled` (true/false; default true), `order` (integer execution order; default 1000 for scripts), `kinds` (comma-separated list of `url`, `json`, `color`, `jwt`, `base64`, `percentEncoded`, `htmlEntities`, `markdown`, matched case-insensitively — `percentencoded` and `PercentEncoded` both work; a script with `kinds` is listed first in the ⌘K palette when that content is detected; unknown names ignored), `category` (free text, trimmed; groups the script under this heading in the sidebar; default `Scripts` when omitted; a custom category appears in the sidebar alphabetically after the built-in categories below)
-- **Built-in order:** Rich→Plain (10), Rich→Markdown (11), Markdown→Rich Text (12), Transliterate (20), Wrap (30), Whitespace (40), Clean URL Tracking (50), URL → Markdown Link (60), camelCase (70), snake_case (71), kebab-case (72), CONSTANT_CASE (73), JSON Prettify (80), JSON Minify (81), Escape as JSON String (82), Base64 Encode (90), Base64 Decode (91), URL Encode (92), URL Decode (93), HTML Encode (94), HTML Decode (95), Decode JWT (96), Color → CSS Hex (100), Color → CSS rgb() (101), Color → CSS hsl() (102), Color → SwiftUI Color (103); user scripts at order 1000+ appear after built-ins unless explicitly reordered
-- **Malformed lines:** ignored silently
+One key per line: everything after the first `=` is the value, so `name = X, order = 600` on one line names the script "X, order = 600".
 
-**Built-in categories** (sidebar order):
+- **`name`:** the display name.
+- **`enabled`:** `true` or `false`; default `true`. A script with `enabled = false` isn't loaded.
+- **`order`:** an integer sort position; default 1000. Built-ins use 10–112 and regex presets 900, so scripts come after both unless you give them a lower number or reorder them in Settings → Transforms. Ties sort by name.
+- **`kinds`:** a comma-separated list of `url`, `json`, `color`, `jwt`, `base64`, `percentEncoded`, `htmlEntities`, `markdown`, `secret`, matched case-insensitively. The script is listed first in the palette when that content is detected. Unknown names are ignored.
+- **`accepts`:** `text` (the default) or `image`; see [Image scripts](#image-scripts). Any other value lists the script with an error saying so, rather than ignoring the line.
+- **`category`:** free text; groups the script under that heading in the sidebar. Default `Scripts`. Custom categories appear alphabetically after the built-in categories and Presets.
 
-| Category | Built-in transforms |
-|---|---|
-| Layout | Wrap & Reflow, Whitespace Cleanup |
-| Rich Text | Rich → Plain Text, Rich → Markdown, Markdown → Rich Text |
-| Characters | Transliterate to ASCII |
-| URLs | Clean URL Tracking, URL → Markdown Link |
-| Case | camelCase, snake_case, kebab-case, CONSTANT_CASE |
-| Data | JSON Prettify, JSON Minify, Escape as JSON String, Base64 Encode/Decode, URL Encode/Decode, HTML Encode/Decode, Decode JWT |
-| Colors | Color → CSS Hex, Color → CSS rgb(), Color → CSS hsl(), Color → SwiftUI Color |
+Comment markers are flexible: each line has leading whitespace and any run of space, tab, `#`, `/` and `*` stripped before parsing. Malformed lines are ignored.
 
-## Execution Model
+#### Examples
 
-All transforms run off the main thread via Swift's async/await:
-
-```swift
-let transformer: any Transformer = ...
-let input = TransformInput(text: "Hello", richRTFD: nil)
-let result = try await transformer.apply(input)
-```
-
-- **Timeout:** default 3 seconds per `RegistryConfig`; a timed-out transform throws `TransformError.timeout`
-- **Errors:** `TransformError` is a typed enum with cases for rich input unavailable, timeout, non-zero shell exit (carrying exit code + stderr), and script exceptions
-- **State safety:** failed or timed-out transforms never corrupt engine state; errors bubble to the caller for handling
-
-## Script Discovery & Registry
-
-The `TransformerRegistry` loads all enabled transforms in priority order:
-
-```swift
-let config = RegistryConfig(
-    scriptsDirectory: URL(fileURLWithPath: NSHomeDirectory() + "/.config/pastefix/scripts"),
-    timeout: 5
-)
-let registry = TransformerRegistry(config: config)
-let transformers = registry.load()  // [any Transformer], in order
-```
-
-- **Discovery:** scans the scripts directory for regular files; hidden files are skipped
-- **Missing directory:** tolerated; registry returns only built-ins
-- **Ordering:** built-ins and scripts are sorted by (order, name); executed in that order
-- **Disabling:** scripts with `enabled = false` in their metadata are excluded
-
-## Testing
-
-Run the full test suite:
-
-```bash
-swift test
-```
-
-The suite includes 35 tests covering all transforms, shell and JavaScript execution, metadata parsing, filesystem watching with debouncing, error cases, and registry loading.
-
-## Example Scripts
-
-### Shell: Uppercase Transform
+Shell:
 
 ```bash
 #!/bin/bash
@@ -283,7 +402,7 @@ The suite includes 35 tests covering all transforms, shell and JavaScript execut
 tr '[:lower:]' '[:upper:]'
 ```
 
-### JavaScript: JSON Pretty-Print
+JavaScript:
 
 ```javascript
 /* pastefix: name = Format JSON */
@@ -296,3 +415,119 @@ function transform(text) {
     }
 }
 ```
+
+### Transform limits
+
+Every transform has an input cap and a timeout, so a huge buffer or a slow script fails with a banner instead of hanging the panel.
+
+| Transform | Input cap | Timeout |
+|---|---|---|
+| Default (built-ins and scripts) | 1 MB | 3 s |
+| Markdown → Rich Text | 64 KB | 3 s |
+| Clean URL Tracking | 256 KB | 3 s |
+| URL → Markdown Link | 256 KB | 6 s (4 s of fetching) |
+| Redact Secrets | 256 KB | 3 s |
+| Regex presets | 256 KB in, 2 MB out | 3 s |
+| Rich → Plain Text, Rich → Markdown | 4 MB of rich content, measured on the RTFD | 3 s |
+
+A preset whose pattern matches the empty string applies its replacement at every position, which is what the 2 MB output cap is for.
+
+## Known limitations and gotchas
+
+**Secrets**
+
+- The secret scan only covers buffers up to 256 KB. Over that it doesn't run, and a grey **Not scanned for secrets** badge appears instead of a clean-looking action bar. Redact Secrets refuses the buffer with an error rather than quietly doing nothing, and a history item that was never scanned carries no shield either way. (Uploads are different: ⌘⇧U scans the full text, with no cap.)
+- A credential value made only of letters, with no digit anywhere, is not flagged.
+- A digit/letter swap within plain ASCII, such as `x0xb-` for `xoxb-`, is not caught. Lookalike Unicode characters are.
+- Images are never scanned for secrets, including on upload.
+
+**Hotkeys**
+
+- ⌘⇧V is "Paste and Match Style" in some apps. It's the default because it's easy to remember; rebind it in Settings → Shortcut if it gets in your way.
+- ⌘⇧U is "Mark as Unread/Read" in Mail and "Show Output" in VS Code. Pastefix's global hotkey shadows both while it runs. Rebind it if that matters to you.
+
+**Images and files**
+
+- Copying a *file* in Finder doesn't open as an image: what lands on the clipboard is a rendering of the file's icon, not the file. A picture embedded in formatted text doesn't open as an image either.
+- **Copying a file and pressing Save without editing does nothing**, the way macOS behaves when there's nothing meaningful to write back. Pastefix can't put a file back on the clipboard, and writing its name as text would replace the file you copied. If you edit the text first, Save writes your edit.
+- A picture that has to be converted before it can be shown, and is over 25 megapixels, shows a message instead of opening blank. The limit is on the conversion, so a PNG (the usual screenshot format) opens whatever its size. Your clipboard isn't touched, so you can still paste the picture directly, until you save text over it, which Pastefix still lets you do. The same 25 MP limit applies to Strip Image Metadata, Extract Text and image uploads.
+- Images can't be pinned yet.
+- Your history keeps the original image, metadata included, even after you strip it in the panel. Remove it from history with ⌘⌫ if that matters.
+
+**OCR**
+
+- OCR can read characters as lookalikes: a Cyrillic letter for a Latin one, `Ø` for `0`, `×` for `x`, an em dash for a hyphen. Check anything exact, such as a key, a command or a URL, before you use it. The secret scan accounts for these; your own eyes should too.
+
+**Transforms**
+
+- Transforms have input caps and timeouts; see [Transform limits](#transform-limits). Over 1 MB of text, most transforms refuse.
+- JavaScript transforms can't be interrupted. When one runs past its timeout, Pastefix gives up waiting and shows an error, but the script keeps running in the background until it finishes or you quit Pastefix. Shell scripts are killed.
+- URL → Markdown Link fetches page titles over the network. Don't run it on URLs you don't want contacted. It skips private and local addresses; see [URLs](#urls).
+- Rich → Plain Text and Rich → Markdown always convert the formatted content you originally copied, not the current buffer, so their result replaces any edits or transforms you made first. If the copy had no formatting, they say "No rich text available to convert."
+- Clean URL Tracking and URL → Markdown Link stop at 256 KB because URL detection itself stops there; `Detected: URL` won't appear on a larger buffer.
+
+**Markdown preview**
+
+- The preview doesn't show images, and it's limited to 16 KB and 200 list items of Markdown. Past that, rendering is slow enough to stutter the panel.
+
+**History and excluded apps**
+
+- A copy made by a browser extension comes from the browser, not the password manager, so excluding the password manager's app can't catch it. Those copies are skipped only when the extension marks them concealed, which 1Password, Bitwarden and Apple's extensions do.
+- ⌘⇧C reads the clipboard even when the copy came from an excluded app, because you asked for it. Saving from the panel then writes it back, and that write is recorded in history.
+
+**Zipline**
+
+- Zipline v4 only.
+- Self-signed certificates are refused; there's no trust bypass. A named host needs `https`.
+- Burn-after-reading links are used up by link previews and by opening them yourself; see [Zipline upload](#zipline-upload).
+
+## Privacy: what leaves your Mac
+
+Pastefix makes network requests in exactly three cases:
+
+1. **Zipline uploads you start** with ⌘⇧U, to the server you configured.
+2. **URL → Markdown Link**, which fetches the title of each URL in your text, only when you run that transform.
+3. **Sparkle update checks**, once a day unless you turn them off in Settings → General, to `https://bnaylor.github.io/pastefix/appcast.xml`.
+
+Everything else stays local. OCR runs on your Mac. Secret detection, history, the other built-in transforms and the Markdown preview make no network calls; the preview strips images so it never loads remote ones. Clicking a link in the preview hands it to your browser. Your own scripts are the exception you control: a user script can do anything a program on your Mac can, including network calls.
+
+Clipboard history is stored in `~/Library/Application Support/Pastefix/history/`, readable only by your user account. Your Zipline API token is stored in the Keychain.
+
+## Contributing
+
+**Ideas and bugs:** open a [GitHub issue](https://github.com/bnaylor/pastefix/issues).
+
+**Code:** read [AGENTS.md](AGENTS.md) first. It covers the project layout, the testability rules, and how to build and run the app. The design spec is under [`docs/specs/`](docs/specs/).
+
+```sh
+swift test               # the PastefixCore and PastefixAppCore packages
+scripts/test-app.sh      # the app's hosted unit tests (xcodebuild)
+Pastefix/launch.sh       # build and launch a Debug copy of the app
+```
+
+The packages build and test on macOS 14 or later; the app needs macOS 15.
+
+Maintainers releasing a version: see [docs/RELEASING.md](docs/RELEASING.md).
+
+### Architecture
+
+The repo has three parts:
+
+- **`PastefixCore`**, the transform engine. A dependency-free Swift package that puts native Swift transforms, shell scripts, JavaScript functions and regex presets behind one `Transformer` protocol. `TransformerRegistry` loads the built-ins, presets and discovered scripts, sorted by (order, name), and a filesystem watcher reloads scripts when they change.
+- **`PastefixAppCore`**, the app's model layer (clipboard snapshot, document and undo, history, detection scheduling), tested with `swift test`.
+- **`Pastefix`**, the Xcode menu-bar app: hotkeys, pasteboard, panel and SwiftUI views.
+
+Using the engine directly:
+
+```swift
+let config = RegistryConfig(
+    scriptsDirectory: URL(fileURLWithPath: NSHomeDirectory() + "/.config/pastefix/scripts"),
+    timeout: 5
+)
+let transformers = TransformerRegistry(config: config).load()  // [any Transformer], in order
+
+let input = TransformInput(text: "Hello", richRTFD: nil)
+let result = try await transformers[0].apply(input)
+```
+
+Transforms run off the main thread. Failures throw a typed `TransformError` (rich input unavailable, timeout, non-zero shell exit with exit code and stderr, script failure, invalid input) and never corrupt engine state. A missing scripts directory is fine; the registry returns the built-ins.
