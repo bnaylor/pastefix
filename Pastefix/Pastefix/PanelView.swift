@@ -30,7 +30,10 @@ struct PanelView: View {
 
     private var workingBinding: Binding<String> {
         Binding(
-            get: { model.document?.working ?? "" },
+            // Mid-composition, the editor's own text: the model never holds marked text, and
+            // handing SwiftUI anything else makes it overwrite (and discard) the composition on
+            // the next render (see `AppModel.composingEditorText`).
+            get: { model.composingEditorText() ?? model.document?.working ?? "" },
             set: { model.setWorking($0) }
         )
     }

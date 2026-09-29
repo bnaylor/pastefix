@@ -258,4 +258,53 @@ struct OneUndoStackTests {
         um.undo()
         #expect(f.model.document?.working == "cafe\u{00B4}\nbar   ")
     }
+
+    /// GUI pass 2 (#111): the marked "´" was already gone before the transform ran. Any re-render
+    /// of the panel (⌘K opening, a sidebar click) had SwiftUI's TextEditor re-set its text from the
+    /// binding — which never holds marked text — discarding the composition without an undo
+    /// record, so the marked insert's undo later deleted a newline (measured in-process: "cafebar").
+    @Test("a re-render during a composition keeps it, and undo stays in step")
+    func compositionSurvivesARerender() async throws {
+        let f = try ModelFixture(); defer { f.finish() }
+        f.model.beginSession(from: ClipboardSnapshot(plainText: "cafe\nbar   ", richRTFD: nil))
+        let window = host(f); defer { window.orderOut(nil) }
+        let um = try #require(await bound(f, window))
+        #expect(await f.eventually { self.textView(in: window.contentView!)?.string == "cafe\nbar   " })
+        let editor = try #require(textView(in: window.contentView!))
+        window.makeFirstResponder(editor)
+        editor.setSelectedRange(NSRange(location: 4, length: 0))
+        editor.setMarkedText("\u{00B4}", selectedRange: NSRange(location: 1, length: 0),
+                             replacementRange: NSRange(location: 4, length: 0))
+        f.model.transformNote = "re-render"                       // anything the panel shows
+        try? await Task.sleep(nanoseconds: 150_000_000)
+        #expect(editor.hasMarkedText() && editor.string == "cafe\u{00B4}\nbar   ", "the composition was discarded: \(editor.string.debugDescription)")
+        let cleanup = try #require(f.model.transformers.first { $0.id == "builtin.whitespace" })
+        f.model.apply(cleanup)
+        #expect(await f.eventually { !f.model.isApplying })
+        #expect(f.model.document?.working == "cafe\u{00B4}\nbar")
+        um.undo()
+        #expect(f.model.document?.working == "cafe\u{00B4}\nbar   ")
+        #expect(await f.eventually { editor.string == "cafe\u{00B4}\nbar   " })
+    }
+
+    /// A session boundary during a composition ends it: the new session's text is shown, not the
+    /// old composition, and nothing is left to undo.
+    @Test("a refresh during a composition shows the new clipboard")
+    func refreshEndsAComposition() async throws {
+        let f = try ModelFixture(); defer { f.finish() }
+        f.copy(text: "fresh")
+        f.model.beginSession(from: ClipboardSnapshot(plainText: "cafe", richRTFD: nil))
+        let window = host(f); defer { window.orderOut(nil) }
+        let um = try #require(await bound(f, window))
+        #expect(await f.eventually { self.textView(in: window.contentView!)?.string == "cafe" })
+        let editor = try #require(textView(in: window.contentView!))
+        window.makeFirstResponder(editor)
+        editor.setSelectedRange(NSRange(location: 4, length: 0))
+        editor.setMarkedText("\u{00B4}", selectedRange: NSRange(location: 1, length: 0),
+                             replacementRange: NSRange(location: 4, length: 0))
+        f.model.refresh()
+        #expect(await f.eventually { editor.string == "fresh" }, "editor shows \(editor.string.debugDescription)")
+        #expect(f.model.document?.working == "fresh", "the old composition leaked into the new session")
+        #expect(!editor.hasMarkedText() && !um.canUndo)
+    }
 }

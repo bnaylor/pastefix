@@ -213,6 +213,7 @@ final class AppModel: ObservableObject {
     /// use it directly to start from a snapshot the pasteboard path would never produce — which is
     /// how a defect that validation upstream now hides stays pinned downstream.
     func beginSession(from origin: ClipboardSnapshot) {
+        endComposition()
         errorMessage = nil
         noticeMessage = nil
         transformNote = nil
@@ -396,6 +397,7 @@ final class AppModel: ObservableObject {
     }
 
     func refresh() {
+        endComposition()
         guard var doc = document else { return }
         let origin = ClipboardBridge.snapshot(from: pasteboard)
         doc.refresh(origin: origin)
@@ -505,6 +507,7 @@ final class AppModel: ObservableObject {
     /// An item with both text and an image opens as a text session that still carries the image
     /// through to Save.
     func load(_ item: HistoryItem) {
+        endComposition()
         errorMessage = nil
         noticeMessage = nil
         transformNote = nil
@@ -706,15 +709,39 @@ final class AppModel: ObservableObject {
     /// marked insert's undo action, recorded against text the model never had, replays at a stale
     /// range after the transform is undone (GUI pass: it deleted a newline). Called before each.
     func commitMarkedText() {
-        guard let root = panelWindow?.contentView else { return }
+        for text in editors() where text.hasMarkedText() {
+            text.unmarkText()
+            setWorking(text.string)
+        }
+    }
+
+    /// The editor's whole text while it holds marked text, else nil. `PanelView`'s binding reads
+    /// this first: SwiftUI's TextEditor re-sets its text from the binding on every re-render of
+    /// the panel (⌘K opening, a sidebar click), and the binding never holds marked text, so each
+    /// re-render discarded the composition — with no undo record, leaving the marked insert's undo
+    /// to delete whatever later sat at its offset (GUI pass 2: a newline; measured in-process).
+    func composingEditorText() -> String? {
+        editors().first { $0.hasMarkedText() }?.string
+    }
+
+    /// Ends any composition at a session boundary, BEFORE the document is replaced: unmarking
+    /// writes the text through the binding, which must land in the session that is ending, not
+    /// the new one (measured: a refresh mid-composition put "cafe´" into the fresh session). It also
+    /// has to precede `resetUndo`, because clearing a marked range registers an action of its own.
+    private func endComposition() {
+        for text in editors() where text.hasMarkedText() { text.unmarkText() }
+    }
+
+    /// The panel's editable text views: the TextEditor's, never a field editor.
+    private func editors() -> [NSTextView] {
+        guard let root = panelWindow?.contentView else { return [] }
+        var found: [NSTextView] = []
         func walk(_ view: NSView) {
-            if let text = view as? NSTextView, text.isEditable, !text.isFieldEditor, text.hasMarkedText() {
-                text.unmarkText()
-                setWorking(text.string)
-            }
+            if let text = view as? NSTextView, text.isEditable, !text.isFieldEditor { found.append(text) }
             view.subviews.forEach(walk)
         }
         walk(root)
+        return found
     }
 
     /// Closes the editor's open typing group whenever the buffer is replaced programmatically, so
@@ -722,12 +749,7 @@ final class AppModel: ObservableObject {
     /// text that just left — which would put typing ranges for one buffer on top of, or under, a
     /// transform's step to another.
     private func breakTypingCoalescing() {
-        guard let root = panelWindow?.contentView else { return }
-        func walk(_ view: NSView) {
-            if let text = view as? NSTextView, text.isEditable, !text.isFieldEditor { text.breakUndoCoalescing() }
-            view.subviews.forEach(walk)
-        }
-        walk(root)
+        editors().forEach { $0.breakUndoCoalescing() }
     }
 
     /// Re-reads the manager into `undoState`.
@@ -767,6 +789,7 @@ final class AppModel: ObservableObject {
     }
 
     private func endSession() {
+        endComposition()
         abandonInFlightWork()
         document = nil
         resetUndo()
