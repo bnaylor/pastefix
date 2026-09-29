@@ -178,11 +178,15 @@ public enum SecretDetector {
     /// Callers on the main actor must keep using `scan(_:)`.
     public static func scanIgnoringSizeCap(_ text: String) -> [SecretMatch] {
         guard !text.isEmpty else { return [] }
-        let ns = text as NSString
+        // Matching runs on a copy with lookalikes folded to ASCII (#102: OCR reads `А` for `A`,
+        // `—` for `-`). The fold keeps UTF-16 offsets, so every range below is also a range into
+        // `text`, and the matches are built against `text` at the end.
+        let scanned = Confusables.fold(text)
+        let ns = scanned as NSString
         let full = NSRange(location: 0, length: ns.length)
         var found: [(range: NSRange, kind: SecretKind)] = []
         for rule in rules {
-            for m in rule.regex.matches(in: text, range: full) {
+            for m in rule.regex.matches(in: scanned, range: full) {
                 var r = m.range(at: rule.group)
                 guard r.location != NSNotFound else { continue }
                 // A value class that admits punctuation also admits the full stop that ends the
@@ -194,8 +198,8 @@ public enum SecretDetector {
                 found.append((r, rule.kind))
             }
         }
-        found += privateKeyRanges(in: text, ns: ns).map { ($0, SecretKind.privateKey) }
-        found += jwtRanges(in: text).map { ($0, SecretKind.jwt) }
+        found += privateKeyRanges(in: scanned, ns: ns).map { ($0, SecretKind.privateKey) }
+        found += jwtRanges(in: scanned).map { ($0, SecretKind.jwt) }
         // Deterministic order: location asc, length desc, then SecretKind declaration order asc.
         found.sort { a, b in
             if a.range.location != b.range.location { return a.range.location < b.range.location }
