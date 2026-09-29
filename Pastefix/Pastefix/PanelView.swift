@@ -151,6 +151,9 @@ struct PanelView: View {
                                 // belt and braces on the one path that sends data off the machine.
                                 .disabled(model.isApplying || isUploadOpen)
                                 .focused($editorFocused)
+                                // Tearing the editor down (preview, an image entry, the placeholder)
+                                // removes its typing actions from the stack without a notification.
+                                .onDisappear { Task { @MainActor in model.refreshUndoState() } }
                         }
                         if let error = model.errorMessage {
                             errorBanner(error)
@@ -218,8 +221,8 @@ struct PanelView: View {
         // skipped render, so the transition is never observed and the next summon comes up with
         // the overlay still over it. The counter is monotonic, so a skipped render can't hide it.
         // Must stay above the `historyOverlayRequested` handler: a ⌘⇧V summon resets, then opens.
-        // The hotfix for typing-undo replaying at stale ranges after a transform (see the type).
-        .background(EditorUndoReset(token: [model.sessionGeneration, model.document?.detectionRevision ?? -1]))
+        // The window's undo manager is the one stack for typing and transforms (#103).
+        .background(WindowUndoBinding(model: model))
         .onChange(of: model.sessionGeneration) { _, _ in
             isPaletteOpen = false
             isHistoryOpen = false
@@ -299,25 +302,15 @@ struct PanelView: View {
         }
     }
 
-    /// ⌘Z/⌘⇧Z belong to the toolbar's Undo/Redo while an image is showing, or while untouched OCR
-    /// text sits over one (Plan 21: until the user types, ⌘Z brings the image back), and no overlay
-    /// is up. Otherwise ⌘Z is the editor's typing undo (#103).
-    private var imageUndoKeys: Bool {
-        guard let document = model.document, !isPaletteOpen, !isHistoryOpen, !isUploadOpen else { return false }
-        return document.displaysAsImage || document.undoRestoresImage
-    }
-
     private var toolbar: some View {
         HStack {
-            Button("Undo") { model.undo() }
-                // ⌘Z / ⌘⇧Z drive Pastefix's undo while an image is showing (Plan 20: no editor to take
-                // them) and while untouched OCR text sits over one (Plan 21). Otherwise they stay the
-                // editor's typing undo; transform undo there is the button (#103).
-                .keyboardShortcut(imageUndoKeys ? KeyboardShortcut("z", modifiers: .command) : nil)
-                .disabled(model.isApplying || model.document?.canUndo != true)
-            Button("Redo") { model.redo() }
-                .keyboardShortcut(imageUndoKeys ? KeyboardShortcut("z", modifiers: [.command, .shift]) : nil)
-                .disabled(model.isApplying || model.document?.canRedo != true)
+            // Through the window's undo manager, like ⌘Z (Edit ▸ Undo): one stack, so the button
+            // undoes typing as readily as a transform (#103). Enabled while a transform runs, since
+            // undoing it then cancels it.
+            Button("Undo") { model.undoManager?.undo() }
+                .disabled(!model.canUndo)
+            Button("Redo") { model.undoManager?.redo() }
+                .disabled(!model.canRedo)
             Button("Refresh") { model.refresh() }
                 .disabled(model.isApplying)
             Button { showPinPopover = true } label: {
