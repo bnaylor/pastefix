@@ -21,8 +21,12 @@ public enum TextRangeClamp {
     /// Offsets, not content: the clamp makes no claim that the text under the selection survived
     /// the replacement, only that the selection is expressible and safe.
     public static func remap(_ range: Range<String.Index>, from old: String, to new: String) -> Range<String.Index>? {
-        // Comparing indices is offset arithmetic and is safe even across strings; *measuring* a
-        // distance to an out-of-bounds index is not, so bound the range before touching the view.
+        // Bound the range before measuring it: measuring a distance to an out-of-bounds index
+        // traps. Comparing indices is offset arithmetic, and is sound only between strings in the
+        // SAME encoding — a UTF-16 index (the editor's) against a native UTF-8 `endIndex` compares
+        // raw offsets in different units and can pass this guard while out of bounds, which is how
+        // typing after a non-ASCII transform crashed the app (Plan 21 GUI pass).
+        // `PasteDocument.inEditorEncoding` keeps the buffer in the editor's encoding so it holds.
         guard range.upperBound <= old.endIndex else { return nil }
         let lower = old.utf16.distance(from: old.utf16.startIndex, to: range.lowerBound)
         let upper = old.utf16.distance(from: old.utf16.startIndex, to: range.upperBound)

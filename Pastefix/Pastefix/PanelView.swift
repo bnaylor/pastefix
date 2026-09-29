@@ -297,17 +297,20 @@ struct PanelView: View {
         }
     }
 
-    /// ⌘Z/⌘⇧Z belong to the toolbar's Undo/Redo while an image is showing and no overlay is up.
+    /// ⌘Z/⌘⇧Z belong to the toolbar's Undo/Redo while an image is showing, or while untouched OCR
+    /// text sits over one (Plan 21: until the user types, ⌘Z brings the image back), and no overlay
+    /// is up. Otherwise ⌘Z is the editor's typing undo (#103).
     private var imageUndoKeys: Bool {
-        model.document?.displaysAsImage == true && !isPaletteOpen && !isHistoryOpen && !isUploadOpen
+        guard let document = model.document, !isPaletteOpen, !isHistoryOpen, !isUploadOpen else { return false }
+        return document.displaysAsImage || document.undoRestoresImage
     }
 
     private var toolbar: some View {
         HStack {
             Button("Undo") { model.undo() }
-                // ⌘Z / ⌘⇧Z drive Pastefix's undo only while an image is showing (Plan 20): an image
-                // session has no editor to take them, and nothing else did. In a text session they
-                // stay the editor's typing undo; transform undo there is the button (see the issue).
+                // ⌘Z / ⌘⇧Z drive Pastefix's undo while an image is showing (Plan 20: no editor to take
+                // them) and while untouched OCR text sits over one (Plan 21). Otherwise they stay the
+                // editor's typing undo; transform undo there is the button (#103).
                 .keyboardShortcut(imageUndoKeys ? KeyboardShortcut("z", modifiers: .command) : nil)
                 .disabled(model.isApplying || model.document?.canUndo != true)
             Button("Redo") { model.redo() }

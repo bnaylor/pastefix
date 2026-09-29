@@ -13,6 +13,14 @@ private struct Swap: ImageTransformer {
     func transformImage(_ png: Data) throws -> TransformOutput { .image(to, note: "swapped") }
 }
 
+private struct Reading: ImageTransformer {
+    let id = "test.reading"; let name = "Reading"; let requiresRichInput = false
+    let source: TransformerSource = .builtin
+    let lane = ImageTransformLane.makeLane(label: "test.reading")
+    let text: String
+    func transformImage(_ png: Data) throws -> TransformOutput { .text(text) }
+}
+
 private struct Upper: Transformer {
     let id = "test.upper"; let name = "Upper"; let requiresRichInput = false
     let source: TransformerSource = .builtin
@@ -73,6 +81,23 @@ struct ImageUndoShortcutTests {
         #expect(await press(window) { f.model.document?.imagePNG == png }, "⌘Z")
         #expect(await press(window, shift: true) { f.model.document?.imagePNG == other }, "⌘⇧Z")
         #expect(f.model.transformNote == "swapped")
+    }
+
+    @Test("after OCR, ⌘Z restores the image until the user types")
+    func ocrUndo() async throws {
+        let f = try ModelFixture(); defer { f.finish() }
+        let png = try #require(Pixels.encoded(width: 20, height: 10, type: "public.png"))
+        f.model.beginSession(from: ClipboardSnapshot(plainText: nil, richRTFD: nil, imagePNG: png))
+        let window = host(f); defer { window.orderOut(nil) }
+        f.model.apply(Reading(text: "recognised"))
+        #expect(await f.eventually { f.model.document?.working == "recognised" })
+        #expect(await press(window) { f.model.document?.imagePNG == png }, "⌘Z restores the image")
+
+        f.model.redo()
+        #expect(await f.eventually { f.model.document?.working == "recognised" })
+        f.model.setWorking("recognised, edited")
+        let undid = await press(window) { f.model.document?.displaysAsImage == true }
+        #expect(!undid, "once the user types, ⌘Z is the editor's")
     }
 
     @Test("in a text session ⌘Z is left to the editor and does not undo a transform")

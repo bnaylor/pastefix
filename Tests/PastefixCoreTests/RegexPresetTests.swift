@@ -96,15 +96,18 @@ import Foundation
     @Test func cancellationStopsReplacePromptly() async throws {
         let evil = RegexPreset(name: "evil", pattern: "a", replacement: "b")
         let text = String(repeating: "a", count: 10_000)
-        let start = ContinuousClock.now
-        let task = Task {
+        // Timed inside the task, around the replace alone: timing from before `Task {}` also counted
+        // how long a busy cooperative pool took to schedule it, which failed this under the full
+        // suite (2.13 s against 2 s, #105 review) with nothing wrong in the regex path.
+        let elapsed = await Task { () -> Duration in
             withUnsafeCurrentTask { $0?.cancel() }
+            let start = ContinuousClock.now
             #expect(throws: TransformError.timeout) {
                 try RegexPresetTransformer.replace(text, preset: evil, deadline: nil)
             }
-        }
-        await task.value
-        #expect(ContinuousClock.now - start < .seconds(2))
+            return ContinuousClock.now - start
+        }.value
+        #expect(elapsed < .seconds(2))
     }
 
     @Test func previewReportsOutputAndMatchCount() throws {

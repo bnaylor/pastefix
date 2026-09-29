@@ -21,6 +21,10 @@ public struct PasteDocument: Sendable {
     /// identical to its original, so this is how the user can tell which one they are on — and it
     /// can never be stale, because it describes the entry it sits beside (Plan 20, GUI pass).
     private var entryNotes: [String?]
+    /// Whether each entry has been typed into since it was pushed. Only `setWorking` with
+    /// *different* text sets it — the TextEditor writes the same text back on focus and at the end
+    /// of editing, and that is not typing. Decides `undoRestoresImage` (Plan 21).
+    private var entryEdited: [Bool]
     public private(set) var cursor: Int
     /// Detection for `working`. Pending after every discrete event (init, push, undo, redo,
     /// refresh) until the scheduler delivers a result for `detectionRevision`; the struct never
@@ -47,6 +51,7 @@ public struct PasteDocument: Sendable {
         self.entries = [first]
         self.entryByteCounts = [Self.byteCount(of: first)]
         self.entryNotes = [nil]
+        self.entryEdited = [false]
         self.cursor = 0
         self.outputMode = .plain
     }
@@ -56,7 +61,21 @@ public struct PasteDocument: Sendable {
     static func initialEntry(for origin: ClipboardSnapshot) -> Entry {
         let blank = (origin.plainText ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         if let png = origin.imagePNG, blank { return .image(png) }
-        return .text(origin.plainText ?? "")
+        return .text(inEditorEncoding(origin.plainText ?? ""))
+    }
+
+    /// `text` in the editor's encoding. The TextEditor's selection indices are UTF-16 (its text is
+    /// an NSString), and a `String.Index` is only comparable with indices of a string in the same
+    /// encoding: a UTF-16 caret past the end of a *native UTF-8* buffer passed `TextRangeClamp`'s
+    /// bounds guard and then trapped measuring it — typing after any Swift transform that left
+    /// non-ASCII text crashed the app (found in Plan 21's GUI pass; `String.Index(_:within:)` traps
+    /// too, so no check after the fact is safe). ASCII needs nothing: its offsets agree in both.
+    /// One copy per transform, not per keystroke. `setWorking` does not re-encode: typed text arrives
+    /// as the TextEditor's own string, already UTF-16 — an observation about SwiftUI's TextEditor, not
+    /// a guarantee, pinned only by `TypingAfterTransformTests` (a real keystroke into a hosted editor).
+    /// Cost measured in the #105 review: `utf8.count` on a foreign string is ~1.2 ms per MB.
+    static func inEditorEncoding(_ text: String) -> String {
+        text.utf8.count == text.utf16.count ? text : NSString(string: text) as String
     }
 
     private static func byteCount(of entry: Entry) -> Int {
@@ -65,6 +84,15 @@ public struct PasteDocument: Sendable {
     }
 
     public var currentEntry: Entry { entries[cursor] }
+    /// True when ⌘Z should restore an image rather than undo typing: the current entry is text a
+    /// transform pushed over an image entry (OCR), and the user hasn't typed into it. In a text
+    /// session ⌘Z is the editor's typing undo (#103); until there is typing to undo, the image is
+    /// what the user expects back. Typing back to the original text still counts as edited.
+    public var undoRestoresImage: Bool {
+        guard cursor > 0, case .text = currentEntry, case .image = entries[cursor - 1] else { return false }
+        return !entryEdited[cursor]
+    }
+
     /// The note the transform that produced the current entry left, if any.
     public var currentNote: String? { entryNotes[cursor] }
     /// The current entry's text, or `""` on an image entry — what an image session has always
@@ -253,6 +281,10 @@ public struct PasteDocument: Sendable {
     /// what's actually working. Compares *entries*: on an image entry `working` is `""`, so
     /// comparing text would silently drop a pushed `.text("")`.
     public mutating func push(_ entry: Entry, note: String? = nil) {
+        // Text is re-encoded here, not only in `pushState`: `push` is public, and one caller that
+        // skipped the re-encoding would bring back the typing crash (see `inEditorEncoding`).
+        var entry = entry
+        if case .text(let text) = entry { entry = .text(Self.inEditorEncoding(text)) }
         guard entry != currentEntry else { invalidateDetection(); return }
         entries = Array(entries.prefix(cursor + 1))
         entries.append(entry)
@@ -260,6 +292,8 @@ public struct PasteDocument: Sendable {
         entryByteCounts.append(Self.byteCount(of: entry))
         entryNotes = Array(entryNotes.prefix(cursor + 1))
         entryNotes.append(note)
+        entryEdited = Array(entryEdited.prefix(cursor + 1))
+        entryEdited.append(false)
         cursor = entries.count - 1
         invalidateDetection()
     }
@@ -273,7 +307,8 @@ public struct PasteDocument: Sendable {
     /// re-detect: kinds are recomputed only on the discrete events (init, push, undo/redo,
     /// refresh), so the palette order stays pinned while the user types.
     public mutating func setWorking(_ text: String) {
-        guard case .text = currentEntry else { return }
+        guard case .text(let current) = currentEntry else { return }
+        if current != text { entryEdited[cursor] = true }
         entries[cursor] = .text(text)
         entryByteCounts[cursor] = text.utf8.count
     }
