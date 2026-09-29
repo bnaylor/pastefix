@@ -16,15 +16,11 @@ Things you can do with it:
 - **Add your own:** any shell script or JavaScript function in your scripts folder shows up as a transform.
 
 <!--
-Slideshow frames, in order (docs/media/pastefix-tour.gif, built from window-only captures of demo content):
-1. Messy copied text in the ⌘⇧C panel; ⌘K palette filtering to "Whitespace Cleanup".
-2. Minified JSON with "Detected: JSON" → JSON Prettify.
-3. A URL full of utm_ parameters → Clean URL Tracking.
-4. Text containing an API key → orange secrets badge → Redact Secrets.
-5. A screenshot opened as a picture → Extract Text (OCR).
-6. A photo → Strip Image Metadata, with its "Removed location…" note.
-7. ⌘⇧V history overlay with the Pinned section.
-8. ⌘⇧U upload overlay, then the short URL.
+docs/media/pastefix-tour.gif: window-only captures of planted demo content (no real clipboard or
+history), 720 px wide, ~21 s. Scenes: the ⌘K palette on messy text; JSON Prettify; Clean URL
+Tracking (before/after); a secret found and redacted; Extract Text on a screenshot (before/after);
+Strip Image Metadata; the history overlay with a pinned snippet. Rebuild from 1440×920 PNGs with
+ffmpeg concat + palettegen (256 colours, bayer dither), -fps_mode vfr.
 -->
 ![Pastefix in action](docs/media/pastefix-tour.gif)
 
@@ -331,9 +327,26 @@ tr '[:lower:]' '[:upper:]'
 - **Input:** text on stdin.
 - **Output:** transformed text on stdout.
   - stdout must be UTF-8 text. Output that isn't fails with "Script error: the script's output isn't UTF-8 text", and your buffer is left as it was.
+  - Output over 32 MB stops the script and is an error.
 - **Errors:** a non-zero exit code is an error. stderr is captured and shown in the error.
 - **Environment:** minimal (`PATH` and `HOME` only). The script runs in the scripts folder, and the kernel honours the shebang.
 - **Timeout:** 3 seconds. On timeout the process gets SIGTERM, then SIGKILL after a 0.5-second grace period, so a script that traps SIGTERM still stops.
+
+#### Image scripts
+
+A shell script with `# pastefix: accepts = image` works on the picture in an image session instead of on text:
+
+```bash
+#!/bin/sh
+# pastefix: name = Half size
+# pastefix: accepts = image
+sips --resampleWidth "$(( PASTEFIX_IMAGE_WIDTH / 2 ))" "$PASTEFIX_IMAGE" --out half.png >/dev/null && cat half.png && rm half.png
+```
+
+- **Input:** the image as a PNG file, `input.png`, whose path is in `PASTEFIX_IMAGE`; its size is in `PASTEFIX_IMAGE_WIDTH` and `PASTEFIX_IMAGE_HEIGHT`. stdin is empty. A path rather than stdin, because image tools (`sips`, `magick`, `exiftool`, `tesseract`) take paths. The file is deleted after the run.
+- **Output:** stdout. An image (PNG, JPEG, GIF, TIFF, WebP or HEIC) becomes the new picture. It is re-encoded as PNG, so metadata your script *adds* (a copyright tag, say) doesn't survive. Anything else must be UTF-8 text, which replaces the picture the way Extract Text does, so `tesseract "$PASTEFIX_IMAGE" -` is an OCR script. No output, or output that is neither, is an error.
+- **Limits:** the output image is held to the same 25-megapixel limit as any image session, and output over 128 MB stops the script. Image scripts get at least 30 seconds; ⌘Z or Esc stops one early.
+- **Shell only.** JavaScriptCore strings can't carry bytes, so a `.js` script with `accepts = image` is listed but refuses to run, and says why.
 
 #### JavaScript
 
@@ -364,13 +377,17 @@ Magic comments in the first 30 lines set a script's name and behaviour:
 ```
 
 ```javascript
-/* pastefix: name = My JS Transform, order = 600 */
+// pastefix: name = My JS Transform
+// pastefix: order = 600
 ```
+
+One key per line: everything after the first `=` is the value, so `name = X, order = 600` on one line names the script "X, order = 600".
 
 - **`name`:** the display name.
 - **`enabled`:** `true` or `false`; default `true`. A script with `enabled = false` isn't loaded.
 - **`order`:** an integer sort position; default 1000. Built-ins use 10–112 and regex presets 900, so scripts come after both unless you give them a lower number or reorder them in Settings → Transforms. Ties sort by name.
 - **`kinds`:** a comma-separated list of `url`, `json`, `color`, `jwt`, `base64`, `percentEncoded`, `htmlEntities`, `markdown`, `secret`, matched case-insensitively. The script is listed first in the palette when that content is detected. Unknown names are ignored.
+- **`accepts`:** `text` (the default) or `image`; see [Image scripts](#image-scripts). Any other value lists the script with an error saying so, rather than ignoring the line.
 - **`category`:** free text; groups the script under that heading in the sidebar. Default `Scripts`. Custom categories appear alphabetically after the built-in categories and Presets.
 
 Comment markers are flexible: each line has leading whitespace and any run of space, tab, `#`, `/` and `*` stripped before parsing. Malformed lines are ignored.
