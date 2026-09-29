@@ -151,15 +151,15 @@ struct OCRLayoutTests {
         let whole = [o(String(repeating: "x", count: 262), x: 0, y: 0)]
         let tiled3 = [o(String(repeating: "y", count: 271), x: 0, y: 0)]      // +3%: seam duplicates
         let tiledMore = [o(String(repeating: "z", count: 400), x: 0, y: 0)]
-        #expect(try OCRLayout.recognize(width: 5120, height: 1400, whole: { whole }, tiled: { tiled3 }) == whole)
-        #expect(try OCRLayout.recognize(width: 5120, height: 1400, whole: { whole }, tiled: { tiledMore }) == tiledMore)
-        #expect(try OCRLayout.recognize(width: 5120, height: 1400, whole: { [] }, tiled: { tiled3 }) == tiled3)
+        #expect(OCRLayout.recognize(width: 5120, height: 1400, whole: { whole }, tiled: { tiled3 }) == whole)
+        #expect(OCRLayout.recognize(width: 5120, height: 1400, whole: { whole }, tiled: { tiledMore }) == tiledMore)
+        #expect(OCRLayout.recognize(width: 5120, height: 1400, whole: { [] }, tiled: { tiled3 }) == tiled3)
     }
 
     @Test("under 4096 px: whole only, and tiles only when the whole pass is empty")
     func strategySmall() throws {
         var tiledRan = false
-        let found = try OCRLayout.recognize(width: 3000, height: 2000,
+        let found = OCRLayout.recognize(width: 3000, height: 2000,
                                             whole: { [o("hi", x: 0, y: 0)] },
                                             tiled: { tiledRan = true; return [] })
         #expect(found.map(\.text) == ["hi"] && !tiledRan)
@@ -169,7 +169,7 @@ struct OCRLayoutTests {
     // the dual-pass threshold. The empty-result fallback is what catches it.
     @Test("the measured 4095×1200 silent-empty case falls back to tiles")
     func strategyFallback() throws {
-        let found = try OCRLayout.recognize(width: 4095, height: 1200, whole: { [] },
+        let found = OCRLayout.recognize(width: 4095, height: 1200, whole: { [] },
                                             tiled: { [o("found", x: 0, y: 0)] })
         #expect(found.map(\.text) == ["found"])
     }
@@ -178,7 +178,7 @@ struct OCRLayoutTests {
     func strategyLarge() throws {
         let partialWhole = [o("127 lines, few tokens", x: 0, y: 0)]
         let fuller = [o("127 lines, few tokens", x: 0, y: 0), o("and the tokens too", x: 0, y: 40)]
-        #expect(try OCRLayout.recognize(width: 5120, height: 2880, whole: { partialWhole }, tiled: { fuller }) == fuller)
-        #expect(try OCRLayout.recognize(width: 5120, height: 2880, whole: { fuller }, tiled: { partialWhole }) == fuller)
+        #expect(OCRLayout.recognize(width: 5120, height: 2880, whole: { partialWhole }, tiled: { fuller }) == fuller)
+        #expect(OCRLayout.recognize(width: 5120, height: 2880, whole: { fuller }, tiled: { partialWhole }) == fuller)
     }
 }
