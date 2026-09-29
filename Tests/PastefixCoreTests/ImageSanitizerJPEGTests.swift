@@ -171,7 +171,8 @@ struct ImageSanitizerJPEGTests {
 
     @Test("the allowlist is checked on the non-standard-profile path too")
     func jpegSegmentsAllowlistedAfterRedraw() throws {
-        let input = try #require(Fixture.image(as: "public.png", space: try #require(Fixture.nonStandardColorSpace())))
+        let custom = try #require(Fixture.nonStandardColorSpace())
+        let input = try #require(Fixture.image(as: "public.png", space: custom))
         let out = try #require(ImageSanitizer.encodings(input)?.jpeg.image).data
         #expect(JPEGSegments.violations(in: out, expectedICC: Self.displayP3ICC) == [])
     }
