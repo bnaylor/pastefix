@@ -662,8 +662,13 @@ final class AppModel: ObservableObject {
         // Diagnostics for the GUI pass: a registration inside someone else's open group is how
         // typing could end up undone together with a transform.
         undoLog.debug("register \(step.name, privacy: .public): level \(um.groupingLevel) undoing \(um.isUndoing) redoing \(um.isRedoing)")
-        if closesOwnGroup { um.beginUndoGrouping() }
-        defer { if closesOwnGroup { um.endUndoGrouping() } }
+        // …and with `groupsByEvent` off while it is open: with it on, `beginUndoGrouping` at level
+        // 0 first opens an automatic OUTER group that the matching end doesn't close, and that
+        // outer group stayed open until the next event ended — the user's next keystroke, which
+        // joined the transform's step (GUI pass 5: 4/4; measured in-process: level 1 left open).
+        let byEvent = um.groupsByEvent
+        if closesOwnGroup { um.groupsByEvent = false; um.beginUndoGrouping() }
+        defer { if closesOwnGroup { um.endUndoGrouping(); um.groupsByEvent = byEvent } }
         // The target is the model, not the step: the manager does not retain its targets, and a
         // step object held only by the stack was freed under it (measured: a crash in popAndInvoke).
         um.registerUndo(withTarget: self) { model in
@@ -780,9 +785,15 @@ final class AppModel: ObservableObject {
             // mid-composition left the editor unfocused and the next keystroke went nowhere). A turn
             // later, once the new text is in; skipped if the editor has gone (an image session).
             if focused {
-                Task { @MainActor [weak text] in
+                Task { @MainActor [weak self, weak text] in
                     guard let text, let window = text.window, window.firstResponder !== text else { return }
                     window.makeFirstResponder(text)
+                    // Becoming first responder again restores the selection it resigned with — an
+                    // offset into the old session's text (GUI pass 5: "fresqh clip"). Where a Refresh
+                    // without a composition leaves it: at the end of the new text.
+                    if text.string == self?.document?.working {
+                        text.setSelectedRange(NSRange(location: (text.string as NSString).length, length: 0))
+                    }
                 }
             }
         }

@@ -385,10 +385,33 @@ struct OneUndoStackTests {
                              replacementRange: NSRange(location: 4, length: 0))
         f.model.refresh()
         #expect(await f.eventually { editor.string == "fresh clip" && self.editorIsFocused(window) })
+        // As a Refresh with no composition leaves it: at the end, not at the old session's offset.
+        #expect(await f.eventually { editor.selectedRange() == NSRange(location: 10, length: 0) },
+                "caret at \(editor.selectedRange())")
     }
 
     private func editorIsFocused(_ window: NSWindow) -> Bool {
         guard let text = window.firstResponder as? NSTextView else { return false }
         return text.isEditable && !text.isFieldEditor
+    }
+
+    /// GUI pass 5 (#111): the next keystroke after a transform landed went into the transform's
+    /// undo group — one ⌘Z undid both, and Redo rebuilt text that never existed (4/4, no IME).
+    /// Measured in-process: `beginUndoGrouping` at level 0 with `groupsByEvent` first opens an
+    /// automatic outer group, the explicit end closes only the inner one, and the outer one stays
+    /// open until the next event ends — the user's keystroke. After a landing nothing may be open.
+    @Test("nothing is left open after a transform lands, so the next keystroke is its own step")
+    func noGroupLeftOpenAfterLanding() async throws {
+        let f = try ModelFixture(); defer { f.finish() }
+        f.model.beginSession(from: ClipboardSnapshot(plainText: "cafe\nbar   ", richRTFD: nil))
+        let window = host(f); defer { window.orderOut(nil) }
+        let um = try #require(await bound(f, window))
+        #expect(await f.eventually { self.textView(in: window.contentView!)?.string == "cafe\nbar   " })
+        #expect(um.groupingLevel == 0, "precondition")
+        let cleanup = try #require(f.model.transformers.first { $0.id == "builtin.whitespace" })
+        f.model.apply(cleanup)
+        #expect(await f.eventually { f.model.document?.working == "cafe\nbar" && !f.model.isApplying })
+        #expect(um.groupingLevel == 0, "a group is still open (level \(um.groupingLevel)); the next keystroke joins it")
+        #expect(um.undoActionName == cleanup.name)
     }
 }
