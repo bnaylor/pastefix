@@ -57,6 +57,8 @@ struct PanelView: View {
     private var selectionBinding: Binding<TextSelection?> {
         Binding(
             get: {
+                // Mid-composition, the editor's own selection (see `AppModel.composingEditorSelection`).
+                if let composing = model.composingEditorSelection() { return composing }
                 guard !isPaletteOpen, !isHistoryOpen, !isUploadOpen,
                       let selection = editorSelection else { return nil }
                 return isExpressible(selection, in: model.document?.working ?? "") ? selection : nil
