@@ -61,7 +61,18 @@ public struct PasteDocument: Sendable {
     static func initialEntry(for origin: ClipboardSnapshot) -> Entry {
         let blank = (origin.plainText ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         if let png = origin.imagePNG, blank { return .image(png) }
-        return .text(origin.plainText ?? "")
+        return .text(inEditorEncoding(origin.plainText ?? ""))
+    }
+
+    /// `text` in the editor's encoding. The TextEditor's selection indices are UTF-16 (its text is
+    /// an NSString), and a `String.Index` is only comparable with indices of a string in the same
+    /// encoding: a UTF-16 caret past the end of a *native UTF-8* buffer passed `TextRangeClamp`'s
+    /// bounds guard and then trapped measuring it — typing after any Swift transform that left
+    /// non-ASCII text crashed the app (found in Plan 21's GUI pass; `String.Index(_:within:)` traps
+    /// too, so no check after the fact is safe). ASCII needs nothing: its offsets agree in both.
+    /// One copy per transform, not per keystroke — typed text arrives in the editor's encoding.
+    static func inEditorEncoding(_ text: String) -> String {
+        text.utf8.count == text.utf16.count ? text : NSString(string: text) as String
     }
 
     private static func byteCount(of entry: Entry) -> Int {
@@ -281,7 +292,7 @@ public struct PasteDocument: Sendable {
     }
 
     /// A text result (e.g. a transform's). See `push`.
-    public mutating func pushState(_ text: String) { push(.text(text)) }
+    public mutating func pushState(_ text: String) { push(.text(Self.inEditorEncoding(text))) }
 
     /// Coalesce a manual edit into the current text entry (no new entry). Ignored on an image
     /// entry: there is no editor on screen, and this is how a stale TextEditor write-back landing

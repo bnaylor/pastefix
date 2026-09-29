@@ -121,6 +121,20 @@ struct PasteDocumentEntryTests {
         #expect(!text.undoRestoresImage, "a text session never restores an image")
     }
 
+    // GUI pass (Plan 21): typing after OCR crashed the app — and, measured, typing after ANY Swift
+    // transform that leaves non-ASCII text. The editor's selection indices are UTF-16; a transform's
+    // String is native UTF-8; comparing a UTF-16 caret past the old end against a UTF-8 endIndex
+    // passed TextRangeClamp's bounds guard, and measuring it trapped ("String index is out of
+    // bounds"). `String.Index(_:within:)` traps too, so the text is stored in the editor's encoding.
+    @Test("a caret from the editor's longer text is refused, not trapped, after a non-ASCII transform")
+    func editorCaretAfterTransform() {
+        var d = PasteDocument(origin: ClipboardSnapshot(plainText: "héllo wörld", richRTFD: nil))
+        d.pushState("héllo wörld".uppercased())                      // native UTF-8, as a transform makes it
+        let editor = NSString(string: d.working + "x") as String     // the editor's text, one keystroke on
+        let caret = editor.endIndex..<editor.endIndex
+        #expect(TextRangeClamp.remap(caret, from: d.working, to: d.working) == nil)
+    }
+
     @Test("byte counts count text only")
     func byteCounts() {
         var d = imageDoc()
