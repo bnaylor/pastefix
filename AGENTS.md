@@ -99,6 +99,7 @@ Sources/PastefixCore/
     Transliterate.swift               #   builtin.transliterate (order 20)
     WrapReflow.swift                  #   builtin.wrapreflow   (order 30, init(width:))
     WhitespaceCleanup.swift           #   builtin.whitespace   (order 40)
+    CleanClaudePaste.swift            #   builtin.claudepaste  (order 45) — Claude Code terminal paste: dedent the 2-space margin, unwrap ONLY terminal wraps (prev line full at the paste's widest width AND continuation indent; structure never joins), drop chrome; known limit (deliberate break after the widest line) pinned by a test
     URLCleaner.swift                  #   builtin.urlclean     (order 50, kinds [url])
     MarkdownLink.swift                #   builtin.markdownlink (order 60, kinds [url]) + TitleFetcher (the engine's only network access)
     CaseConvert.swift                 #   builtin.case.{camel,snake,kebab,constant} (70–73)

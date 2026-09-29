@@ -230,11 +230,11 @@ On a very large paste the panel appears first, and the `Detected:` label and sec
 
 ### Built-in transforms
 
-Twenty-nine built-in transforms, grouped in the sidebar by category in this order. Your regex presets follow under **Presets**, then any custom script categories alphabetically, then **Scripts**.
+Thirty built-in transforms, grouped in the sidebar by category in this order. Your regex presets follow under **Presets**, then any custom script categories alphabetically, then **Scripts**.
 
 | Category | Transforms |
 |---|---|
-| Layout | Wrap & Reflow, Whitespace Cleanup |
+| Layout | Wrap & Reflow, Whitespace Cleanup, Clean Claude Code Paste |
 | Rich Text | Rich → Plain Text, Rich → Markdown, Markdown → Rich Text |
 | Characters | Transliterate to ASCII |
 | URLs | Clean URL Tracking, URL → Markdown Link |
@@ -248,6 +248,7 @@ Twenty-nine built-in transforms, grouped in the sidebar by category in this orde
 
 - **Wrap & Reflow:** rewraps text to the configured width (default 400 columns), respecting paragraph breaks.
 - **Whitespace Cleanup:** trims leading and trailing spaces and tabs from each line, and collapses repeated blank lines.
+- **Clean Claude Code Paste:** tidies text copied out of a Claude Code terminal for pasting into Slack, Google Chat or a doc. It removes the 2-space margin, rejoins lines the terminal wrapped at its width while keeping real line breaks, bullets, numbered items, tables and code blocks, and drops terminal chrome (`⏺` markers, `✻ … for 11s` status lines, `(ctrl+o to expand)`). Your `❯` prompts become `> ` quotes. One limit: a deliberate line break right after the widest line of the paste, with the next line at the same indent, can't be told from a wrap and is joined.
 
 #### Rich Text
 
