@@ -16,6 +16,22 @@ import Foundation
         return url
     }
 
+    // A script whose stdout isn't UTF-8 text (a stray binary tool, a wrong encoding) used to come
+    // back as "" with no error, and the empty string replaced the buffer. It is a failure.
+    @Test func outputThatIsNotUTF8IsAFailure() async throws {
+        let url = try tempScript("printf 'caf\\351\\n'\n")   // Latin-1 é: not UTF-8
+        defer { try? FileManager.default.removeItem(at: url) }
+        await #expect(throws: TransformError.scriptFailed("the script's output isn't UTF-8 text")) {
+            try await ShellRunner.run(scriptURL: url, input: "", timeout: 5)
+        }
+    }
+
+    @Test func emptyOutputIsStillEmpty() async throws {
+        let url = try tempScript("cat > /dev/null\n")
+        defer { try? FileManager.default.removeItem(at: url) }
+        #expect(try await ShellRunner.run(scriptURL: url, input: "x", timeout: 5) == "")
+    }
+
     // #56: cancelling the apply stops the script — the whole process group, grandchildren too —
     // instead of abandoning it to run until it finishes or times out.
     @Test func cancellationStopsTheScriptAndItsChildren() async throws {
