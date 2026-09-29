@@ -14,6 +14,29 @@ public enum ShellRunner {
     /// 0.00 s for an ordinary script, 3.01 s for one that closes stdout/stderr and lingers 3 s),
     /// so enough such runs at once starved every other async task in the process.
     public static func run(scriptURL: URL, input: String, timeout: TimeInterval) async throws -> String {
+        let out = try await runData(scriptURL: scriptURL, stdin: Data(input.utf8), timeout: timeout,
+                                    maxOutputBytes: maxTextOutputBytes)
+        // Not `?? ""`: that turned output that isn't UTF-8 into an empty string with no error, and
+        // the empty string replaced the buffer.
+        guard let text = String(data: out, encoding: .utf8) else {
+            throw TransformError.scriptFailed("the script's output isn't UTF-8 text")
+        }
+        return text
+    }
+
+    /// The most a text script may print. Far past anything the editor shows (it shows a
+    /// placeholder over 1 MB); the bound is on memory, against `yes` or a runaway loop.
+    public static let maxTextOutputBytes = 32 * 1_048_576
+    /// The most an image script may print: a 25 MP image as an uncompressed-ish PNG is ~100 MB.
+    public static let maxImageOutputBytes = 128 * 1_048_576
+    /// Stderr is diagnostics: its last 64 KB is kept, and the rest is read and dropped.
+    static let stderrTailBytes = 64 * 1024
+
+    /// Runs the script with `stdin` (nil: `/dev/null`) and `environment` added to the minimal
+    /// `PATH`/`HOME` one, and returns its stdout. Output over `maxOutputBytes` stops the script
+    /// and throws: reading it all first would grow memory without bound (#67 review).
+    public static func runData(scriptURL: URL, stdin input: Data?, environment extra: [String: String] = [:],
+                               timeout: TimeInterval, maxOutputBytes: Int) async throws -> Data {
         try Task.checkCancellation()
         let process = Process()
         process.executableURL = scriptURL          // shebang honored by the kernel
@@ -21,9 +44,9 @@ public enum ShellRunner {
         process.environment = [
             "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
             "HOME": FileManager.default.homeDirectoryForCurrentUser.path,
-        ]
+        ].merging(extra) { _, added in added }
         let stdinPipe = Pipe(), stdoutPipe = Pipe(), stderrPipe = Pipe()
-        process.standardInput = stdinPipe
+        process.standardInput = input == nil ? FileHandle.nullDevice : stdinPipe
         process.standardOutput = stdoutPipe
         process.standardError = stderrPipe
 
@@ -44,10 +67,11 @@ public enum ShellRunner {
 
         // Feed stdin on a background thread so a child that never reads stdin
         // (or fills stderr before consuming stdin) cannot block the caller.
-        let stdinData = input.data(using: .utf8) ?? Data()
-        DispatchQueue.global(qos: .userInitiated).async {
-            try? stdinPipe.fileHandleForWriting.write(contentsOf: stdinData)
-            try? stdinPipe.fileHandleForWriting.close()
+        if let stdinData = input {
+            DispatchQueue.global(qos: .userInitiated).async {
+                try? stdinPipe.fileHandleForWriting.write(contentsOf: stdinData)
+                try? stdinPipe.fileHandleForWriting.close()
+            }
         }
 
         // Watchdog: send SIGTERM to the process group on timeout; escalate to
@@ -65,7 +89,7 @@ public enum ShellRunner {
 
         return try await withTaskCancellationHandler {
             try await collect(process, exited: exited, stdout: stdoutPipe, stderr: stderrPipe,
-                              watchdog: watchdog)
+                              watchdog: watchdog, maxOutputBytes: maxOutputBytes)
         } onCancel: {
             terminateGroup(pid, of: process)
         }
@@ -83,19 +107,28 @@ public enum ShellRunner {
     }
 
     private static func collect(_ process: Process, exited: ExitSignal, stdout stdoutPipe: Pipe,
-                                stderr stderrPipe: Pipe, watchdog: Task<Void, Error>) async throws -> String {
+                                stderr stderrPipe: Pipe, watchdog: Task<Void, Error>,
+                                maxOutputBytes: Int) async throws -> Data {
         // Drain BOTH pipes concurrently before waiting for exit, to prevent deadlock.
         // Sequential draining would hang if the child fills the stderr pipe buffer
         // (~64 KB) while stdout is still being read, because the child blocks on
         // write and never exits, so stdout never hits EOF.
-        async let outData = readToEnd(stdoutPipe.fileHandleForReading)
-        async let errData = readToEnd(stderrPipe.fileHandleForReading)
-        let (outBytes, errBytes) = await (outData, errData)
+        let pid = process.processIdentifier
+        async let outData = read(stdoutPipe.fileHandleForReading, keep: .head(maxOutputBytes)) {
+            terminateGroup(pid, of: process)             // over the cap: stop it writing
+        }
+        async let errData = read(stderrPipe.fileHandleForReading, keep: .tail(stderrTailBytes)) {}
+        let (out, errBytes) = await (outData, errData)
         await exited.wait()
         watchdog.cancel()
         // Before the status checks: a cancelled run was ended by our own signal, which would
         // otherwise read as a timeout below.
         try Task.checkCancellation()
+        // Likewise: an over-cap run was ended by our own signal.
+        if out.overflowed {
+            throw TransformError.scriptFailed("the script's output is over \(ByteLimit.describe(maxOutputBytes))")
+        }
+        let outBytes = out.data
 
         // NOTE: terminationReason == .uncaughtSignal is used as the timeout signal
         // because the watchdog sends SIGTERM via process.terminate(). An unrelated
@@ -105,16 +138,11 @@ public enum ShellRunner {
             throw TransformError.timeout
         }
         if process.terminationStatus != 0 {
-            let rawStderr = String(data: errBytes, encoding: .utf8) ?? ""
+            let rawStderr = String(decoding: errBytes.data, as: UTF8.self)
             let stderr = Self.truncatedTail(rawStderr, limit: 8 * 1024)
             throw TransformError.nonZeroExit(code: process.terminationStatus, stderr: stderr)
         }
-        // Not `?? ""`: that turned output that isn't UTF-8 into an empty string with no error, and
-        // the empty string replaced the buffer. (Stderr above stays lossy: it is only diagnostics.)
-        guard let text = String(data: outBytes, encoding: .utf8) else {
-            throw TransformError.scriptFailed("the script's output isn't UTF-8 text")
-        }
-        return text
+        return outBytes
     }
 
     /// The child's exit, as something to await: `terminationHandler` fires it, `wait()` suspends
@@ -147,11 +175,30 @@ public enum ShellRunner {
         }
     }
 
-    private static func readToEnd(_ handle: FileHandle) async -> Data {
+    enum Keep { case head(Int), tail(Int) }
+
+    /// Reads to EOF, keeping at most the first (or last) `n` bytes. Past a `head` limit it calls
+    /// `onOverflow` once and keeps draining, so the child is never left blocked on a full pipe
+    /// while the signal is on its way.
+    private static func read(_ handle: FileHandle, keep: Keep,
+                             onOverflow: @escaping @Sendable () -> Void) async -> (data: Data, overflowed: Bool) {
         await withCheckedContinuation { continuation in
             DispatchQueue.global(qos: .userInitiated).async {
-                let data = (try? handle.readToEnd()) ?? Data()
-                continuation.resume(returning: data)
+                var data = Data(), overflowed = false
+                while true {
+                    let chunk = handle.availableData
+                    if chunk.isEmpty { break }                  // EOF
+                    switch keep {
+                    case .head(let n):
+                        guard !overflowed else { continue }
+                        data.append(chunk)
+                        if data.count > n { overflowed = true; data = Data(); onOverflow() }
+                    case .tail(let n):
+                        data.append(chunk)
+                        if data.count > n { data = Data(data.suffix(n)) }
+                    }
+                }
+                continuation.resume(returning: (data, overflowed))
             }
         }
     }
