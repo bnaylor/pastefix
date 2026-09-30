@@ -78,6 +78,25 @@ Two caveats:
 - The Xcode project lives at `Pastefix/Pastefix.xcodeproj` and app sources at `Pastefix/Pastefix/` (note the double nesting). Xcode 16 **filesystem-synchronized groups** auto-add new `.swift` files to the target — do NOT hand-edit `project.pbxproj` to add sources. Linking a *package product* or changing a *build setting* is the exception (a human/controller does it in Xcode or a surgical value flip).
 - `xcodebuild -showBuildSettings` reports the **Release** path unless you pass the matching `-configuration Debug`; the product lives in **DerivedData**, not a local `build/`. Use `launch.sh` and stop fighting it.
 
+### GUI testing: take the lease first
+
+Sessions from more than one project run GUI tests on the same machine, often on the unattended
+work laptop at the request of a remote session. Two runs at once steal focus from each other and
+both results are worthless. Before anything that launches the app or drives the screen
+(`Pastefix/launch.sh`, `scripts/test-app.sh`, which launches the host app for real, GUI-measured
+passes, computer use, screenshots of real windows), take the host-wide lease with the
+`gui-test-lease` skill:
+
+```sh
+L="python3 ~/.claude/skills/gui-test-lease/lease.py"
+$L acquire --purpose "pastefix: <what>" --minutes N [--on-behalf-of <peer>]  # exit 1 = held; output says by whom
+$L release                                                                   # as soon as GUI work ends, pass or fail
+```
+
+Exit 1 means another session has the screen: message the holder named in the output, or wait with
+`--wait SECS`. Never start GUI work without the lease, and never edit or delete the lease file by
+hand. If the skill isn't installed, ask the user rather than skipping this.
+
 ## Project layout
 
 ```
