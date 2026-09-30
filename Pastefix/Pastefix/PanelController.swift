@@ -1,9 +1,14 @@
 import AppKit
+import PastefixAppCore
 
 /// Owns the floating panel that hosts the SwiftUI editor. A panel (not a window)
 /// so it can appear over full-screen apps without switching Spaces.
 final class PanelController: NSObject, NSWindowDelegate {
-    private let panel: NSPanel
+    let panel: NSPanel
+    /// Where the panel was last put (#26), and how to remember a new spot. Wired to
+    /// `SettingsStore.panelPlacement` by the app delegate.
+    var loadPlacement: () -> PanelPlacement? = { nil }
+    var savePlacement: (PanelPlacement) -> Void = { _ in }
     var onResignKey: (() -> Void)?   // wired for Plan 2b auto-hide-on-blur
 
     /// Last value handed to `setSidebarVisible`, so repeated calls are no-ops.
@@ -149,13 +154,33 @@ final class PanelController: NSObject, NSWindowDelegate {
     }
 
     func show() {
-        panel.center()
+        // Where the user last put it (#26), on the display they're working on — the one with the
+        // mouse — rather than centred every time. Centred when nothing has been saved yet.
+        let screen = NSScreen.screens.first { NSMouseInRect(NSEvent.mouseLocation, $0.frame, false) }
+            ?? panel.screen ?? NSScreen.main
+        if let visible = screen?.visibleFrame {
+            let frame = loadPlacement().map { $0.frame(in: visible) }
+                ?? PanelPlacement.centred(size: panel.frame.size, in: visible)
+            panel.setFrame(frame, display: false)
+        } else {
+            panel.center()
+        }
         panel.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
 
     func hide() {
         panel.orderOut(nil)
+    }
+
+    // Every move and resize is remembered (#26), programmatic ones included: the sidebar widening
+    // the panel is a size the next summon should restore, since the sidebar state persists too.
+    func windowDidMove(_ notification: Notification) { rememberPlacement() }
+    func windowDidResize(_ notification: Notification) { rememberPlacement() }
+
+    private func rememberPlacement() {
+        guard panel.isVisible, let visible = panel.screen?.visibleFrame else { return }
+        savePlacement(PanelPlacement(frame: panel.frame, in: visible))
     }
 
     func windowDidBecomeKey(_ notification: Notification) {
