@@ -104,6 +104,27 @@ struct SelectionScopeTests {
                 && editor.selectedRange() == NSRange(location: 6, length: 6)
         }, "selected \(editor.selectedRange()) in \(editor.string.debugDescription)")
     }
+
+    /// GUI pass: a whole-only transform run while text was selected left raw offsets selecting
+    /// unrelated characters ("a be" after Rich → Markdown). It leaves a caret at the selection's start.
+    @Test func wholeOnlyTransformWithASelectionLeavesACaret() async throws {
+        let f = try ModelFixture(); defer { f.finish() }
+        f.model.beginSession(from: ClipboardSnapshot(plainText: "alpha beta gamma", richRTFD: nil))
+        let window = host(f); defer { window.orderOut(nil) }
+        #expect(await f.eventually { self.textView(in: window.contentView!)?.string == "alpha beta gamma" && f.model.undoManager != nil })
+        let editor = try #require(textView(in: window.contentView!))
+        f.model.apply(WholeOnly(), scope: scope("alpha beta gamma", 6, 4))
+        #expect(await f.eventually { editor.string == "**alpha beta gamma**" && editor.selectedRange() == NSRange(location: 6, length: 0) },
+                "selected \(editor.selectedRange())")
+    }
+}
+
+/// Can't scope (an output-mode transform), and changes the whole buffer.
+private struct WholeOnly: OutputModeTransformer {
+    let id = "test.wholeonly"; let name = "Whole Only"; let requiresRichInput = false
+    let source: TransformerSource = .builtin
+    let outputMode: OutputMode = .plain
+    func apply(_ input: TransformInput) async throws -> String { "**" + input.text + "**" }
 }
 
 private struct TestTransformer: Transformer {

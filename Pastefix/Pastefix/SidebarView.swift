@@ -16,11 +16,6 @@ struct SidebarView: View {
         List {
             // An empty grey column reads as a broken panel, and the sidebar is a persisted
             // setting that is simply *there*, with nothing the user opened to explain it.
-            if scope != nil {
-                Text("Applies to selection")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
             if sections.isEmpty {
                 Text(TransformListEmptyState.message(query: "", showsImage: model.document?.displaysAsImage == true))
                     .font(.callout)
@@ -49,6 +44,17 @@ struct SidebarView: View {
             }
         }
         .listStyle(.sidebar)
+        // Below the list, not a row in it: a row at the top pushed every transform down as a
+        // selection came and went, and a click aimed at a row landed on empty space (GUI pass).
+        .safeAreaInset(edge: .bottom) {
+            if scope != nil {
+                Text("Applies to selection")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 12).padding(.vertical, 6)
+            }
+        }
         .frame(width: PanelMetrics.sidebarWidth)
         .disabled(model.isApplying)
     }

@@ -369,6 +369,14 @@ final class AppModel: ObservableObject {
             // After the reset, not before: `resetSecretSelection()` clears `requestedSelection`, and
             // the span is its own channel anyway (see `PendingSelection`).
             if let span { self.pendingSelection = PendingSelection(range: span, revision: updated.detectionRevision) }
+            // A whole-only transform (rich, output-mode) ran while text was selected: the old offsets
+            // index a different buffer now and would select unrelated characters (GUI pass: "a be").
+            // A caret where the selection started, instead.
+            else if let scope, updated.cursor != current.cursor {
+                let caret = min(scope.range.location, (updated.working as NSString).length)
+                self.pendingSelection = PendingSelection(range: NSRange(location: caret, length: 0),
+                                                         revision: updated.detectionRevision)
+            }
             switch outcome {
             case .applied, .unchanged:
                 self.errorMessage = nil
