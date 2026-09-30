@@ -15,8 +15,8 @@ private struct Bare: Transformer {
     }
 
     @Test func everyRegisteredTransformerDeclaresTheSpecTable() throws {
-        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let tmp = try TemporaryDirectory("pfx-limits")     // was a bare UUID, never removed
+        let dir = tmp.url
         let preset = RegexPreset(name: "p", pattern: "a", replacement: "b")
         let all = TransformerRegistry(config: RegistryConfig(scriptsDirectory: dir, presets: [preset])).load()
         #expect(all.count >= 28)
