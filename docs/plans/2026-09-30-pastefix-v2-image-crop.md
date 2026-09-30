@@ -32,7 +32,7 @@
 
 1. **A 90°-rotated PNG** (eXIf orientation 6): the region the user draws, the footer's size and the crop all agree (Task 1 `orientation6CropsWhatWasDrawn`, Task 4 footer).
 2. **A huge screenshot shown downsampled:** the crop uses header pixels, not the displayed bitmap's (Task 1 `viewToPixelsUsesThePixelSizeNotTheDisplay`).
-3. **Undo after a non-crop transform with a region up** (Strip Metadata, then ⌘Z) restores the region (Task 4 `undoAfterAnyImageTransformRestoresTheRegion`).
+3. **Undo after a non-crop transform with a region up** (Strip Metadata, then ⌘Z) restores the region (Task 4 `undoAfterStripMetadataRestoresTheRegion`; the crop case is `undoAfterAnyImageTransformRestoresTheRegion`).
 4. **A stale region after undo, redo or refresh** is refused, never cropped against the wrong image (Task 2 `staleImageScopeIsRefused`).
 5. **Esc with a region up** clears the region and keeps the panel open; a second Esc cancels (Task 4 `escClearsTheRegionFirst`).
 
@@ -806,6 +806,7 @@ These reach the view's region through the footer's accessibility label, which ga
 import Testing
 import AppKit
 import SwiftUI
+import ImageIO
 import PastefixCore
 import PastefixAppCore
 @testable import Pastefix
@@ -857,6 +858,33 @@ struct ImageRegionViewTests {
         #expect(sendUndo(window))
         #expect(await f.eventually { self.selectionLabel(window)?.contains("selection 200 by 100 at 100, 50") == true },
                 "labels: \(labels(window.contentView!))")
+    }
+
+    /// Review Focus 3, the non-crop half: a whole-image transform applied with a region up. The PNG
+    /// carries GPS so Strip Image Metadata really pushes a step (a clean PNG is nothing to do).
+    @Test func undoAfterStripMetadataRestoresTheRegion() async throws {
+        let f = try ModelFixture(); defer { f.finish() }
+        f.model.beginSession(from: ClipboardSnapshot(plainText: nil, richRTFD: nil, imagePNG: try pngWithGPS()))
+        let window = host(f); defer { window.orderOut(nil) }
+        #expect(await f.eventually { f.model.undoManager != nil })
+        let revision = try #require(f.model.document?.detectionRevision)
+        f.model.apply(StripImageMetadata(), scope: .image(ImageRegion(x: 10, y: 20, width: 30, height: 40), revision: revision))
+        #expect(await f.eventually { !f.model.isApplying && f.model.transformNote != nil })
+        #expect(f.model.document?.detectionRevision != revision, "Strip pushed a new image entry")
+        #expect(selectionLabel(window) == nil, "a new image entry drops the region")
+        #expect(sendUndo(window))
+        #expect(await f.eventually { self.selectionLabel(window)?.contains("selection 30 by 40 at 10, 20") == true },
+                "labels: \(labels(window.contentView!))")
+    }
+
+    private func pngWithGPS() throws -> Data {
+        let image = try #require(NSBitmapImageRep(data: try png())?.cgImage)
+        let out = NSMutableData()
+        let dst = try #require(CGImageDestinationCreateWithData(out, "public.png" as CFString, 1, nil))
+        CGImageDestinationAddImage(dst, image, [kCGImagePropertyGPSDictionary: [kCGImagePropertyGPSLatitude: 51.5,
+                                                                                kCGImagePropertyGPSLatitudeRef: "N"]] as CFDictionary)
+        #expect(CGImageDestinationFinalize(dst))
+        return out as Data
     }
 
     /// Review Focus 5.
