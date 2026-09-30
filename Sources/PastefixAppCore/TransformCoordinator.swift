@@ -26,6 +26,69 @@ public enum TransformCoordinator {
         return true
     }
 
+    /// Whether `transformer` can run on a selection. Rich transforms convert the origin's rich copy,
+    /// output-mode transforms arm Save for the whole buffer, and image transforms don't take text:
+    /// they run on the whole buffer even with a selection (#25).
+    public static func canScope(_ transformer: any Transformer) -> Bool {
+        !transformer.requiresRichInput
+            && !(transformer is any OutputModeTransformer)
+            && transformer.acceptedForms.contains(.text)
+    }
+
+    public static func staleSelectionMessage(_ name: String) -> String {
+        "The selection changed before \(name) could run. Select the text again."
+    }
+
+    /// `apply(_:to:)` scoped to `scope` when there is one and the transformer can scope (#25): the
+    /// transform sees only the selected text, its result is spliced back as one undo entry, and the
+    /// third element is the span the result occupies (UTF-16), non-nil only when an entry was pushed.
+    /// Without a usable scope it is exactly `apply(_:to:)`.
+    public static func apply(
+        _ transformer: any Transformer,
+        to document: PasteDocument,
+        scope: TransformScope?
+    ) async -> (PasteDocument, TransformOutcome, NSRange?) {
+        guard let scope, canScope(transformer), document.currentImage == nil else {
+            let (doc, outcome) = await apply(transformer, to: document)
+            return (doc, outcome, nil)
+        }
+        var doc = document
+        let whole = doc.working
+        guard let range = scope.selected(in: whole) else {
+            return (doc, .failed(staleSelectionMessage(transformer.name)), nil)
+        }
+        let selected = String(whole[range])
+        guard selected.utf8.count <= transformer.maxInputBytes else {
+            return (doc, .failed("\(transformer.name) is limited to \(ByteLimit.describe(transformer.maxInputBytes)) of text."), nil)
+        }
+        let input = TransformInput(text: selected, richRTFD: doc.origin.richRTFD)
+        do {
+            let output = try await Deadline.run(seconds: transformer.timeout) { try await transformer.transform(input) }
+            switch output {
+            case .nothingToDo(let sentence):
+                return (doc, .nothingToDo(sentence), nil)
+            case .image:
+                return (doc, .failed("\(transformer.name) produced an image, which can't replace selected text."), nil)
+            case .text(let result):
+                let spliced = String(whole[..<range.lowerBound]) + result + String(whole[range.upperBound...])
+                guard spliced != whole else { doc.pushState(spliced); return (doc, .unchanged, nil) }
+                doc.pushState(spliced)
+                return (doc, .applied, NSRange(location: scope.range.location, length: (result as NSString).length))
+            }
+        } catch {
+            return (doc, .failed(failureMessage(error)), nil)
+        }
+    }
+
+    /// The `.failed` sentence for an error a transform threw — shared by both `apply` paths.
+    static func failureMessage(_ error: Error) -> String {
+        switch error {
+        case let error as TransformError: return message(for: error)
+        case is CancellationError: return "The transform was cancelled."
+        default: return error.localizedDescription
+        }
+    }
+
     public static func apply(
         _ transformer: any Transformer,
         to document: PasteDocument
@@ -83,12 +146,8 @@ public enum TransformCoordinator {
                 doc.pushState(result)
                 return (doc, outcome)
             }
-        } catch let error as TransformError {
-            return (doc, .failed(message(for: error)))
-        } catch is CancellationError {
-            return (doc, .failed("The transform was cancelled."))
         } catch {
-            return (doc, .failed(error.localizedDescription))
+            return (doc, .failed(failureMessage(error)))
         }
     }
 
