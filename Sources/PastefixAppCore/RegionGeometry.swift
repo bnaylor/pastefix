@@ -1,4 +1,5 @@
 import CoreGraphics
+import PastefixCore
 
 public enum RegionHandle: CaseIterable, Sendable { case topLeft, top, topRight, right, bottomRight, bottom, bottomLeft, left }
 public enum RegionHit: Equatable, Sendable { case new, move, handle(RegionHandle) }
@@ -51,6 +52,41 @@ public enum RegionGeometry {
             if [.topLeft, .top, .topRight].contains(h) { y0 = p.y }
             if [.bottomLeft, .bottom, .bottomRight].contains(h) { y1 = p.y }
             return CGRect(x: min(x0, x1), y: min(y0, y1), width: abs(x1 - x0), height: abs(y1 - y0))
+        }
+    }
+}
+
+public extension RegionGeometry {
+    /// The region after a drag, in image pixels. A new region maps its rectangle through points; a
+    /// move or a handle works in whole pixels from the original region, by the pointer's travel —
+    /// so a moved region keeps its exact size and edges no handle touched stay put. (Round-tripping
+    /// through points grew a moved region by a pixel per drag, and float error nudged still edges.)
+    /// Nil leaves the region as it was: a zero-area rectangle, or a handle dragged onto its opposite edge.
+    static func draggedRegion(_ hit: RegionHit, from: CGPoint, to: CGPoint, original: ImageRegion?,
+                              imageFrame: CGRect, pixelSize: (width: Int, height: Int)) -> ImageRegion? {
+        guard let original, hit != .new, imageFrame.width > 0, imageFrame.height > 0 else {
+            let rect = dragged(.new, from: from, to: to, original: nil, bounds: imageFrame)
+            return ImageRegion.from(viewRect: rect, imageFrame: imageFrame, pixelSize: pixelSize)
+        }
+        let dx = Int(((to.x - from.x) * Double(pixelSize.width) / imageFrame.width).rounded())
+        let dy = Int(((to.y - from.y) * Double(pixelSize.height) / imageFrame.height).rounded())
+        func clamp(_ v: Int, _ hi: Int) -> Int { min(max(v, 0), hi) }
+        switch hit {
+        case .move:
+            return ImageRegion(x: clamp(original.x + dx, pixelSize.width - original.width),
+                               y: clamp(original.y + dy, pixelSize.height - original.height),
+                               width: original.width, height: original.height)
+        case .handle(let h):
+            var x0 = original.x, x1 = original.x + original.width
+            var y0 = original.y, y1 = original.y + original.height
+            if [.topLeft, .left, .bottomLeft].contains(h) { x0 = clamp(x0 + dx, pixelSize.width) }
+            if [.topRight, .right, .bottomRight].contains(h) { x1 = clamp(x1 + dx, pixelSize.width) }
+            if [.topLeft, .top, .topRight].contains(h) { y0 = clamp(y0 + dy, pixelSize.height) }
+            if [.bottomLeft, .bottom, .bottomRight].contains(h) { y1 = clamp(y1 + dy, pixelSize.height) }
+            let region = ImageRegion(x: min(x0, x1), y: min(y0, y1), width: abs(x1 - x0), height: abs(y1 - y0))
+            return region.isEmpty ? nil : region
+        case .new:
+            return nil   // handled above
         }
     }
 }

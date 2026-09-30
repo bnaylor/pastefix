@@ -13,13 +13,16 @@ struct ImageRegionOverlay: View {
     let enabled: Bool
 
     @State private var dragHit: RegionHit?
-    @State private var dragOriginal: CGRect?
+    @State private var dragOriginal: ImageRegion?
 
     var body: some View {
         GeometryReader { geo in
             let frame = CGRect(origin: .zero, size: geo.size)
             let rect = region?.viewRect(imageFrame: frame, pixelSize: pixelSize)
             ZStack(alignment: .topLeading) {
+                // Fills the image, so there is something to press before any region exists: an
+                // empty ZStack is 0×0 and its content shape covers nothing (final review C1).
+                Color.clear
                 if let rect {
                     // Dimming outside the region, about 50%.
                     Path { p in p.addRect(frame); p.addRect(rect) }
@@ -42,11 +45,14 @@ struct ImageRegionOverlay: View {
                 .onChanged { value in
                     if dragHit == nil {
                         dragHit = RegionGeometry.hit(value.startLocation, selection: rect)
-                        dragOriginal = rect
+                        dragOriginal = region
                     }
                     guard let hit = dragHit, !RegionGeometry.isTap(from: value.startLocation, to: value.location) else { return }
-                    let next = RegionGeometry.dragged(hit, from: value.startLocation, to: value.location, original: dragOriginal, bounds: frame)
-                    if let r = ImageRegion.from(viewRect: next, imageFrame: frame, pixelSize: pixelSize) { region = r }
+                    // In pixels from the original region, so a move or resize never drifts (I1).
+                    if let r = RegionGeometry.draggedRegion(hit, from: value.startLocation, to: value.location,
+                                                            original: dragOriginal, imageFrame: frame, pixelSize: pixelSize) {
+                        region = r
+                    }
                 }
                 .onEnded { value in
                     // A tap outside the region clears it; a tap inside leaves it.
