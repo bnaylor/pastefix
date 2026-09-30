@@ -25,6 +25,9 @@ struct CommandPaletteView: View {
     /// before detection lands shows the unpromoted order for its whole session, until reopened.
     @State private var kindsSnapshot: Set<ContentKind>?
     @FocusState private var fieldFocused: Bool
+    /// A row's real height, measured from the rendered rows (#26). It was assumed to be 44 pt; a
+    /// row renders 47 pt at the default text size, so the eighth row was always clipped.
+    @State private var rowHeight: CGFloat = 44
 
     private var results: [SearchResult] {
         let kinds = kindsSnapshot ?? (model.document?.detectedKinds ?? [])
@@ -76,11 +79,21 @@ struct CommandPaletteView: View {
                         row(result, isSelected: index == selected)
                             .contentShape(Rectangle())
                             .onTapGesture { apply(items, index) }
-                            .listRowBackground(index == selected ? Color.accentColor.opacity(0.25) : Color.clear)
+                            .listRowBackground(
+                                (index == selected ? Color.accentColor.opacity(0.25) : Color.clear)
+                                    // The background fills the whole row, insets included: its
+                                    // height is the row's.
+                                    .background(GeometryReader { geo in
+                                        Color.clear.preference(key: PaletteRowHeightKey.self, value: geo.size.height)
+                                    })
+                            )
                     }
                     .listStyle(.plain)
                     .scrollContentBackground(.hidden)
-                    .frame(height: CGFloat(min(items.count, 8)) * 44)
+                    .frame(height: CGFloat(min(items.count, 8)) * rowHeight)
+                    .onPreferenceChange(PaletteRowHeightKey.self) { height in
+                        if height > 0, abs(height - rowHeight) > 0.5 { rowHeight = height }
+                    }
                     .onChange(of: selected) { _, new in
                         guard items.indices.contains(new) else { return }
                         proxy.scrollTo(items[new].id)
@@ -198,4 +211,10 @@ struct CommandPaletteView: View {
         onClose()
         model.apply(transformer, scope: scope)
     }
+}
+
+/// The tallest rendered palette row (#26), for sizing the list to exactly its visible rows.
+private struct PaletteRowHeightKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
 }

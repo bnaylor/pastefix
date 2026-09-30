@@ -96,6 +96,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let hostingView = NSHostingView(rootView: PanelView(model: model, settings: settings))
         let panel = PanelController(rootView: hostingView)
         self.panel = panel
+        panel.loadPlacement = { [settings] in settings.panelPlacement }
+        panel.savePlacement = { [settings] in settings.panelPlacement = $0 }
         // Size the panel for the persisted sidebar state before it is ever shown.
         panel.setSidebarVisible(settings.showSidebar)
 
