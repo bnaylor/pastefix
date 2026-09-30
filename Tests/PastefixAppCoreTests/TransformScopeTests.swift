@@ -139,4 +139,22 @@ private final class Seen: @unchecked Sendable {
         let big = TransformScope(range: NSRange(location: 0, length: 9000), expected: String(repeating: "a", count: 9000))
         #expect(TransformScope.rankingKinds(scope: big, documentKinds: [.json]) == [.json])
     }
+
+    /// Final review: tools end their output with "\n" (jq, python print, sed, Clean Claude Code
+    /// Paste). On the whole buffer that's harmless; spliced into a selected word it split the line.
+    @Test func aTrailingNewlineIsNotSplicedIntoALine() async {
+        let text = "alpha beta gamma"
+        let script = Fake { $0.text.uppercased() + "\n" }
+        let (d, _, span) = await TransformCoordinator.apply(script, to: doc(text), scope: scope(text, 6, 4))
+        #expect(d.working == "alpha BETA gamma" && span == NSRange(location: 6, length: 4))
+        // A selection that itself ends in a newline keeps the result's (a line tool, like sed:
+        // "two\n" in, "TWO\n" out).
+        let lines = "one\ntwo\nthree"
+        let lineTool = Fake { $0.text.trimmingCharacters(in: .newlines).uppercased() + "\n" }
+        let (d2, _, _) = await TransformCoordinator.apply(lineTool, to: doc(lines), scope: scope(lines, 4, 4))
+        #expect(d2.working == "one\nTWO\nthree")
+        // Only one: a result that deliberately ends in a blank line keeps the rest.
+        let twice = Fake { $0.text + "\n\n" }
+        #expect(await TransformCoordinator.apply(twice, to: doc(text), scope: scope(text, 6, 4)).0.working == "alpha beta\n gamma")
+    }
 }

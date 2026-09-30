@@ -69,7 +69,12 @@ public enum TransformCoordinator {
                 return (doc, .nothingToDo(sentence), nil)
             case .image:
                 return (doc, .failed("\(transformer.name) produced an image, which can't replace selected text."), nil)
-            case .text(let result):
+            case .text(let output):
+                // Tools end their output with a newline (jq, python's print, sed, Clean Claude Code
+                // Paste). Harmless on the whole buffer; spliced into a selected word it would split
+                // the line. So one trailing newline is dropped unless the selection itself ended in one.
+                var result = output
+                if result.hasSuffix("\n"), !selected.hasSuffix("\n") { result.removeLast() }
                 let spliced = String(whole[..<range.lowerBound]) + result + String(whole[range.upperBound...])
                 guard spliced != whole else { doc.pushState(spliced); return (doc, .unchanged, nil) }
                 doc.pushState(spliced)
