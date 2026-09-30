@@ -224,7 +224,7 @@ struct PanelView: View {
                     }
                     if settings.showSidebar {
                         Divider()
-                        SidebarView(model: model, scope: currentScope)
+                        SidebarView(model: model, settings: settings, scope: currentScope)
                     }
                 }
                 Divider()

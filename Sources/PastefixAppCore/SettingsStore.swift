@@ -14,6 +14,8 @@ public final class SettingsStore: ObservableObject {
     @Published public var scriptsDirectoryPath: String { didSet { defaults.set(scriptsDirectoryPath, forKey: Key.scriptsDir) } }
     @Published public var transformEnabled: [String: Bool] { didSet { Self.writeJSON(transformEnabled, to: defaults, key: Key.enabled) } }
     @Published public var transformOrder: [String: Int] { didSet { Self.writeJSON(transformOrder, to: defaults, key: Key.order) } }
+    /// The sidebar's Favorites (#26), as transformer ids in the order they were added.
+    @Published public var favoriteTransformIDs: [String] { didSet { Self.writeJSON(favoriteTransformIDs, to: defaults, key: Key.favorites) } }
     /// How often and how recently each transform was used (#26), keyed by transformer id.
     @Published public var transformUsage: [String: TransformUsage] { didSet { Self.writeJSON(transformUsage, to: defaults, key: Key.usage) } }
     @Published public var historyEnabled: Bool { didSet { defaults.set(historyEnabled, forKey: Key.historyEnabled) } }
@@ -45,6 +47,7 @@ public final class SettingsStore: ObservableObject {
         self.scriptsDirectoryPath = (defaults.string(forKey: Key.scriptsDir)) ?? Self.defaultScriptsPath
         self.transformEnabled = Self.readJSON([String: Bool].self, from: defaults, key: Key.enabled) ?? [:]
         self.transformOrder = Self.readJSON([String: Int].self, from: defaults, key: Key.order) ?? [:]
+        self.favoriteTransformIDs = Self.readJSON([String].self, from: defaults, key: Key.favorites) ?? []
         self.transformUsage = Self.readJSON([String: TransformUsage].self, from: defaults, key: Key.usage) ?? [:]
         self.historyEnabled = (defaults.object(forKey: Key.historyEnabled) as? Bool) ?? true
         self.historyMaxItems = min(max((defaults.object(forKey: Key.historyMaxItems) as? Int) ?? 200, 20), 1000)
@@ -97,6 +100,16 @@ public final class SettingsStore: ObservableObject {
         transformEnabled.removeValue(forKey: transformerID)
         transformOrder.removeValue(forKey: transformerID)
         transformUsage.removeValue(forKey: transformerID)
+        favoriteTransformIDs.removeAll { $0 == transformerID }
+    }
+
+    /// Adds `transformerID` to the end of Favorites, or removes it (#26).
+    public func toggleFavorite(_ transformerID: String) {
+        if favoriteTransformIDs.contains(transformerID) {
+            favoriteTransformIDs.removeAll { $0 == transformerID }
+        } else {
+            favoriteTransformIDs.append(transformerID)
+        }
     }
 
     /// Counts one use of `transformerID` (#26). Called when an apply changed the buffer.
@@ -139,6 +152,7 @@ public final class SettingsStore: ObservableObject {
         static let scriptsDir = "pastefix.scriptsDirectoryPath"
         static let enabled = "pastefix.transformEnabled"
         static let order = "pastefix.transformOrder"
+        static let favorites = "pastefix.favoriteTransforms"
         static let usage = "pastefix.transformUsage"
         static let historyEnabled = "pastefix.historyEnabled"
         static let historyMaxItems = "pastefix.historyMaxItems"
