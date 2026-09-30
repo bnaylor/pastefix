@@ -30,6 +30,8 @@ private struct Bare: Transformer {
             "builtin.stripimagemetadata": (TransformLimits.defaultMaxInputBytes, 10),
             "builtin.extracttext": (TransformLimits.defaultMaxInputBytes, 10),
             "builtin.crop": (TransformLimits.defaultMaxInputBytes, 10),
+            "builtin.redactselection": (TransformLimits.defaultMaxInputBytes, 10),
+            "builtin.blurselection": (TransformLimits.defaultMaxInputBytes, 10),
             "builtin.richtoplain": (4_194_304, 3),
             "builtin.richtomarkdown": (4_194_304, 3),
             RegexPresetTransformer.transformerID(for: preset.id): (262_144, 3),

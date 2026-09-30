@@ -1,10 +1,9 @@
 import Foundation
 import CoreGraphics
-import ImageIO
 
-/// Crops the image to the selected region. The decode applies EXIF orientation (the region is in
-/// oriented pixels, as the panel draws the image) and does no colour-profile conversion, so
-/// cropping never shifts colours. The re-encode drops metadata, as Strip Image Metadata does.
+/// Crops the image to the selected region. The decode is `OrientedSource`'s: EXIF orientation
+/// applied (the region is in oriented pixels, as the panel draws the image) and no colour-profile
+/// conversion, so cropping never shifts colours. The re-encode drops metadata, as Strip Image Metadata does.
 /// `cropping(to:)` shares the decoded image's storage, so peak memory is one full decode, run on
 /// the image lane like every image transform.
 public struct CropToSelection: RegionImageTransformer {
@@ -22,21 +21,10 @@ public struct CropToSelection: RegionImageTransformer {
 
     public func transformImage(_ png: Data, region: ImageRegion?) throws -> TransformOutput {
         guard let region, !region.isEmpty else { return .nothingToDo(Self.noRegionMessage) }
-        // One source for the size and the decode: the size read is also what makes ImageIO apply
-        // a PNG's orientation in the thumbnail below (see `ImageRegion.orientedPixelSize(of:)`).
-        guard let source = CGImageSourceCreateWithData(png as CFData, [kCGImageSourceShouldCache: false] as CFDictionary),
-              let size = ImageRegion.orientedPixelSize(of: source) else {
-            throw TransformError.invalidInput("This image can't be read.")
-        }
-        guard region.fits(size) else { throw TransformError.invalidInput("The selection is outside the image.") }
-        if region.width == size.width, region.height == size.height { return .nothingToDo(Self.wholeImageMessage) }
-        let options = [
-            kCGImageSourceCreateThumbnailFromImageAlways: true,
-            kCGImageSourceCreateThumbnailWithTransform: true,
-            kCGImageSourceThumbnailMaxPixelSize: max(size.width, size.height),
-        ] as CFDictionary
-        guard let oriented = CGImageSourceCreateThumbnailAtIndex(source, 0, options),
-              oriented.width == size.width, oriented.height == size.height,
+        guard let source = OrientedSource(png) else { throw TransformError.invalidInput("This image can't be read.") }
+        guard region.fits((source.width, source.height)) else { throw TransformError.invalidInput("The selection is outside the image.") }
+        if region.width == source.width, region.height == source.height { return .nothingToDo(Self.wholeImageMessage) }
+        guard let oriented = source.image(),
               let cropped = oriented.cropping(to: CGRect(x: region.x, y: region.y, width: region.width, height: region.height)),
               let out = PNGEncoder.encode(cropped) else {
             throw TransformError.invalidInput("\(name) couldn't crop this image.")
