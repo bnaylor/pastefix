@@ -80,7 +80,7 @@ Open Settings with ⌘, or **Settings…** in the menu. All settings persist in 
 - **Privacy:** a **History** section (remember-history toggle, how many items to keep, and Clear History, which offers "Clear N items" for unpinned items only, or "Clear Everything") and an **Excluded Apps** section (add or remove apps whose copies are never read into history; Restore Defaults).
 - **Snippets:** the Accessibility status ("ready" or "needs Accessibility permission", with a shortcut to System Settings) and your pinned snippets, each with an editable title, its own global-shortcut recorder, and Unpin.
 - **Shortcut:** rebind ⌘⇧C, ⌘⇧V and ⌘⇧U with a keyboard recorder.
-- **Transforms:** enable or disable individual transforms and drag to reorder them.
+- **Transforms:** enable or disable individual transforms and drag to reorder them. **Reset usage ranking** forgets which transforms you've used, so the palette goes back to your order among equals.
 - **Presets:** your regex find & replace rules. See [Regex presets](#regex-presets).
 - **Upload:** the Zipline server URL, API token, and the defaults ⌘⇧U opens with (expiration, burn after reading, file type).
 
@@ -109,7 +109,7 @@ A photo copied from Photos opens as a picture, even though Photos also puts a fi
 
 ### Finding transforms
 
-**Palette (⌘K).** Type to filter, ↑↓ to choose, ↵ (or a click) to apply, Esc to close. Typing matches a prefix, a word start, or, failing those, a loose subsequence. Camel-case boundaries count as word starts, so `case` finds `camelCase`. Transforms that apply to the detected content are listed first. In an image session the palette lists the image transforms. When nothing is listed, it says "No matching transforms" (your search matched nothing), "No transforms enabled", or "No image transforms enabled". Esc closes the palette first; a second Esc, with the palette already closed, cancels the panel.
+**Palette (⌘K).** Type to filter, ↑↓ to choose, ↵ (or a click) to apply, Esc to close. Typing matches a prefix, a word start, or, failing those, a loose subsequence. Camel-case boundaries count as word starts, so `case` finds `camelCase`. Transforms that apply to the detected content are listed first. Among transforms that are otherwise equal, the ones you use often or recently come first; usage never outranks a better match or a fit with the content, and the sidebar keeps your own order. In an image session the palette lists the image transforms. When nothing is listed, it says "No matching transforms" (your search matched nothing), "No transforms enabled", or "No image transforms enabled". Esc closes the palette first; a second Esc, with the palette already closed, cancels the panel.
 
 **Sidebar (⌘⇧L or the toolbar button).** Browse every enabled transform grouped by category. The sidebar always keeps your configured order, so it doesn't reshuffle as you copy different things. Whether it's open is remembered. The panel widens by the sidebar's width when it opens and gives the width back when it closes, and you can resize the panel yourself. The panel remembers its size and where you put it: it opens at the same spot, relative to the screen, on whichever display you're using (the one with the mouse).
 

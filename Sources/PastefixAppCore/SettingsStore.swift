@@ -21,6 +21,8 @@ public final class SettingsStore: ObservableObject {
             else { defaults.removeObject(forKey: Key.panelPlacement) }
         }
     }
+    /// How often and how recently each transform was used (#26), keyed by transformer id.
+    @Published public var transformUsage: [String: TransformUsage] { didSet { Self.writeJSON(transformUsage, to: defaults, key: Key.usage) } }
     @Published public var historyEnabled: Bool { didSet { defaults.set(historyEnabled, forKey: Key.historyEnabled) } }
     @Published public var historyMaxItems: Int {
         didSet {
@@ -51,6 +53,7 @@ public final class SettingsStore: ObservableObject {
         self.transformEnabled = Self.readJSON([String: Bool].self, from: defaults, key: Key.enabled) ?? [:]
         self.transformOrder = Self.readJSON([String: Int].self, from: defaults, key: Key.order) ?? [:]
         self.panelPlacement = Self.readJSON(PanelPlacement.self, from: defaults, key: Key.panelPlacement)
+        self.transformUsage = Self.readJSON([String: TransformUsage].self, from: defaults, key: Key.usage) ?? [:]
         self.historyEnabled = (defaults.object(forKey: Key.historyEnabled) as? Bool) ?? true
         self.historyMaxItems = min(max((defaults.object(forKey: Key.historyMaxItems) as? Int) ?? 200, 20), 1000)
         // Deliberately the whole-array decode, not `readLossyArray`: a `[String]` whose elements
@@ -101,7 +104,19 @@ public final class SettingsStore: ObservableObject {
         let transformerID = RegexPresetTransformer.transformerID(for: id)
         transformEnabled.removeValue(forKey: transformerID)
         transformOrder.removeValue(forKey: transformerID)
+        transformUsage.removeValue(forKey: transformerID)
     }
+
+    /// Counts one use of `transformerID` (#26). Called when an apply changed the buffer.
+    public func recordTransformUse(_ transformerID: String, at date: Date = Date()) {
+        var entry = transformUsage[transformerID] ?? TransformUsage(count: 0, lastUsed: date)
+        entry.count += 1
+        entry.lastUsed = date
+        transformUsage[transformerID] = entry
+    }
+
+    /// Settings → Transforms → Reset usage ranking.
+    public func resetTransformUsage() { transformUsage = [:] }
 
     /// Raw setting → the request value. An unrecognised string falls back to
     /// the default expiry, never to `.never`: a corrupted setting must not
@@ -133,6 +148,7 @@ public final class SettingsStore: ObservableObject {
         static let enabled = "pastefix.transformEnabled"
         static let order = "pastefix.transformOrder"
         static let panelPlacement = "pastefix.panelPlacement"
+        static let usage = "pastefix.transformUsage"
         static let historyEnabled = "pastefix.historyEnabled"
         static let historyMaxItems = "pastefix.historyMaxItems"
         static let historyExcluded = "pastefix.historyExcludedBundleIDs"

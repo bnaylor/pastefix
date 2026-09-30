@@ -34,7 +34,8 @@ struct CommandPaletteView: View {
         return TransformSearch.rank(
             query: query,
             in: model.enabledTransformers(for: kinds),
-            kinds: kinds
+            kinds: kinds,
+            usage: model.settings.transformUsage      // ties only (#26)
         )
     }
 

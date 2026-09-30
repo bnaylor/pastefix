@@ -302,6 +302,15 @@ struct SettingsView: View {
                 }
                 .onMove { source, destination in moveTransforms(rows: rows, from: source, to: destination) }
             }
+            // The ⌘K palette breaks ties between otherwise-equal transforms by how often and how
+            // recently each was used (#26); this forgets that history.
+            HStack {
+                Text("The ⌘K palette lists transforms you use often or recently first among equals.")
+                    .font(.caption).foregroundStyle(.secondary)
+                Spacer()
+                Button("Reset usage ranking") { settings.resetTransformUsage() }
+                    .disabled(settings.transformUsage.isEmpty)
+            }
         }
         .padding()
     }
