@@ -9,6 +9,15 @@ import PastefixAppCore
 /// `log stream --predicate 'subsystem == "net.scromp.Pastefix" && category == "undo"' --debug`
 private let undoLog = Logger(subsystem: "net.scromp.Pastefix", category: "undo")
 
+/// A span to select once the buffer it indexes is on screen (#25): after a scoped apply, and on the
+/// undo and redo of one. UTF-16, with the `detectionRevision` of the buffer it belongs to, so the
+/// view selects it only in that buffer. The single owner of post-apply selection: carried by
+/// `PanelView.carrySelection`, never `requestedSelection` (which the landing path clears).
+struct PendingSelection: Equatable {
+    let range: NSRange
+    let revision: Int
+}
+
 @MainActor
 final class AppModel: ObservableObject {
     @Published private(set) var document: PasteDocument?
@@ -80,6 +89,8 @@ final class AppModel: ObservableObject {
     /// panel and re-applied the selection to the editor, which took first responder back from the
     /// ⌘K palette's search field the instant it appeared.
     @Published var requestedSelection: TextSelection?
+    /// See `PendingSelection`. Consumed (and cleared) by `PanelView`; cleared at session boundaries.
+    @Published var pendingSelection: PendingSelection?
 
     /// Cycle position for `selectNextSecret`, reset wherever `document` is replaced.
     private var nextSecretIndex = 0
@@ -317,7 +328,9 @@ final class AppModel: ObservableObject {
         return ColorLiteral.parse(document.working)
     }
 
-    func apply(_ transformer: any Transformer) {
+    /// `scope`: the selected span to transform instead of the whole buffer (#25), taken by the view
+    /// before this call. Checked by content after `settleComposition()`, which can change the text.
+    func apply(_ transformer: any Transformer, scope: TransformScope? = nil) {
         guard !isApplying else { return }
         settleComposition()
         guard let current = document else { return }
@@ -327,7 +340,7 @@ final class AppModel: ObservableObject {
         applyID &+= 1
         let id = applyID
         applyTask = Task {
-            let (updated, outcome) = await TransformCoordinator.apply(transformer, to: current)
+            let (updated, outcome, span) = await TransformCoordinator.apply(transformer, to: current, scope: scope)
             // The session can end (Save/Cancel/auto-hide) while a slow transform is in
             // flight, and the user can summon a fresh one before it finishes; ⌘Z cancels it
             // (`observeUndoManager`).
@@ -343,7 +356,8 @@ final class AppModel: ObservableObject {
             // group behind, `canUndo` stays true, and the next ⌘Z does nothing — measured.)
             if updated.cursor != current.cursor {
                 self.breakTypingCoalescing()
-                self.registerUndo(TransformStep(name: transformer.name, generation: generation))
+                self.registerUndo(TransformStep(name: transformer.name, generation: generation,
+                                                before: span == nil ? nil : scope?.range, after: span))
             }
             // The failure path returns `current` unchanged (same revision), so only request a
             // scan when the buffer actually moved — re-requesting on every refused click would
@@ -352,6 +366,9 @@ final class AppModel: ObservableObject {
             // The caret is `PanelView`'s to carry across the new buffer; the badge's cycle
             // restarts here because the match list belongs to the buffer that just went away.
             self.resetSecretSelection()
+            // After the reset, not before: `resetSecretSelection()` clears `requestedSelection`, and
+            // the span is its own channel anyway (see `PendingSelection`).
+            if let span { self.pendingSelection = PendingSelection(range: span, revision: updated.detectionRevision) }
             switch outcome {
             case .applied, .unchanged:
                 self.errorMessage = nil
@@ -649,6 +666,9 @@ final class AppModel: ObservableObject {
     private struct TransformStep {
         let name: String
         let generation: Int
+        /// The scoped span before and after (#25), for re-selection on ⌘Z and ⌘⇧Z. Nil when unscoped.
+        var before: NSRange? = nil
+        var after: NSRange? = nil
     }
 
     private func registerUndo(_ step: TransformStep) {
@@ -691,6 +711,9 @@ final class AppModel: ObservableObject {
     private func stepBack(_ step: TransformStep) {
         guard step.generation == sessionGeneration else { return }
         undo()
+        if let before = step.before, let doc = document {
+            pendingSelection = PendingSelection(range: before, revision: doc.detectionRevision)
+        }
         breakTypingCoalescing()
         registerRedo(step)
     }
@@ -698,6 +721,9 @@ final class AppModel: ObservableObject {
     private func stepForward(_ step: TransformStep) {
         guard step.generation == sessionGeneration else { return }
         redo()
+        if let after = step.after, let doc = document {
+            pendingSelection = PendingSelection(range: after, revision: doc.detectionRevision)
+        }
         breakTypingCoalescing()
         registerUndo(step)
     }
@@ -712,6 +738,7 @@ final class AppModel: ObservableObject {
     /// Empties the stack at a session boundary. The typing and transforms on it describe a buffer
     /// that is gone; left there, ⌘Z would replay them against the new one.
     private func resetUndo() {
+        pendingSelection = nil
         undoManager?.removeAllActions()
         breakTypingCoalescing()
         refreshUndoState()
