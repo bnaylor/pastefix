@@ -159,9 +159,15 @@ final class PanelController: NSObject, NSWindowDelegate {
         let screen = NSScreen.screens.first { NSMouseInRect(NSEvent.mouseLocation, $0.frame, false) }
             ?? panel.screen ?? NSScreen.main
         if let visible = screen?.visibleFrame {
-            let frame = loadPlacement().map { $0.frame(in: visible) }
-                ?? PanelPlacement.centred(size: panel.frame.size, in: visible)
-            panel.setFrame(frame, display: false)
+            if let saved = loadPlacement() {
+                panel.setFrame(saved.frame(in: visible), display: false)
+                // A restored size is one the user chose, with the sidebar as it is now: none of it
+                // was added by `setSidebarVisible`, so hiding the sidebar must not take width back
+                // (GUI pass: 946 → 726, and the smaller size was then saved).
+                didWidenForSidebar = false
+            } else {
+                panel.setFrame(PanelPlacement.centred(size: panel.frame.size, in: visible), display: false)
+            }
         } else {
             panel.center()
         }
