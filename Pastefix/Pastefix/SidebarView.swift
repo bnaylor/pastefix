@@ -8,11 +8,14 @@ import PastefixAppCore
 /// surface that reshuffles itself whenever the clipboard changes is unusable as a map.
 struct SidebarView: View {
     @ObservedObject var model: AppModel
+    /// Observed so adding or removing a favorite (#26) redraws the sidebar; the model alone
+    /// doesn't republish settings changes.
+    @ObservedObject var settings: SettingsStore
     /// The selection a transform chosen here applies to (#25), or nil for the whole buffer.
     let scope: TransformScope?
 
     var body: some View {
-        let sections = SidebarGrouping.sections(model.browsableTransformers())
+        let sections = SidebarGrouping.sections(model.browsableTransformers(), favorites: settings.favoriteTransformIDs)
         VStack(spacing: 0) {
         List {
             // An empty grey column reads as a broken panel, and the sidebar is a persisted
@@ -40,6 +43,12 @@ struct SidebarView: View {
                                 .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
+                        .contextMenu {
+                            Button(settings.favoriteTransformIDs.contains(transformer.id)
+                                   ? "Remove from Favorites" : "Add to Favorites") {
+                                settings.toggleFavorite(transformer.id)
+                            }
+                        }
                     }
                 }
             }

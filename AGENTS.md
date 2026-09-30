@@ -162,7 +162,7 @@ Sources/PastefixAppCore/              # app pure model (depends on PastefixCore,
   FuzzyMatch.swift                    # shared fold + tiered match (prefix/word-start/subsequence) + highlight ranges; fold-once `tier` for ranking-only callers
   TransformSearch.swift               # ⌘K palette ranking, delegates matching to FuzzyMatch
   TransformListEmptyState.swift       # the sentence an empty palette/sidebar shows: "No matching transforms" for a search, else "No [image ]transforms enabled"
-  SidebarGrouping.swift               # groups transforms into sidebar sections by category (built-in order, then custom, then Scripts)
+  SidebarGrouping.swift               # groups transforms into sidebar sections by category (built-in order, then custom, then Scripts); favorites (#26): SettingsStore.favoriteTransformIDs (ordered, dropped with a deleted preset) lead in a Favorites section whose id isn't its title (a script category named "Favorites" can't collide), and stay in their category; SidebarView observes SettingsStore so toggling redraws
   SessionPreparationCache.swift       # @MainActor one-entry cache of a SingleSlotLane task keyed by (session generation, input bytes): a rebuilt ⌘⇧U overlay gets the SAME in-flight image preparation instead of a second uncancellable decode; keyed on the bytes too because ⌘R replaces the image without a new generation; clear() at session boundaries also skips the job if it has not started (#48)
   History/
     HistoryItem.swift                 # Codable item: text/rich/image representations, source app, byteCount, kind
