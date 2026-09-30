@@ -346,7 +346,7 @@ final class AppModel: ObservableObject {
             // selection started — the old offsets index a different buffer now and would select
             // unrelated characters (GUI pass: "a be"). The undo step restores the user's selection.
             let selectAfter: NSRange? = span ?? {
-                guard let scope, updated.cursor != current.cursor else { return nil }
+                guard let scope = scope?.text, updated.cursor != current.cursor else { return nil }
                 return NSRange(location: min(scope.range.location, (updated.working as NSString).length), length: 0)
             }()
             // The session can end (Save/Cancel/auto-hide) while a slow transform is in
@@ -365,7 +365,7 @@ final class AppModel: ObservableObject {
             if updated.cursor != current.cursor {
                 self.breakTypingCoalescing()
                 self.registerUndo(TransformStep(name: transformer.name, generation: generation,
-                                                before: selectAfter == nil ? nil : scope?.range, after: selectAfter))
+                                                before: selectAfter == nil ? nil : scope?.text?.range, after: selectAfter))
             }
             // The failure path returns `current` unchanged (same revision), so only request a
             // scan when the buffer actually moved — re-requesting on every refused click would
