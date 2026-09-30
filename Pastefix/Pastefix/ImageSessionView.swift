@@ -1,6 +1,7 @@
 import SwiftUI
 import AppKit
 import ImageIO
+import PastefixCore
 import PastefixAppCore
 
 /// What an image session shows where a text session shows the editor: the clipboard's image
@@ -28,13 +29,18 @@ struct ImageSessionView: View {
     /// is the failure worth spending an Int to avoid. A new summon or a loaded history item is
     /// covered at the call site, which keys the whole view on the session generation.
     let revision: Int
+    /// The region selection (crop spec), owned by `PanelView`.
+    @Binding var region: ImageRegion?
+    /// False while a transform runs or the upload overlay is up: the region can't move then, so the
+    /// region an apply recorded is the one on screen.
+    let interactive: Bool
 
     /// nil until the decode lands. `NSImage` is built here on the main actor from a `CGImage`
     /// carried across, matching `HistoryOverlayView`'s thumbnail path: nothing AppKit-mutable is
     /// constructed off the main actor.
     @State private var image: NSImage?
     /// The image's true pixel dimensions, from its header — not the displayed bitmap's, which is
-    /// downsampled. Read in the same pass as the decode, so the footer states the real size.
+    /// downsampled — with the orientation applied, as the image is drawn. Read in the same pass as the decode, so the footer states the real size.
     @State private var pixels: PixelSize?
     /// Set when the header parsed but the decode did not produce anything to draw. The bytes stay
     /// on the document either way: a picture we cannot draw is still an image Save must write back.
@@ -71,6 +77,12 @@ struct ImageSessionView: View {
             Image(nsImage: image)
                 .resizable()
                 .scaledToFit()
+                .overlay {
+                    // On the fitted image, so the overlay's geometry is exactly the image's rect.
+                    if let pixels {
+                        ImageRegionOverlay(region: $region, pixelSize: (pixels.width, pixels.height), enabled: interactive)
+                    }
+                }
                 .padding(12)
                 .accessibilityLabel(accessibilityDescription)
         } else if failed {
@@ -109,14 +121,23 @@ struct ImageSessionView: View {
 
     private var factsDescription: String {
         let size = HistoryFormatting.byteLabel(imagePNG.count)
-        guard let pixels else { return "Image · \(size)" }
-        return "\(pixels.width)×\(pixels.height) · \(size)"
+        guard let pixels else { return "Image · \(size)" + (selectionSuffix?.text ?? "") }
+        return "\(pixels.width)×\(pixels.height) · \(size)" + (selectionSuffix?.text ?? "")
     }
 
     private var accessibilityDescription: String {
         let size = HistoryFormatting.byteLabel(imagePNG.count)
-        guard let pixels else { return "Clipboard image, \(size)" }
-        return "Clipboard image, \(pixels.width) by \(pixels.height) pixels, \(size)"
+        guard let pixels else { return "Clipboard image, \(size)" + (selectionSuffix?.spoken ?? "") }
+        return "Clipboard image, \(pixels.width) by \(pixels.height) pixels, \(size)" + (selectionSuffix?.spoken ?? "")
+    }
+
+    private var selectionSuffix: (text: String, spoken: String)? { Self.selectionSuffix(region) }
+
+    /// The region, in the image's real (oriented) pixels, for the footer and VoiceOver.
+    static func selectionSuffix(_ region: ImageRegion?) -> (text: String, spoken: String)? {
+        guard let region else { return nil }
+        return (" · Selection \(region.width)×\(region.height) at (\(region.x), \(region.y))",
+                ", selection \(region.width) by \(region.height) at \(region.x), \(region.y)")
     }
 
     /// Reads the header and builds a display-sized bitmap, both off the main actor, then installs
@@ -150,7 +171,7 @@ struct ImageSessionView: View {
     /// Returns the bitmap to draw plus the image's *true* pixel dimensions, read from the header
     /// before any downsampling, so the footer cannot report the size of the thumbnail instead of
     /// the size of the image.
-    nonisolated private static func displayImage(_ data: Data, maxPixelSize: Int) -> (CGImage, Int, Int)? {
+    nonisolated static func displayImage(_ data: Data, maxPixelSize: Int) -> (CGImage, Int, Int)? {
         let sourceOptions = [kCGImageSourceShouldCache: false] as CFDictionary
         guard let source = CGImageSourceCreateWithData(data as CFData, sourceOptions),
               let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
@@ -170,6 +191,10 @@ struct ImageSessionView: View {
             kCGImageSourceThumbnailMaxPixelSize: maxPixelSize,
         ] as CFDictionary
         guard let image = CGImageSourceCreateThumbnailAtIndex(source, 0, options) else { return nil }
-        return (image, width, height)
+        // The footer and the region speak oriented pixels, as the image is drawn (crop spec). The
+        // properties read above is also what makes ImageIO apply a PNG's orientation here (see
+        // `ImageRegion.orientedPixelSize(of:)`).
+        let orientation = (properties[kCGImagePropertyOrientation] as? Int) ?? 1
+        return (5...8).contains(orientation) ? (image, height, width) : (image, width, height)
     }
 }

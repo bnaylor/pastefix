@@ -25,6 +25,9 @@ struct PanelView: View {
     @State private var previewTask: Task<Void, Never>?
     /// The editor's selection, owned here rather than on the model — see `selectionBinding`.
     @State private var editorSelection: TextSelection?
+    /// The region drawn on the image (crop spec): view state, like `editorSelection`, never on the
+    /// model. ⌘Z hands one back through `model.pendingImageRegion`.
+    @State private var imageRegion: ImageRegion?
     @FocusState private var editorFocused: Bool
     @FocusState private var pinTitleFocused: Bool
 
@@ -67,12 +70,17 @@ struct PanelView: View {
         )
     }
 
-    /// The scope a transform chosen now would get (#25): the editor's own selection, never the
-    /// binding getter's (mid-composition that returns the marked range). Nil while an image is
-    /// showing or the editor isn't on screen.
+    /// The scope a transform chosen now would get: the region on the image (crop spec), or the
+    /// editor's own selection (#25), never the binding getter's (mid-composition that returns the
+    /// marked range). Nil when neither is there or the editor isn't on screen.
     private var currentScope: TransformScope? {
-        guard let document = model.document, !document.displaysAsImage, !document.displaysAsLargeText || showLargeTextAnyway,
-              !isPreviewing else { return nil }
+        guard let document = model.document else { return nil }
+        // The *current* entry decides: after Extract Text the text scope applies, never a leftover region.
+        if document.displaysAsImage {
+            guard let imageRegion, !imageRegion.isEmpty else { return nil }
+            return .image(imageRegion, revision: document.detectionRevision)
+        }
+        guard !document.displaysAsLargeText || showLargeTextAnyway, !isPreviewing else { return nil }
         return SelectionScope.scope(for: editorSelection, in: document.working)
     }
 
@@ -168,7 +176,8 @@ struct PanelView: View {
                             // history item must start it over rather than inherit the last
                             // session's image (the view keeps its place in the hierarchy, so
                             // SwiftUI would otherwise keep its state too).
-                            ImageSessionView(imagePNG: imagePNG, revision: document.detectionRevision)
+                            ImageSessionView(imagePNG: imagePNG, revision: document.detectionRevision,
+                                             region: $imageRegion, interactive: !(model.isApplying || isUploadOpen))
                                 .id(model.sessionGeneration)
                         } else {
                             TextEditor(text: workingBinding, selection: selectionBinding)
@@ -267,6 +276,19 @@ struct PanelView: View {
         // Must stay above the `historyOverlayRequested` handler: a ⌘⇧V summon resets, then opens.
         // The window's undo manager is the one stack for typing and transforms (#103).
         .background(WindowUndoBinding(model: model))
+        // A new image entry (a transform, undo, redo, refresh) drops the region, unless ⌘Z named the
+        // one to restore for exactly this entry.
+        .onChange(of: imageRegion) { _, region in model.imageRegionOnScreen = region }
+        .onChange(of: model.document?.detectionRevision) { _, revision in
+            if let pending = model.pendingImageRegion {
+                model.pendingImageRegion = nil
+                if pending.revision == revision, model.document?.displaysAsImage == true {
+                    imageRegion = pending.region
+                    return
+                }
+            }
+            imageRegion = nil
+        }
         .onChange(of: model.sessionGeneration) { _, _ in
             isPaletteOpen = false
             isHistoryOpen = false
@@ -275,6 +297,7 @@ struct PanelView: View {
             isUploadOpen = false
             // A `String.Index` into the buffer that just went away has no meaning in the new one.
             editorSelection = nil
+            imageRegion = nil
             showLargeTextAnyway = false
             // A new summon always starts in the editor: the preview is a view of *this*
             // buffer, and leaving it on would show the previous session's render until the
@@ -586,7 +609,8 @@ struct PanelView: View {
         Task { @MainActor in focusEditorUnlessRefusedImage() }
     }
 
-    /// Esc: close whichever overlay is open, then the preview, otherwise end the session.
+    /// Esc: close whichever overlay is open, then the preview, then clear the image region,
+    /// otherwise end the session.
     private func escape() {
         if isPaletteOpen {
             closePalette()
@@ -596,6 +620,9 @@ struct PanelView: View {
             closeUpload()
         } else if isPreviewing {
             closePreview()
+        } else if imageRegion != nil {
+            // The region clears before the panel cancels, as a selection does everywhere (crop spec).
+            imageRegion = nil
         } else {
             model.cancel()
         }

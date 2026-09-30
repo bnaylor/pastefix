@@ -100,6 +100,10 @@ final class AppModel: ObservableObject {
     @Published var pendingSelection: PendingSelection?
     /// The region ⌘Z restores on the image entry it names (crop spec); `PanelView` consumes it.
     @Published var pendingImageRegion: PendingImageRegion?
+    /// A write-only mirror of the region `PanelView` holds, for the hosted tests: SwiftUI builds no
+    /// accessibility tree in-process, so they can't read the footer. The app never reads it, and it
+    /// isn't `@Published`, so writing it re-renders nothing (the #25 lesson about selection state).
+    var imageRegionOnScreen: ImageRegion?
 
     /// Cycle position for `selectNextSecret`, reset wherever `document` is replaced.
     private var nextSecretIndex = 0
