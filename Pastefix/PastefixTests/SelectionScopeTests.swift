@@ -28,7 +28,7 @@ struct SelectionScopeTests {
         return nil
     }
     private func scope(_ text: String, _ location: Int, _ length: Int) -> TransformScope {
-        TransformScope.make(selected: Range(NSRange(location: location, length: length), in: text)!, in: text)!
+        .text(TextScope.make(selected: Range(NSRange(location: location, length: length), in: text)!, in: text)!)
     }
     private func sendUndo(_ window: NSWindow, redo: Bool = false) -> Bool {
         (window.firstResponder ?? window).tryToPerform(Selector(redo ? "redo:" : "undo:"), with: nil)
@@ -37,7 +37,7 @@ struct SelectionScopeTests {
     @Test func onlyASingleRealSubrangeScopes() {
         let text = "alpha beta"
         let beta = Range(NSRange(location: 6, length: 4), in: text)!
-        #expect(SelectionScope.scope(for: TextSelection(range: beta), in: text)?.expected == "beta")
+        #expect(SelectionScope.scope(for: TextSelection(range: beta), in: text)?.text?.expected == "beta")
         #expect(SelectionScope.scope(for: nil, in: text) == nil)
         #expect(SelectionScope.scope(for: TextSelection(range: text.startIndex..<text.endIndex), in: text) == nil)
         #expect(SelectionScope.scope(for: TextSelection(insertionPoint: text.startIndex), in: text) == nil)

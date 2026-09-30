@@ -21,7 +21,7 @@ private struct Bracket: Transformer {
 @Suite("selection-scoped apply, model (#25)")
 struct SelectionScopeModelTests {
     private func scope(_ text: String, _ location: Int, _ length: Int) -> TransformScope {
-        TransformScope.make(selected: Range(NSRange(location: location, length: length), in: text)!, in: text)!
+        .text(TextScope.make(selected: Range(NSRange(location: location, length: length), in: text)!, in: text)!)
     }
 
     @Test func scopedApplyPublishesTheSpan() async throws {

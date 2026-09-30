@@ -37,7 +37,7 @@ private final class Seen: @unchecked Sendable {
     }
     private func scope(_ text: String, _ location: Int, _ length: Int) -> TransformScope {
         let r = Range(NSRange(location: location, length: length), in: text)!
-        return TransformScope.make(selected: r, in: text)!
+        return .text(TextScope.make(selected: r, in: text)!)
     }
     private let upper = Fake { $0.text.uppercased() }
 
@@ -124,20 +124,20 @@ private final class Seen: @unchecked Sendable {
 
     @Test func makeOnlyScopesARealSubrange() {
         let text = "alpha beta"
-        #expect(TransformScope.make(selected: text.startIndex..<text.startIndex, in: text) == nil)   // caret
-        #expect(TransformScope.make(selected: text.startIndex..<text.endIndex, in: text) == nil)     // select-all
+        #expect(TextScope.make(selected: text.startIndex..<text.startIndex, in: text) == nil)   // caret
+        #expect(TextScope.make(selected: text.startIndex..<text.endIndex, in: text) == nil)     // select-all
         let r = Range(NSRange(location: 6, length: 4), in: text)!
-        #expect(TransformScope.make(selected: r, in: text) == TransformScope(range: NSRange(location: 6, length: 4), expected: "beta"))
+        #expect(TextScope.make(selected: r, in: text) == TextScope(range: NSRange(location: 6, length: 4), expected: "beta"))
     }
 
     @Test func rankingFollowsASmallSelection() {
         let prose = "see https://example.com/x for details"
         let r = Range((prose as NSString).range(of: "https://example.com/x"), in: prose)!
-        let s = TransformScope.make(selected: r, in: prose)
-        #expect(TransformScope.rankingKinds(scope: s, documentKinds: [.markdown]).contains(.url))
-        #expect(TransformScope.rankingKinds(scope: nil, documentKinds: [.markdown]) == [.markdown])
-        let big = TransformScope(range: NSRange(location: 0, length: 9000), expected: String(repeating: "a", count: 9000))
-        #expect(TransformScope.rankingKinds(scope: big, documentKinds: [.json]) == [.json])
+        let s = TextScope.make(selected: r, in: prose)
+        #expect(TextScope.rankingKinds(scope: s, documentKinds: [.markdown]).contains(.url))
+        #expect(TextScope.rankingKinds(scope: nil, documentKinds: [.markdown]) == [.markdown])
+        let big = TextScope(range: NSRange(location: 0, length: 9000), expected: String(repeating: "a", count: 9000))
+        #expect(TextScope.rankingKinds(scope: big, documentKinds: [.json]) == [.json])
     }
 
     /// Final review: tools end their output with "\n" (jq, python print, sed, Clean Claude Code

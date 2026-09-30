@@ -8,6 +8,6 @@ import PastefixAppCore
 enum SelectionScope {
     static func scope(for selection: TextSelection?, in text: String) -> TransformScope? {
         guard case .selection(let range) = selection?.indices else { return nil }
-        return TransformScope.make(selected: range, in: text)
+        return TextScope.make(selected: range, in: text).map(TransformScope.text)
     }
 }

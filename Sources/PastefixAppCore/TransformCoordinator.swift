@@ -39,16 +39,56 @@ public enum TransformCoordinator {
         "The selection changed before \(name) could run. Select the text again."
     }
 
+    /// Whether `transformer` can use `scope`: a text scope as `canScope(_:)` says; an image region
+    /// only for a `RegionImageTransformer`. Everything else runs on the whole buffer or image.
+    public static func canScope(_ transformer: any Transformer, for scope: TransformScope) -> Bool {
+        switch scope {
+        case .text: return canScope(transformer)
+        case .image: return transformer is any RegionImageTransformer
+        }
+    }
+
+    public static let staleImageRegionMessage = "The image changed after you selected a region. Select it again."
+
     /// `apply(_:to:)` scoped to `scope` when there is one and the transformer can scope (#25): the
     /// transform sees only the selected text, its result is spliced back as one undo entry, and the
     /// third element is the span the result occupies (UTF-16), non-nil only when an entry was pushed.
-    /// Without a usable scope it is exactly `apply(_:to:)`.
+    /// Without a usable scope it is exactly `apply(_:to:)`. An image scope (crop) reaches only a
+    /// `RegionImageTransformer`, as `TransformInput.region`, and never has a span after.
     public static func apply(
         _ transformer: any Transformer,
         to document: PasteDocument,
         scope: TransformScope?
     ) async -> (PasteDocument, TransformOutcome, NSRange?) {
-        guard let scope, canScope(transformer), document.currentImage == nil else {
+        switch scope {
+        case .image(let region, let revision)?:
+            // A region only means something to a region transform; the rest run on the whole image.
+            guard transformer is any RegionImageTransformer, let png = document.currentImage else {
+                let (doc, outcome) = await apply(transformer, to: document)
+                return (doc, outcome, nil)
+            }
+            // Drawn on this entry, and still inside it: undo, redo or refresh replaced the image
+            // otherwise, and cropping the new one to the old rectangle would be wrong.
+            guard revision == document.detectionRevision,
+                  let size = ImageRegion.orientedPixelSize(of: png), region.fits(size) else {
+                return (document, .failed(staleImageRegionMessage), nil)
+            }
+            let (doc, outcome) = await apply(transformer, to: document, region: region)
+            return (doc, outcome, nil)
+        case .text(let text)?:
+            return await apply(transformer, to: document, text: text)
+        case nil:
+            let (doc, outcome) = await apply(transformer, to: document)
+            return (doc, outcome, nil)
+        }
+    }
+
+    private static func apply(
+        _ transformer: any Transformer,
+        to document: PasteDocument,
+        text scope: TextScope
+    ) async -> (PasteDocument, TransformOutcome, NSRange?) {
+        guard canScope(transformer), document.currentImage == nil else {
             let (doc, outcome) = await apply(transformer, to: document)
             return (doc, outcome, nil)
         }
@@ -96,11 +136,12 @@ public enum TransformCoordinator {
 
     public static func apply(
         _ transformer: any Transformer,
-        to document: PasteDocument
+        to document: PasteDocument,
+        region: ImageRegion? = nil
     ) async -> (PasteDocument, TransformOutcome) {
         var doc = document
         let image = doc.currentImage
-        let input = TransformInput(text: doc.working, richRTFD: doc.origin.richRTFD, image: image)
+        let input = TransformInput(text: doc.working, richRTFD: doc.origin.richRTFD, image: image, region: region)
         // Refuse before running: the cap is the only bound on a body inside an uninterruptible
         // Foundation call, and the user is told the limit rather than watching a spinner. A
         // transform that reads `input.richRTFD` (RichToPlain, RichToMarkdown) is measured on that

@@ -35,8 +35,8 @@ struct SidebarView: View {
                             model.apply(transformer, scope: scope)
                         } label: {
                             // Preset names are user-typed and uncapped; keep a row one row high.
-                            Text(scope != nil && !TransformCoordinator.canScope(transformer)
-                                 ? "\(transformer.name) — whole buffer" : transformer.name)
+                            Text(scope.map { TransformCoordinator.canScope(transformer, for: $0)
+                                     ? transformer.name : "\(transformer.name) — \($0.wholeLabel)" } ?? transformer.name)
                                 .lineLimit(1)
                                 .truncationMode(.tail)
                                 .frame(maxWidth: .infinity, alignment: .leading)

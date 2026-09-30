@@ -22,6 +22,7 @@ import Foundation
             "builtin.redactsecrets",
             "builtin.stripimagemetadata",
             "builtin.extracttext",
+            "builtin.crop",
         ])
     }
 
@@ -51,7 +52,7 @@ import Foundation
         let dir = FileManager.default.temporaryDirectory
             .appendingPathComponent("does-not-exist-\(UUID().uuidString)")
         let reg = TransformerRegistry(config: .init(scriptsDirectory: dir, wrapWidth: 80))
-        #expect(reg.load().count == 30)   // built-ins only, no crash
+        #expect(reg.load().count == 31)   // built-ins only, no crash
     }
 
     @Test func scriptKindsSurfaceAsApplicableKinds() throws {

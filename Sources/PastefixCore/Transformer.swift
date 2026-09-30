@@ -8,11 +8,14 @@ public struct TransformInput: Sendable {
     public let text: String
     public let richRTFD: Data?
     public let image: Data?
+    /// The selected region of `image`, for a `RegionImageTransformer` (crop). Nil otherwise.
+    public let region: ImageRegion?
 
-    public init(text: String, richRTFD: Data? = nil, image: Data? = nil) {
+    public init(text: String, richRTFD: Data? = nil, image: Data? = nil, region: ImageRegion? = nil) {
         self.text = text
         self.richRTFD = richRTFD
         self.image = image
+        self.region = region
     }
 }
 

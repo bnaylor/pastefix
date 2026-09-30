@@ -18,6 +18,13 @@ struct PendingSelection: Equatable {
     let revision: Int
 }
 
+/// The image region to restore once the image entry it was drawn on is back on screen (crop spec):
+/// set when ⌘Z undoes a transform that was applied with a region up. Consumed by `PanelView`.
+struct PendingImageRegion: Equatable {
+    let region: ImageRegion
+    let revision: Int
+}
+
 @MainActor
 final class AppModel: ObservableObject {
     @Published private(set) var document: PasteDocument?
@@ -91,6 +98,12 @@ final class AppModel: ObservableObject {
     @Published var requestedSelection: TextSelection?
     /// See `PendingSelection`. Consumed (and cleared) by `PanelView`; cleared at session boundaries.
     @Published var pendingSelection: PendingSelection?
+    /// The region ⌘Z restores on the image entry it names (crop spec); `PanelView` consumes it.
+    @Published var pendingImageRegion: PendingImageRegion?
+    /// A write-only mirror of the region `PanelView` holds, for the hosted tests: SwiftUI builds no
+    /// accessibility tree in-process, so they can't read the footer. The app never reads it, and it
+    /// isn't `@Published`, so writing it re-renders nothing (the #25 lesson about selection state).
+    var imageRegionOnScreen: ImageRegion?
 
     /// Cycle position for `selectNextSecret`, reset wherever `document` is replaced.
     private var nextSecretIndex = 0
@@ -346,7 +359,7 @@ final class AppModel: ObservableObject {
             // selection started — the old offsets index a different buffer now and would select
             // unrelated characters (GUI pass: "a be"). The undo step restores the user's selection.
             let selectAfter: NSRange? = span ?? {
-                guard let scope, updated.cursor != current.cursor else { return nil }
+                guard let scope = scope?.text, updated.cursor != current.cursor else { return nil }
                 return NSRange(location: min(scope.range.location, (updated.working as NSString).length), length: 0)
             }()
             // The session can end (Save/Cancel/auto-hide) while a slow transform is in
@@ -365,7 +378,8 @@ final class AppModel: ObservableObject {
             if updated.cursor != current.cursor {
                 self.breakTypingCoalescing()
                 self.registerUndo(TransformStep(name: transformer.name, generation: generation,
-                                                before: selectAfter == nil ? nil : scope?.range, after: selectAfter))
+                                                before: selectAfter == nil ? nil : scope?.text?.range, after: selectAfter,
+                                                regionBefore: scope?.imageRegion))
             }
             // The failure path returns `current` unchanged (same revision), so only request a
             // scan when the buffer actually moved — re-requesting on every refused click would
@@ -683,6 +697,9 @@ final class AppModel: ObservableObject {
         /// The scoped span before and after (#25), for re-selection on ⌘Z and ⌘⇧Z. Nil when unscoped.
         var before: NSRange? = nil
         var after: NSRange? = nil
+        /// The image region that was up when it was applied (crop spec), whatever the transform:
+        /// ⌘Z restores it. ⌘⇧Z doesn't — after a crop the selection is clear.
+        var regionBefore: ImageRegion? = nil
     }
 
     private func registerUndo(_ step: TransformStep) {
@@ -728,6 +745,9 @@ final class AppModel: ObservableObject {
         if let before = step.before, let doc = document {
             pendingSelection = PendingSelection(range: before, revision: doc.detectionRevision)
         }
+        if let region = step.regionBefore, let doc = document {
+            pendingImageRegion = PendingImageRegion(region: region, revision: doc.detectionRevision)
+        }
         breakTypingCoalescing()
         registerRedo(step)
     }
@@ -753,6 +773,7 @@ final class AppModel: ObservableObject {
     /// that is gone; left there, ⌘Z would replay them against the new one.
     private func resetUndo() {
         pendingSelection = nil
+        pendingImageRegion = nil
         undoManager?.removeAllActions()
         breakTypingCoalescing()
         refreshUndoState()

@@ -135,7 +135,7 @@ struct CommandPaletteView: View {
         // `PanelView` only inserts this view `if isPaletteOpen`, so `onAppear` fires exactly once
         // per open and `@State` resets on the next one.
         .onAppear {
-            kindsSnapshot = TransformScope.rankingKinds(scope: scope, documentKinds: model.document?.detectedKinds ?? [])
+            kindsSnapshot = TextScope.rankingKinds(scope: scope?.text, documentKinds: model.document?.detectedKinds ?? [])
         }
     }
 
@@ -154,7 +154,7 @@ struct CommandPaletteView: View {
                 // Uncategorised transforms are shown under "Scripts" in the sidebar; the
                 // subtitle says the same thing so the two surfaces agree.
                 Text((result.transformer.category ?? TransformCategory.scripts)
-                     + (scope != nil && !TransformCoordinator.canScope(result.transformer) ? " · whole buffer" : ""))
+                     + (scope.map { TransformCoordinator.canScope(result.transformer, for: $0) ? "" : " · \($0.wholeLabel)" } ?? ""))
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
