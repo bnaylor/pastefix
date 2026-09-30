@@ -176,3 +176,57 @@ import ImageIO
         #expect(r.acceptedForms == [.image] && b.acceptedForms == [.image])
     }
 }
+
+/// Final review I1: a 16-bit image must stay 16-bit, with the pixels outside the region exactly as
+/// they were — an 8-bit working bitmap re-quantised the whole picture (visible banding on PQ/HLG).
+@Suite struct RedactBlurDepthTests {
+    /// 60×40, 16 bits per channel, opaque, a smooth ramp that 8 bits can't hold.
+    static func png16() throws -> Data {
+        let w = 60, h = 40
+        let ctx = try #require(CGContext(data: nil, width: w, height: h, bitsPerComponent: 16, bytesPerRow: 0,
+                                         space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                         bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder16Little.rawValue))
+        let buf = ctx.data!.assumingMemoryBound(to: UInt16.self)
+        let stride = ctx.bytesPerRow / 2
+        for y in 0..<h { for x in 0..<w {
+            let i = y * stride + x * 4
+            buf[i] = UInt16(x * 1000 + y); buf[i + 1] = UInt16(30000 + x * 7); buf[i + 2] = UInt16(y * 1500 + 3); buf[i + 3] = 65535
+        } }
+        let image = try #require(ctx.makeImage())
+        return try #require(PNGEncoder.encode(image))
+    }
+    /// RGBA16 (little-endian, sRGB) of `png`, row 0 at the top.
+    static func pixels16(_ png: Data) throws -> (w: Int, h: Int, depth: Int, px: [UInt16]) {
+        let image = try #require(Fixture.decoded(png))
+        let w = image.width, h = image.height
+        var px = [UInt16](repeating: 0, count: w * h * 4)
+        let ctx = try #require(CGContext(data: &px, width: w, height: h, bitsPerComponent: 16, bytesPerRow: w * 8,
+                                         space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                         bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder16Little.rawValue))
+        ctx.draw(image, in: CGRect(x: 0, y: 0, width: w, height: h))
+        return (w, h, image.bitsPerComponent, px)
+    }
+    static func outsideUnchanged16(_ a: (w: Int, h: Int, depth: Int, px: [UInt16]), _ b: (w: Int, h: Int, depth: Int, px: [UInt16]), _ r: ImageRegion) -> Int {
+        var changed = 0
+        for y in 0..<a.h { for x in 0..<a.w where !(x >= r.x && x < r.x + r.width && y >= r.y && y < r.y + r.height) {
+            let i = (y * a.w + x) * 4
+            if a.px[i..<i + 4] != b.px[i..<i + 4] { changed += 1 }
+        } }
+        return changed
+    }
+
+    @Test func redactAndBlurKeepSixteenBits() async throws {
+        let png = try Self.png16()
+        let r = ImageRegion(x: 20, y: 10, width: 15, height: 12)
+        let a = try Self.pixels16(png)
+        #expect(a.depth == 16, "fixture is 16-bit")
+        for t in [RedactSelection() as any RegionImageTransformer, BlurSelection()] {
+            guard case .image(let out, _) = try await offThePool({ try t.transformImage(png, region: r) }) else {
+                Issue.record("\(t.name): expected an image"); continue
+            }
+            let b = try Self.pixels16(out)
+            #expect(b.depth == 16, "\(t.name) keeps 16 bits per channel, got \(b.depth)")
+            #expect(Self.outsideUnchanged16(a, b, r) == 0, "\(t.name): pixels outside the region changed")
+        }
+    }
+}

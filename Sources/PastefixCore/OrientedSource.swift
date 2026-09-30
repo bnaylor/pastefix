@@ -34,14 +34,18 @@ struct OrientedSource {
         return image
     }
 
-    /// An RGBA8 bitmap with `image` drawn in at 1:1, in the image's own colour space so pixels and
-    /// profile are unchanged; sRGB when that space isn't RGB (greyscale), which can't back an
-    /// RGBA context.
+    /// An RGBA bitmap with `image` drawn in at 1:1, in the image's own colour space and at its own
+    /// depth (16 bits per channel for anything deeper than 8: an 8-bit bitmap re-quantised every
+    /// pixel of a 16-bit or HDR image — final review I1), so opaque pixels come out unchanged;
+    /// sRGB when the space isn't RGB (greyscale), which can't back an RGBA context. Premultiplied,
+    /// as every CG RGBA bitmap is, so a semi-transparent pixel's colour can shift by rounding.
     static func bitmap(for image: CGImage) -> CGContext? {
         let own = image.colorSpace.flatMap { $0.model == .rgb ? $0 : nil }
+        let deep = image.bitsPerComponent > 8
+        let info = CGImageAlphaInfo.premultipliedLast.rawValue | (deep ? CGBitmapInfo.byteOrder16Little.rawValue : 0)
         guard let space = own ?? CGColorSpace(name: CGColorSpace.sRGB),
-              let ctx = CGContext(data: nil, width: image.width, height: image.height, bitsPerComponent: 8, bytesPerRow: 0,
-                                  space: space, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+              let ctx = CGContext(data: nil, width: image.width, height: image.height, bitsPerComponent: deep ? 16 : 8,
+                                  bytesPerRow: 0, space: space, bitmapInfo: info) else { return nil }
         ctx.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
         return ctx
     }

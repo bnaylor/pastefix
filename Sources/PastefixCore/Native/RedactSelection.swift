@@ -4,7 +4,8 @@ import CoreGraphics
 /// Covers the selected region with opaque black: the redaction tool (redact/blur spec). Black
 /// reads as a redaction on any image and carries nothing from what was there; over transparency
 /// the region becomes opaque. Pixels outside the region are drawn 1:1 in the image's own colour
-/// space, so they come out unchanged; the re-encode drops metadata.
+/// space and depth, so opaque ones come out unchanged (see `OrientedSource.bitmap`); the re-encode
+/// drops metadata.
 public struct RedactSelection: RegionImageTransformer {
     public let id = "builtin.redactselection"
     public let name = "Redact Selection"

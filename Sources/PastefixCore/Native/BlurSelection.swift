@@ -5,8 +5,8 @@ import CoreImage
 /// Blurs the selected region: cosmetic, not redaction (redact/blur spec). Blurred screenshot text
 /// can often be reconstructed, which the result note says. Only the region goes through Core
 /// Image: cropped out, edges clamped so nothing outside is sampled and the edges don't fade to
-/// transparent, blurred, rendered in the image's colour space, then drawn over the original in a
-/// 1:1 bitmap, so every pixel outside the region is untouched.
+/// transparent, blurred, rendered in the image's colour space and depth, then drawn over the original
+/// in a 1:1 bitmap, so opaque pixels outside the region are unchanged (see `OrientedSource.bitmap`).
 public struct BlurSelection: RegionImageTransformer {
     public let id = "builtin.blurselection"
     public let name = "Blur Selection"
@@ -39,7 +39,8 @@ public struct BlurSelection: RegionImageTransformer {
             .applyingGaussianBlur(sigma: Self.radius(for: region))
             .cropped(to: rect)
         let context = CIContext(options: [.workingColorSpace: space, .outputColorSpace: space])
-        guard let blurred = context.createCGImage(patch, from: rect, format: .RGBA8, colorSpace: space) else {
+        let format: CIFormat = ctx.bitsPerComponent > 8 ? .RGBA16 : .RGBA8   // the bitmap's own depth
+        guard let blurred = context.createCGImage(patch, from: rect, format: format, colorSpace: space) else {
             throw TransformError.invalidInput("\(name) couldn't blur this image.")
         }
         ctx.setBlendMode(.copy)
