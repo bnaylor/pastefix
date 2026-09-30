@@ -67,6 +67,15 @@ struct PanelView: View {
         )
     }
 
+    /// The scope a transform chosen now would get (#25): the editor's own selection, never the
+    /// binding getter's (mid-composition that returns the marked range). Nil while an image is
+    /// showing or the editor isn't on screen.
+    private var currentScope: TransformScope? {
+        guard let document = model.document, !document.displaysAsImage, !document.displaysAsLargeText || showLargeTextAnyway,
+              !isPreviewing else { return nil }
+        return SelectionScope.scope(for: editorSelection, in: document.working)
+    }
+
     /// True when every range of `selection` is a usable range of `text`. `TextRangeClamp.remap`
     /// from a string to itself is exactly that test — bounds *and* grapheme boundaries — and it
     /// compares indices (safe offset arithmetic) before measuring anything.
@@ -91,6 +100,25 @@ struct PanelView: View {
     /// text and the caret can legitimately sit past the old buffer's end — validating that
     /// against `current` leaves it exactly where the user put it.
     private func carrySelection(from previous: String, to current: String) {
+        // A scoped apply, or the undo/redo of one, names the span to select (#25). It wins over
+        // remapping — which keeps raw offsets and, after a length change, lands on the wrong
+        // characters (measured) — but only in the buffer it indexes.
+        if let pending = model.pendingSelection {
+            model.pendingSelection = nil
+            if pending.revision == model.document?.detectionRevision,
+               !isPaletteOpen, !isHistoryOpen, !isUploadOpen, !isPreviewing,
+               let range = Range(pending.range, in: current) {
+                let selection = TextSelection(range: range)
+                editorSelection = selection
+                // Focus, then select a turn later: an NSTextView becoming first responder restores
+                // the selection it resigned with (#111 pass 5), which would overwrite this one.
+                focusEditorUnlessRefusedImage()
+                Task { @MainActor in
+                    if model.document?.working == current { editorSelection = selection }
+                }
+                return
+            }
+        }
         guard let range = firstRange(of: editorSelection) else { return }
         let carried = TextRangeClamp.remap(range, from: previous, to: current)
             ?? TextRangeClamp.remap(range, from: current, to: current)
@@ -196,7 +224,7 @@ struct PanelView: View {
                     }
                     if settings.showSidebar {
                         Divider()
-                        SidebarView(model: model)
+                        SidebarView(model: model, scope: currentScope)
                     }
                 }
                 Divider()
@@ -205,7 +233,7 @@ struct PanelView: View {
             // The three overlays are mutually exclusive: one backdrop, one focused field, one
             // owner for Esc. Opening any of them closes the others.
             if isPaletteOpen {
-                CommandPaletteView(model: model, onClose: closePalette)
+                CommandPaletteView(model: model, scope: currentScope, onClose: closePalette)
                     .transition(.opacity)
                     // A sidebar-started apply must not leave a live palette behind.
                     .disabled(model.isApplying)

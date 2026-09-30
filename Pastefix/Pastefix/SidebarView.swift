@@ -8,9 +8,12 @@ import PastefixAppCore
 /// surface that reshuffles itself whenever the clipboard changes is unusable as a map.
 struct SidebarView: View {
     @ObservedObject var model: AppModel
+    /// The selection a transform chosen here applies to (#25), or nil for the whole buffer.
+    let scope: TransformScope?
 
     var body: some View {
         let sections = SidebarGrouping.sections(model.browsableTransformers())
+        VStack(spacing: 0) {
         List {
             // An empty grey column reads as a broken panel, and the sidebar is a persisted
             // setting that is simply *there*, with nothing the user opened to explain it.
@@ -26,10 +29,11 @@ struct SidebarView: View {
                         // Sizing lives inside the label so the whole row is the hit target,
                         // not just the glyphs of the name.
                         Button {
-                            model.apply(transformer)
+                            model.apply(transformer, scope: scope)
                         } label: {
                             // Preset names are user-typed and uncapped; keep a row one row high.
-                            Text(transformer.name)
+                            Text(scope != nil && !TransformCoordinator.canScope(transformer)
+                                 ? "\(transformer.name) — whole buffer" : transformer.name)
                                 .lineLimit(1)
                                 .truncationMode(.tail)
                                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -41,6 +45,18 @@ struct SidebarView: View {
             }
         }
         .listStyle(.sidebar)
+        // Below the list, outside it: a row at the top of the list pushed every transform down as
+        // a selection came and went (clicks missed), and an inset overprinted the last row and ate
+        // clicks on it (GUI passes). Here the list simply ends above the hint.
+        if scope != nil {
+            Divider()
+            Text("Applies to selection")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 12).padding(.vertical, 6)
+        }
+        }
         .frame(width: PanelMetrics.sidebarWidth)
         .disabled(model.isApplying)
     }
