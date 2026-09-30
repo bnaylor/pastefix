@@ -116,6 +116,10 @@ struct SelectionScopeTests {
         f.model.apply(WholeOnly(), scope: scope("alpha beta gamma", 6, 4))
         #expect(await f.eventually { editor.string == "**alpha beta gamma**" && editor.selectedRange() == NSRange(location: 6, length: 0) },
                 "selected \(editor.selectedRange())")
+        // ⌘Z brings back the selection the user had, as it does for a scoped transform (GUI recheck).
+        #expect(sendUndo(window))
+        #expect(await f.eventually { editor.string == "alpha beta gamma" && editor.selectedRange() == NSRange(location: 6, length: 4) },
+                "after ⌘Z \(editor.selectedRange())")
     }
 }
 

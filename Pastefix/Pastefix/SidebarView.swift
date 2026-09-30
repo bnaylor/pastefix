@@ -13,6 +13,7 @@ struct SidebarView: View {
 
     var body: some View {
         let sections = SidebarGrouping.sections(model.browsableTransformers())
+        VStack(spacing: 0) {
         List {
             // An empty grey column reads as a broken panel, and the sidebar is a persisted
             // setting that is simply *there*, with nothing the user opened to explain it.
@@ -44,16 +45,17 @@ struct SidebarView: View {
             }
         }
         .listStyle(.sidebar)
-        // Below the list, not a row in it: a row at the top pushed every transform down as a
-        // selection came and went, and a click aimed at a row landed on empty space (GUI pass).
-        .safeAreaInset(edge: .bottom) {
-            if scope != nil {
-                Text("Applies to selection")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 12).padding(.vertical, 6)
-            }
+        // Below the list, outside it: a row at the top of the list pushed every transform down as
+        // a selection came and went (clicks missed), and an inset overprinted the last row and ate
+        // clicks on it (GUI passes). Here the list simply ends above the hint.
+        if scope != nil {
+            Divider()
+            Text("Applies to selection")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 12).padding(.vertical, 6)
+        }
         }
         .frame(width: PanelMetrics.sidebarWidth)
         .disabled(model.isApplying)

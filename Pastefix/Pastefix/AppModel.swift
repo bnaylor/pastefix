@@ -341,6 +341,14 @@ final class AppModel: ObservableObject {
         let id = applyID
         applyTask = Task {
             let (updated, outcome, span) = await TransformCoordinator.apply(transformer, to: current, scope: scope)
+            // What to select once this lands (#25): the new span of a scoped apply; or, when a
+            // whole-only transform (rich, output-mode) ran while text was selected, a caret where the
+            // selection started — the old offsets index a different buffer now and would select
+            // unrelated characters (GUI pass: "a be"). The undo step restores the user's selection.
+            let selectAfter: NSRange? = span ?? {
+                guard let scope, updated.cursor != current.cursor else { return nil }
+                return NSRange(location: min(scope.range.location, (updated.working as NSString).length), length: 0)
+            }()
             // The session can end (Save/Cancel/auto-hide) while a slow transform is in
             // flight, and the user can summon a fresh one before it finishes; ⌘Z cancels it
             // (`observeUndoManager`).
@@ -357,7 +365,7 @@ final class AppModel: ObservableObject {
             if updated.cursor != current.cursor {
                 self.breakTypingCoalescing()
                 self.registerUndo(TransformStep(name: transformer.name, generation: generation,
-                                                before: span == nil ? nil : scope?.range, after: span))
+                                                before: selectAfter == nil ? nil : scope?.range, after: selectAfter))
             }
             // The failure path returns `current` unchanged (same revision), so only request a
             // scan when the buffer actually moved — re-requesting on every refused click would
@@ -368,15 +376,7 @@ final class AppModel: ObservableObject {
             self.resetSecretSelection()
             // After the reset, not before: `resetSecretSelection()` clears `requestedSelection`, and
             // the span is its own channel anyway (see `PendingSelection`).
-            if let span { self.pendingSelection = PendingSelection(range: span, revision: updated.detectionRevision) }
-            // A whole-only transform (rich, output-mode) ran while text was selected: the old offsets
-            // index a different buffer now and would select unrelated characters (GUI pass: "a be").
-            // A caret where the selection started, instead.
-            else if let scope, updated.cursor != current.cursor {
-                let caret = min(scope.range.location, (updated.working as NSString).length)
-                self.pendingSelection = PendingSelection(range: NSRange(location: caret, length: 0),
-                                                         revision: updated.detectionRevision)
-            }
+            if let selectAfter { self.pendingSelection = PendingSelection(range: selectAfter, revision: updated.detectionRevision) }
             switch outcome {
             case .applied, .unchanged:
                 self.errorMessage = nil
