@@ -377,6 +377,12 @@ final class AppModel: ObservableObject {
             // After the reset, not before: `resetSecretSelection()` clears `requestedSelection`, and
             // the span is its own channel anyway (see `PendingSelection`).
             if let selectAfter { self.pendingSelection = PendingSelection(range: selectAfter, revision: updated.detectionRevision) }
+            // Only an apply that changed something is a use (#26): failures, "nothing to do" and an
+            // unchanged buffer don't make a transform rank higher.
+            switch outcome {
+            case .applied, .appliedWithNote: self.settings.recordTransformUse(transformer.id)
+            case .unchanged, .nothingToDo, .failed: break
+            }
             switch outcome {
             case .applied, .unchanged:
                 self.errorMessage = nil

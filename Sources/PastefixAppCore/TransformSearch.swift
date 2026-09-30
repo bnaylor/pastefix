@@ -12,21 +12,26 @@ public struct SearchResult: Identifiable, Sendable {
 
 /// Ranks transforms for the ⌘K palette. Pure; the view only renders the result.
 public enum TransformSearch {
-    public static func rank(query: String, in transformers: [any Transformer], kinds: Set<ContentKind>) -> [SearchResult] {
+    public static func rank(query: String, in transformers: [any Transformer], kinds: Set<ContentKind>,
+                            usage: [String: TransformUsage] = [:], now: Date = Date()) -> [SearchResult] {
         let q = fold(query.trimmingCharacters(in: .whitespacesAndNewlines))
         guard !q.isEmpty else {
-            return PaletteOrdering.order(transformers, for: kinds).map { SearchResult(transformer: $0, matchedRanges: [], tier: 0) }
+            return PaletteOrdering.order(transformers, for: kinds, usage: usage, now: now)
+                .map { SearchResult(transformer: $0, matchedRanges: [], tier: 0) }
         }
         let qChars = Array(q)
-        var hits: [(result: SearchResult, applicable: Bool, index: Int)] = []
+        var hits: [(result: SearchResult, applicable: Bool, score: Double, index: Int)] = []
         for (index, t) in transformers.enumerated() {
             guard let (tier, ranges) = FuzzyMatch.match(qChars, in: t.name) else { continue }
             let applicable = t.applicableKinds.map { !$0.isDisjoint(with: kinds) } ?? false
-            hits.append((SearchResult(transformer: t, matchedRanges: ranges, tier: tier), applicable, index))
+            hits.append((SearchResult(transformer: t, matchedRanges: ranges, tier: tier), applicable,
+                         TransformUsage.score(usage[t.id], now: now), index))
         }
         return hits.sorted { a, b in
             if a.result.tier != b.result.tier { return a.result.tier < b.result.tier }
             if a.applicable != b.applicable { return a.applicable }
+            // Usage (#26) breaks ties only: after match quality and fit with the content.
+            if a.score != b.score { return a.score > b.score }
             return a.index < b.index
         }.map(\.result)
     }

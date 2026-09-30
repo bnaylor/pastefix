@@ -78,6 +78,25 @@ Two caveats:
 - The Xcode project lives at `Pastefix/Pastefix.xcodeproj` and app sources at `Pastefix/Pastefix/` (note the double nesting). Xcode 16 **filesystem-synchronized groups** auto-add new `.swift` files to the target — do NOT hand-edit `project.pbxproj` to add sources. Linking a *package product* or changing a *build setting* is the exception (a human/controller does it in Xcode or a surgical value flip).
 - `xcodebuild -showBuildSettings` reports the **Release** path unless you pass the matching `-configuration Debug`; the product lives in **DerivedData**, not a local `build/`. Use `launch.sh` and stop fighting it.
 
+### GUI testing: take the lease first
+
+Sessions from more than one project run GUI tests on the same machine, often on the unattended
+work laptop at the request of a remote session. Two runs at once steal focus from each other and
+both results are worthless. Before anything that launches the app or drives the screen
+(`Pastefix/launch.sh`, `scripts/test-app.sh`, which launches the host app for real, GUI-measured
+passes, computer use, screenshots of real windows), take the host-wide lease with the
+`gui-test-lease` skill:
+
+```sh
+L="python3 ~/.claude/skills/gui-test-lease/lease.py"
+$L acquire --purpose "pastefix: <what>" --minutes N [--on-behalf-of <peer>]  # exit 1 = held; output says by whom
+$L release                                                                   # as soon as GUI work ends, pass or fail
+```
+
+Exit 1 means another session has the screen: message the holder named in the output, or wait with
+`--wait SECS`. Never start GUI work without the lease, and never edit or delete the lease file by
+hand. If the skill isn't installed, ask the user rather than skipping this.
+
 ## Project layout
 
 ```
@@ -158,9 +177,10 @@ Sources/PastefixAppCore/              # app pure model (depends on PastefixCore,
   MarkdownPreview.swift               # @MainActor attributedString(markdown:) -> NSAttributedString for the panel's Preview toggle: MarkdownHTML.render -> RichOutputRenderer.htmlForRTF (<img> stripped) -> stylesheet -> NSAttributedString(html:) -> foreground colours stripped except .link runs; 16 KB / 200 `<li>` caps return a notice string (the importer is main-thread-only, so work, not just bytes, has to be capped)
   SettingsStore.swift                 # UserDefaults persistence (wrap width, auto-hide, sidebar, scripts folder, per-transform enable/order, historyEnabled, historyMaxItems, ziplineServerURL + ziplineDefaultExpiry/BurnOnRead/Extension); expiry(fromRaw:) maps the raw expiry string to a ZiplineExpiry, falling back to the default rather than .never on an unrecognised value
   TransformOverrides.swift            # per-transform enable/disable + drag-reordering
-  PaletteOrdering.swift               # applicable-first stable partition on top of TransformOverrides
+  PaletteOrdering.swift               # applicable-first stable partition on top of TransformOverrides; usage (#26) reorders WITHIN each group only
   FuzzyMatch.swift                    # shared fold + tiered match (prefix/word-start/subsequence) + highlight ranges; fold-once `tier` for ranking-only callers
-  TransformSearch.swift               # ⌘K palette ranking, delegates matching to FuzzyMatch
+  TransformSearch.swift               # ⌘K palette ranking, delegates matching to FuzzyMatch; order = match tier > fits detected kinds > usage score (#26) > configured order
+  TransformUsage.swift                # #26: {count, lastUsed}, score = count × 0.5^(days/14); recorded by AppModel only on .applied/.appliedWithNote; stored in SettingsStore.transformUsage (dropped with its preset; Reset in Settings → Transforms); a tie-breaker ONLY — never outranks match quality or content fit, never reorders the sidebar
   TransformListEmptyState.swift       # the sentence an empty palette/sidebar shows: "No matching transforms" for a search, else "No [image ]transforms enabled"
   SidebarGrouping.swift               # groups transforms into sidebar sections by category (built-in order, then custom, then Scripts); favorites (#26): SettingsStore.favoriteTransformIDs (ordered, dropped with a deleted preset) lead in a Favorites section whose id isn't its title (a script category named "Favorites" can't collide), and stay in their category; SidebarView observes SettingsStore so toggling redraws
   SessionPreparationCache.swift       # @MainActor one-entry cache of a SingleSlotLane task keyed by (session generation, input bytes): a rebuilt ⌘⇧U overlay gets the SAME in-flight image preparation instead of a second uncancellable decode; keyed on the bytes too because ⌘R replaces the image without a new generation; clear() at session boundaries also skips the job if it has not started (#48)
