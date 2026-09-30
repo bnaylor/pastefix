@@ -5,6 +5,8 @@ import PastefixAppCore
 /// ⌘K overlay: type to filter, ↑↓ to choose, ↵ to apply, Esc to close.
 struct CommandPaletteView: View {
     @ObservedObject var model: AppModel
+    /// The selection a transform chosen here applies to (#25), or nil for the whole buffer.
+    let scope: TransformScope?
     let onClose: () -> Void
 
     @State private var query = ""
@@ -92,6 +94,7 @@ struct CommandPaletteView: View {
                     Label("Apply", systemImage: "return")
                     Label("Choose", systemImage: "arrow.up.arrow.down")
                 }
+                if scope != nil { Text("Applies to selection") }
                 Text("esc Close")
                 Spacer()
             }
@@ -117,7 +120,9 @@ struct CommandPaletteView: View {
         // Freeze the ranking kinds for this palette session — see `kindsSnapshot`'s doc comment.
         // `PanelView` only inserts this view `if isPaletteOpen`, so `onAppear` fires exactly once
         // per open and `@State` resets on the next one.
-        .onAppear { kindsSnapshot = model.document?.detectedKinds ?? [] }
+        .onAppear {
+            kindsSnapshot = TransformScope.rankingKinds(scope: scope, documentKinds: model.document?.detectedKinds ?? [])
+        }
     }
 
     private var emptyMessage: String {
@@ -134,7 +139,8 @@ struct CommandPaletteView: View {
                     .truncationMode(.tail)
                 // Uncategorised transforms are shown under "Scripts" in the sidebar; the
                 // subtitle says the same thing so the two surfaces agree.
-                Text(result.transformer.category ?? TransformCategory.scripts)
+                Text((result.transformer.category ?? TransformCategory.scripts)
+                     + (scope != nil && !TransformCoordinator.canScope(result.transformer) ? " · whole buffer" : ""))
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -189,6 +195,6 @@ struct CommandPaletteView: View {
         guard items.indices.contains(index) else { return }
         let transformer = items[index].transformer
         onClose()
-        model.apply(transformer)
+        model.apply(transformer, scope: scope)
     }
 }
