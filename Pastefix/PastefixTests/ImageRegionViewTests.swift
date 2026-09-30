@@ -121,4 +121,17 @@ struct ImageRegionViewTests {
         CGImageDestinationAddImage(dst, image, [kCGImagePropertyOrientation: 6] as CFDictionary)
         return CGImageDestinationFinalize(dst) ? out as Data : nil
     }
+    @Test func redactThroughThePanelAndUndo() async throws {
+        let f = try ModelFixture(); defer { f.finish() }
+        f.model.beginSession(from: ClipboardSnapshot(plainText: nil, richRTFD: nil, imagePNG: try png()))
+        let window = host(f); defer { window.orderOut(nil) }
+        #expect(await f.eventually { f.model.undoManager != nil })
+        let revision = try #require(f.model.document?.detectionRevision)
+        f.model.apply(LanedRedact(), scope: .image(ImageRegion(x: 10, y: 20, width: 30, height: 40), revision: revision))
+        #expect(await f.eventually { f.model.transformNote == "Redacted 30×40." })
+        #expect(f.model.imageRegionOnScreen == nil)
+        #expect(f.model.document?.imagePNG.flatMap(ImageRegion.orientedPixelSize).map { [$0.width, $0.height] } == [600, 400])
+        #expect(sendUndo(window))
+        #expect(await f.eventually { f.model.imageRegionOnScreen == ImageRegion(x: 10, y: 20, width: 30, height: 40) })
+    }
 }

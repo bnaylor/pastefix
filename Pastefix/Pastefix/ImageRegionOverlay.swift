@@ -4,7 +4,7 @@ import PastefixAppCore
 
 /// The region selection over the fitted image (crop spec). Placed as an `.overlay` on the image
 /// after `.resizable().scaledToFit()`, so its geometry *is* the fitted image rect: no letterbox
-/// offset. One `DragGesture(minimumDistance: 0)`, classified on end: under 3 pt is a tap (outside
+/// offset. One `DragGesture(minimumDistance: 0)`, its start held in `@GestureState`, classified on end: under 3 pt is a tap (outside
 /// the region clears it); otherwise new, move or resize by `RegionGeometry.hit`. Drawn Preview-style
 /// so it reads on dark, light and blue screenshots.
 struct ImageRegionOverlay: View {
@@ -12,8 +12,11 @@ struct ImageRegionOverlay: View {
     let pixelSize: (width: Int, height: Int)
     let enabled: Bool
 
-    @State private var dragHit: RegionHit?
-    @State private var dragOriginal: ImageRegion?
+    /// The drag's classification and the region it started from. `@GestureState`, so SwiftUI resets
+    /// it when the gesture ends *or is cancelled* (the panel losing key, `.disabled` flipping as a
+    /// transform starts); as `@State` a cancelled drag's hit replayed on the next one.
+    @GestureState private var drag: DragStart?
+    private struct DragStart { let hit: RegionHit; let original: ImageRegion? }
 
     var body: some View {
         GeometryReader { geo in
@@ -42,23 +45,24 @@ struct ImageRegionOverlay: View {
             }
             .contentShape(Rectangle())
             .gesture(DragGesture(minimumDistance: 0)
-                .onChanged { value in
-                    if dragHit == nil {
-                        dragHit = RegionGeometry.hit(value.startLocation, selection: rect)
-                        dragOriginal = region
+                .updating($drag) { value, state, _ in
+                    if state == nil {
+                        state = DragStart(hit: RegionGeometry.hit(value.startLocation, selection: rect), original: region)
                     }
-                    guard let hit = dragHit, !RegionGeometry.isTap(from: value.startLocation, to: value.location) else { return }
+                    guard let start = state, !RegionGeometry.isTap(from: value.startLocation, to: value.location) else { return }
                     // In pixels from the original region, so a move or resize never drifts (I1).
-                    if let r = RegionGeometry.draggedRegion(hit, from: value.startLocation, to: value.location,
-                                                            original: dragOriginal, imageFrame: frame, pixelSize: pixelSize) {
+                    if let r = RegionGeometry.draggedRegion(start.hit, from: value.startLocation, to: value.location,
+                                                            original: start.original, imageFrame: frame, pixelSize: pixelSize) {
                         region = r
                     }
                 }
                 .onEnded { value in
-                    // A tap outside the region clears it; a tap inside leaves it.
-                    if RegionGeometry.isTap(from: value.startLocation, to: value.location), dragHit == .new { region = nil }
-                    dragHit = nil
-                    dragOriginal = nil
+                    // A tap outside the region clears it; a tap inside leaves it. Classified from the
+                    // gesture's own start: a tap hasn't moved the region, so no stored state is needed.
+                    if RegionGeometry.isTap(from: value.startLocation, to: value.location),
+                       RegionGeometry.hit(value.startLocation, selection: rect) == .new {
+                        region = nil
+                    }
                 })
             .disabled(!enabled)
         }

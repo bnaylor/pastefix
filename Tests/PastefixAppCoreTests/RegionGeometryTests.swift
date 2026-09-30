@@ -37,6 +37,19 @@ import PastefixCore
         #expect(RegionGeometry.isTap(from: .zero, to: CGPoint(x: 2, y: 2)))
         #expect(!RegionGeometry.isTap(from: .zero, to: CGPoint(x: 3, y: 3)))
     }
+    /// Small regions move from inside; their handles are grabbed from the outer half (redact/blur spec).
+    @Test func smallRegionsMoveFromInside() {
+        let small = CGRect(x: 100, y: 100, width: 10, height: 10)
+        #expect(RegionGeometry.hit(CGPoint(x: 105, y: 105), selection: small) == .move)
+        #expect(RegionGeometry.hit(CGPoint(x: 101, y: 101), selection: small) == .move, "inside, near a corner")
+        #expect(RegionGeometry.hit(CGPoint(x: 98, y: 98), selection: small) == .handle(.topLeft), "just outside the corner")
+        #expect(RegionGeometry.hit(CGPoint(x: 112, y: 105), selection: small) == .handle(.right))
+        let thin = CGRect(x: 100, y: 100, width: 200, height: 12)   // wide but short: still small
+        #expect(RegionGeometry.hit(CGPoint(x: 102, y: 104), selection: thin) == .move)
+        let big = CGRect(x: 100, y: 100, width: 100, height: 100)
+        #expect(RegionGeometry.hit(CGPoint(x: 103, y: 103), selection: big) == .handle(.topLeft), "inside a big region, near a corner")
+        #expect(RegionGeometry.smallRegionSide == 24)
+    }
 }
 
 /// Final review I1: moves and handle drags work in pixels, so a region never drifts. Through

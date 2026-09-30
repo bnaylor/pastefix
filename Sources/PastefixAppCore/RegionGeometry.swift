@@ -8,6 +8,9 @@ public enum RegionHit: Equatable, Sendable { case new, move, handle(RegionHandle
 public enum RegionGeometry {
     public static let handleHitSize: CGFloat = 8
     public static let tapTravel: CGFloat = 3
+    /// Below this on either side, a press inside the region moves it: a handle's 8 pt hit box
+    /// would otherwise cover the whole inside (redact/blur spec).
+    public static let smallRegionSide: CGFloat = 24
 
     public static func handlePoints(_ r: CGRect) -> [(RegionHandle, CGPoint)] {
         [(.topLeft, CGPoint(x: r.minX, y: r.minY)), (.top, CGPoint(x: r.midX, y: r.minY)),
@@ -16,12 +19,18 @@ public enum RegionGeometry {
          (.bottomLeft, CGPoint(x: r.minX, y: r.maxY)), (.left, CGPoint(x: r.minX, y: r.midY))]
     }
 
-    /// Handles first (they sit on and just outside the edge), then inside to move, else a new region.
+    /// The nearest handle within 8 pt wins, except that inside a small region a press moves it (so
+    /// small regions are resized from their handles' outer half); then inside moves, else a new
+    /// region. Nearest, not first in list order: on a small region the hit boxes overlap, and the
+    /// first match could be a neighbouring handle.
     public static func hit(_ p: CGPoint, selection: CGRect?) -> RegionHit {
         guard let r = selection else { return .new }
-        if let handle = handlePoints(r).first(where: { abs($0.1.x - p.x) <= handleHitSize && abs($0.1.y - p.y) <= handleHitSize }) {
-            return .handle(handle.0)
-        }
+        let small = r.width < smallRegionSide || r.height < smallRegionSide
+        if small, r.contains(p) { return .move }
+        let near = handlePoints(r)
+            .filter { abs($0.1.x - p.x) <= handleHitSize && abs($0.1.y - p.y) <= handleHitSize }
+            .min { hypot($0.1.x - p.x, $0.1.y - p.y) < hypot($1.1.x - p.x, $1.1.y - p.y) }
+        if let near { return .handle(near.0) }
         return r.contains(p) ? .move : .new
     }
 
