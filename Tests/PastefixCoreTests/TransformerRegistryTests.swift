@@ -3,15 +3,11 @@ import Foundation
 @testable import PastefixCore
 
 @Suite struct TransformerRegistryTests {
-    private func makeTempDir() throws -> URL {
-        let dir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("pfx-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir
-    }
+    /// Removed when the returned value goes away; keep it for the whole test (see `TemporaryDirectory`).
+    private func makeTempDir() throws -> TemporaryDirectory { try TemporaryDirectory("pfx") }
 
     @Test func loadsBuiltinsInOrderWhenNoScripts() throws {
-        let dir = try makeTempDir()
+        let tmp = try makeTempDir(); let dir = tmp.url
         let reg = TransformerRegistry(config: .init(scriptsDirectory: dir, wrapWidth: 400))
         let ids = reg.load().map(\.id)
         #expect(ids == [
@@ -30,7 +26,7 @@ import Foundation
     }
 
     @Test func discoversAndOrdersScriptsAmongBuiltins() throws {
-        let dir = try makeTempDir()
+        let tmp = try makeTempDir(); let dir = tmp.url
         try "#!/bin/sh\n# pastefix: name = Early\n# pastefix: order = 5\ncat".write(
             to: dir.appendingPathComponent("early.sh"), atomically: true, encoding: .utf8)
         try "/* pastefix: name = LateJS */\nfunction transform(t){return t;}".write(
@@ -44,7 +40,7 @@ import Foundation
     }
 
     @Test func excludesDisabledScripts() throws {
-        let dir = try makeTempDir()
+        let tmp = try makeTempDir(); let dir = tmp.url
         try "#!/bin/sh\n# pastefix: name = Off\n# pastefix: enabled = false\ncat".write(
             to: dir.appendingPathComponent("off.sh"), atomically: true, encoding: .utf8)
         let reg = TransformerRegistry(config: .init(scriptsDirectory: dir, wrapWidth: 80))
@@ -59,7 +55,7 @@ import Foundation
     }
 
     @Test func scriptKindsSurfaceAsApplicableKinds() throws {
-        let dir = try makeTempDir()
+        let tmp = try makeTempDir(); let dir = tmp.url
         try "#!/bin/sh\n# pastefix: name = URLy\n# pastefix: kinds = url\ncat".write(
             to: dir.appendingPathComponent("urly.sh"), atomically: true, encoding: .utf8)
         try "// pastefix: name = Plain\nfunction transform(t){return t;}".write(
@@ -71,7 +67,7 @@ import Foundation
     }
 
     @Test func builtinsCarryTheirCategories() throws {
-        let dir = try makeTempDir()
+        let tmp = try makeTempDir(); let dir = tmp.url
         let byID = Dictionary(uniqueKeysWithValues: TransformerRegistry(config: .init(scriptsDirectory: dir, wrapWidth: 80)).load().map { ($0.id, $0.category) })
         #expect(byID["builtin.wrapreflow"] == TransformCategory.layout)
         #expect(byID["builtin.whitespace"] == TransformCategory.layout)
@@ -101,7 +97,7 @@ import Foundation
     }
 
     @Test func scriptCategorySurfaces() throws {
-        let dir = try makeTempDir()
+        let tmp = try makeTempDir(); let dir = tmp.url
         try "#!/bin/sh\n# pastefix: name = Cat\n# pastefix: category = Text\ncat".write(to: dir.appendingPathComponent("cat.sh"), atomically: true, encoding: .utf8)
         try "// pastefix: name = NoCat\nfunction transform(t){return t;}".write(to: dir.appendingPathComponent("nocat.js"), atomically: true, encoding: .utf8)
         let loaded = TransformerRegistry(config: .init(scriptsDirectory: dir, wrapWidth: 80)).load()
