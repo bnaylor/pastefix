@@ -61,3 +61,19 @@ public enum ImageTransformLane {
         return try result.get()
     }
 }
+
+/// An image transform that acts on a selected region (crop now; redact later). The region comes in
+/// on `TransformInput.region`, and is nil when nothing is selected, which the transform explains.
+public protocol RegionImageTransformer: ImageTransformer {
+    func transformImage(_ png: Data, region: ImageRegion?) throws -> TransformOutput
+}
+
+public extension RegionImageTransformer {
+    func transformImage(_ png: Data) throws -> TransformOutput { try transformImage(png, region: nil) }
+
+    func transform(_ input: TransformInput) async throws -> TransformOutput {
+        guard let png = input.image else { throw TransformError.invalidInput("\(name) needs an image.") }
+        let region = input.region
+        return try await ImageTransformLane.run(on: lane) { try self.transformImage(png, region: region) }
+    }
+}

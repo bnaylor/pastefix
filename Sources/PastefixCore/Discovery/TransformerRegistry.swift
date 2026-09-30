@@ -57,6 +57,7 @@ public struct TransformerRegistry {
             (110, "Redact Secrets", RedactSecrets()),
             (111, "Strip Image Metadata", StripImageMetadata()),
             (112, "Extract Text (OCR)", ExtractText()),
+            (113, "Crop to Selection", CropToSelection()),
         ]
 
         // Presets sit after every built-in (band 900) and before discovered scripts (1000+).
