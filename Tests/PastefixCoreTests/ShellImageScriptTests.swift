@@ -6,11 +6,9 @@ import ImageIO
 /// #67: a shell script can declare `accepts = image` and receive the session's image — as a PNG
 /// file path in `PASTEFIX_IMAGE` — returning an image or text on stdout.
 @Suite struct ShellImageScriptTests {
-    private let dir: URL = {
-        let d = FileManager.default.temporaryDirectory.appendingPathComponent("pfx-imgscript-\(UUID().uuidString)")
-        try? FileManager.default.createDirectory(at: d, withIntermediateDirectories: true)
-        return d
-    }()
+    /// Recreated per test with the suite, and removed with it (see `TemporaryDirectory`).
+    private let tmp = try! TemporaryDirectory("pfx-imgscript")
+    private var dir: URL { tmp.url }
 
     private func script(_ body: String, accepts: String? = "image", name: String = "s.sh") throws -> URL {
         let url = dir.appendingPathComponent(name)
