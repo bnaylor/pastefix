@@ -89,10 +89,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         .appendingPathComponent("Pastefix/history", isDirectory: true)
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        // First: be the only Pastefix (#136). Two copies both answer the global hotkeys and write
-        // the same history; a new copy replaces the old one.
-        InstanceReplacement.replaceOtherInstances()
-
         // Sparkle: scheduled daily checks start here, after launch, per Sparkle's guidance.
         updater.start()
 

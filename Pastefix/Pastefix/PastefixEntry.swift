@@ -24,6 +24,8 @@ enum PastefixEntry {
         if hosting {
             TestHostApp.main()
         } else {
+            // Before the app exists — its Settings scene opens history during App.body (#136).
+            InstanceReplacement.replaceOlderInstances()
             PastefixApp.main()
         }
     }

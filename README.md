@@ -448,7 +448,7 @@ A preset whose pattern matches the empty string applies its replacement at every
 
 ## Known limitations and gotchas
 
-**One copy at a time.** Only one Pastefix runs at once. Opening another copy, such as a different build or a second launch, quits the one already running, so a shortcut never opens two panels.
+**One copy at a time.** Only one Pastefix runs at once. Opening another copy, such as a different build or a second launch, quits the one already running, so a shortcut never opens two panels. A copy from before this release doesn't know to do this, but the next new copy you open still replaces it.
 
 **Secrets**
 
