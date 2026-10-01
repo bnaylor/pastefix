@@ -5,8 +5,10 @@ import CoreGraphics
 /// orientation applied first, so "right" is right as the user sees it). Exact: the image is drawn
 /// once through an affine map whose entries are 0, ±1 and whole-pixel offsets — built by hand, not
 /// with `rotate(by: .pi / 2)`, whose cos is 6e-17 rather than 0 — with interpolation off, so every
-/// pixel moves to its new place unchanged. Colour space and depth follow the source
-/// (`OrientedSource`); the re-encode drops metadata.
+/// pixel moves to its new place without resampling. Colour space and depth follow the source
+/// (`OrientedSource`), with that bitmap's limits: opaque pixels are byte-exact, semi-transparent
+/// ones go through premultiplication once (then stay stable over further turns), and greyscale is
+/// drawn in sRGB. The re-encode drops metadata.
 public struct ReorientImage: ImageTransformer {
     public enum Kind: Sendable { case rotateLeft, rotateRight, flipHorizontal, flipVertical }
 
