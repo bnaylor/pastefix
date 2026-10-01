@@ -107,10 +107,13 @@ import ImageIO
     @Test func outputOverTheCapIsAFailureNotAHang() async throws {
         let url = try script("yes | head -c 100000\n", accepts: nil)
         let start = ContinuousClock.now
+        // A hang would run to the timeout, so the timeout is made far longer than the bound (60 s against
+        // 30 s): the cap failing to stop the script fails clearly, and load can't reach the bound — under
+        // a loaded full suite this took 3.0–3.5 s against an old 3 s bound with a 5 s timeout (#132).
         await #expect(throws: TransformError.scriptFailed("the script's output is over 1 KB")) {
-            try await ShellRunner.runData(scriptURL: url, stdin: Data(), timeout: 5, maxOutputBytes: 1_024)
+            try await ShellRunner.runData(scriptURL: url, stdin: Data(), timeout: 60, maxOutputBytes: 1_024)
         }
-        #expect(ContinuousClock.now - start < .seconds(3))
+        #expect(ContinuousClock.now - start < .seconds(30))
     }
 
     // MARK: registry
