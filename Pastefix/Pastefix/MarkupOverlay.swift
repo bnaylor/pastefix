@@ -118,8 +118,10 @@ struct MarkupOverlay: View {
             context.blendMode = .normal
         case .arrow where mark.points.count >= 2:
             let tail = v(mark.points[0]), tip = v(mark.points[1])
-            let head = MarkGeometry.arrowHead(tail: tail, tip: tip, stroke: max(stroke, 1))
-            context.stroke(Path { $0.move(to: tail); $0.addLine(to: head.base) }, with: .color(color), style: style)
+            let arrowStroke = max(Double(MarkGeometry.arrowStrokeWidth(longerSide: longer)) * scale, 1)
+            let head = MarkGeometry.arrowHead(tail: tail, tip: tip, stroke: arrowStroke)
+            context.stroke(Path { $0.move(to: tail); $0.addLine(to: head.base) }, with: .color(color),
+                           style: StrokeStyle(lineWidth: arrowStroke, lineCap: .round, lineJoin: .round))
             context.fill(Path { $0.move(to: head.tip); $0.addLine(to: head.left); $0.addLine(to: head.right); $0.closeSubpath() }, with: .color(color))
         case .freehand:
             let pts = MarkGeometry.thinned(mark.points.map(v), minDistance: 1)

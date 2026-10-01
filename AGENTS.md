@@ -142,7 +142,7 @@ Sources/PastefixCore/
     RegexPresetTransformer.swift      #   RegexPresetTransformer: preset:<uuid> id, .preset(id) source, category presets, order 900 (registry-assigned, name-sorted); 256 KB input cap (checkInputSize, applied by apply AND preview), 2 MB output cap, 3 s deadline checked in-block via enumerateMatches(options: [.reportProgress]) — apply runs the deadline check under Deadline.run, the only sanctioned deadline race; replace returns (output, matches) so the public preview(_:preset:deadline:) wrapper is one pass under one deadline
   Annotate/
     ImageMark.swift                   # annotate: ImagePoint + ImageMark (tool box/arrow/text/highlight/freehand, colour red/yellow/blue/black/white, points in ORIENTED image pixels top-left, text); tool names = undo names; notes "Box added." etc.; colour halo rule
-    MarkGeometry.swift                #   pure: stroke max(2, L/250), font max(12, L/40), halo max(1, stroke/2) (L = longer side, .rounded()); arrowHead (4×/3× stroke); thinned (1 px, keeps ends); smoothPath (quads through midpoints)
+    MarkGeometry.swift                #   pure: stroke max(2, L/250), font max(12, L/40), halo max(1, stroke/2) (L = longer side, .rounded()); arrowStrokeWidth = 1.5× stroke (owner: arrows a little thicker), arrowHead (4×/3× the ARROW stroke); thinned (1 px, keeps ends); smoothPath (quads through midpoints)
     MarkRenderer.swift                #   draws one mark into OrientedSource's bitmap (y flipped); highlighter = sRGB (1, .9, 0, .45) MULTIPLY, ignores the swatch; text via Core Text, halo = stroke-only pass under the fill
   Detection/
     ContentKind.swift                 # url | json | color | jwt | base64 | percentEncoded | htmlEntities | markdown | secret (+ displayName)

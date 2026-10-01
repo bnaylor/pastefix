@@ -29,7 +29,9 @@ enum MarkRenderer {
             ctx.fill(CGRect(x: min(a.x, b.x), y: min(a.y, b.y), width: abs(b.x - a.x), height: abs(b.y - a.y)))
         case .arrow:
             let tail = flip(mark.points[0]), tip = flip(mark.points[1])
-            let head = MarkGeometry.arrowHead(tail: tail, tip: tip, stroke: stroke)
+            let arrowStroke = CGFloat(MarkGeometry.arrowStrokeWidth(longerSide: longer))
+            ctx.setLineWidth(arrowStroke)
+            let head = MarkGeometry.arrowHead(tail: tail, tip: tip, stroke: arrowStroke)
             ctx.move(to: tail); ctx.addLine(to: head.base); ctx.strokePath()
             ctx.move(to: head.tip); ctx.addLine(to: head.left); ctx.addLine(to: head.right); ctx.closePath(); ctx.fillPath()
         case .freehand:
