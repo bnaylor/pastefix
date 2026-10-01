@@ -21,3 +21,23 @@ struct LanedStripMetadata: ImageTransformer {
     let lane = ImageTransformLane.makeLane(label: "test.strip")
     func transformImage(_ png: Data) throws -> TransformOutput { try StripImageMetadata().transformImage(png) }
 }
+
+struct LanedRedact: RegionImageTransformer {
+    let id = "builtin.redactselection"; let name = "Redact Selection"; let requiresRichInput = false
+    let source: TransformerSource = .builtin
+    let category: String? = TransformCategory.images
+    let lane = ImageTransformLane.makeLane(label: "test.redact")
+    func transformImage(_ png: Data, region: ImageRegion?) throws -> TransformOutput {
+        try RedactSelection().transformImage(png, region: region)
+    }
+}
+
+struct LanedBlur: RegionImageTransformer {
+    let id = "builtin.blurselection"; let name = "Blur Selection"; let requiresRichInput = false
+    let source: TransformerSource = .builtin
+    let category: String? = TransformCategory.images
+    let lane = ImageTransformLane.makeLane(label: "test.blur")
+    func transformImage(_ png: Data, region: ImageRegion?) throws -> TransformOutput {
+        try BlurSelection().transformImage(png, region: region)
+    }
+}
