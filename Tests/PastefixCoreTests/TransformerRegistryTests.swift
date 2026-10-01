@@ -24,6 +24,7 @@ import Foundation
             "builtin.extracttext",
             "builtin.crop",
             "builtin.redactselection", "builtin.blurselection",
+            "builtin.rotateleft", "builtin.rotateright", "builtin.fliphorizontal", "builtin.flipvertical",
         ])
     }
 
@@ -53,7 +54,7 @@ import Foundation
         let dir = FileManager.default.temporaryDirectory
             .appendingPathComponent("does-not-exist-\(UUID().uuidString)")
         let reg = TransformerRegistry(config: .init(scriptsDirectory: dir, wrapWidth: 80))
-        #expect(reg.load().count == 33)   // built-ins only, no crash
+        #expect(reg.load().count == 37)   // built-ins only, no crash
     }
 
     @Test func scriptKindsSurfaceAsApplicableKinds() throws {

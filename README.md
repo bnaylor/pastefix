@@ -100,13 +100,14 @@ Open Settings with ⌘, or **Settings…** in the menu. All settings persist in 
 
 A clipboard holding only a picture opens the panel as a picture instead of an empty editor. Save puts it back unchanged. What you see follows the content, not a mode you pick: anything with real text opens the editor, and an image alongside that text is carried along for Save even though it isn't shown.
 
-Five image transforms appear in the palette for a picture:
+These image transforms appear in the palette for a picture:
 
 - **Strip Image Metadata** removes location, camera and other metadata, tells you what it removed (or that there was nothing to remove), and puts the clean image on the clipboard when you Save. ⌘Z brings the original back. Your history still holds the original you copied, metadata and all, until you remove it (⌘⌫ in the history overlay).
 - **Extract Text (OCR)** reads the text in the picture and puts it in the editor in place of the picture. If it finds nothing, it says so rather than emptying the editor. ⌘Z undoes any typing you've done since, then brings the picture back.
 - **Crop to Selection** keeps only the part of the picture you selected. Drag on the picture to select part of it: drag the handles to adjust, drag inside to move it, and press Esc or click outside it to clear it. The footer shows the selection's size and position in the image's real pixels. Then choose **Crop to Selection** in ⌘K or the sidebar. The crop is one undo step: ⌘Z brings back the whole picture and your selection. Cropping keeps the picture's colours and drops its metadata, the same as Strip Image Metadata.
 - **Redact Selection** covers the part of the picture you selected with a solid black box. Use it to hide a password, a token, a name or anything else before you share a screenshot. Select the way you do for cropping. ⌘Z brings back what was there and your selection. Your history still holds the picture as you copied it, unredacted, until you remove it (⌘⌫ in the history overlay).
 - **Blur Selection** blurs the part you selected. It's for tidying a picture, not hiding things: blurred text can often be read back, so use Redact Selection for anything secret.
+- **Rotate Left**, **Rotate Right**, **Flip Horizontal** and **Flip Vertical** turn or mirror the whole picture without blurring it: every pixel just moves. ⌘Z undoes each one.
 
 A photo copied from Photos opens as a picture, even though Photos also puts a file reference on the clipboard. A file copied in Finder and a picture embedded in formatted text do not; see [Known limitations](#known-limitations-and-gotchas).
 
@@ -235,7 +236,7 @@ On a very large paste the panel appears first, and the `Detected:` label and sec
 
 ### Built-in transforms
 
-Thirty built-in transforms, grouped in the sidebar by category in this order. Your regex presets follow under **Presets**, then any custom script categories alphabetically, then **Scripts**.
+Thirty-seven built-in transforms, grouped in the sidebar by category in this order. Your regex presets follow under **Presets**, then any custom script categories alphabetically, then **Scripts**.
 
 | Category | Transforms |
 |---|---|
@@ -247,7 +248,7 @@ Thirty built-in transforms, grouped in the sidebar by category in this order. Yo
 | Data | JSON Prettify, JSON Minify, Escape as JSON String, Base64 Encode, Base64 Decode, URL Encode, URL Decode, HTML Encode, HTML Decode, Decode JWT |
 | Colors | Color → CSS Hex, Color → CSS rgb(), Color → CSS hsl(), Color → SwiftUI Color |
 | Privacy | Redact Secrets, Strip Image Metadata |
-| Images | Extract Text (OCR), Crop to Selection, Redact Selection, Blur Selection |
+| Images | Extract Text (OCR), Crop to Selection, Redact Selection, Blur Selection, Rotate Left, Rotate Right, Flip Horizontal, Flip Vertical |
 
 #### Layout
 
@@ -311,10 +312,11 @@ All four accept `#hex`, `rgb()`/`rgba()` and `hsl()`/`hsla()`, in comma-separate
 
 #### Images
 
-- **Extract Text (OCR):** see [Images](#images).
+- **Extract Text (OCR):** see [Images](#images). Recognition runs on your Mac with Apple's Vision framework.
 - **Crop to Selection:** see [Images](#images).
 - **Redact Selection:** see [Images](#images).
-- **Blur Selection:** see [Images](#images). Recognition runs on your Mac with Apple's Vision framework.
+- **Blur Selection:** see [Images](#images).
+- **Rotate Left, Rotate Right, Flip Horizontal, Flip Vertical:** see [Images](#images).
 
 ### User scripts
 

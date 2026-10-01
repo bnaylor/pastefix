@@ -40,14 +40,20 @@ struct OrientedSource {
     /// sRGB when the space isn't RGB (greyscale), which can't back an RGBA context. Premultiplied,
     /// as every CG RGBA bitmap is, so a semi-transparent pixel's colour can shift by rounding.
     static func bitmap(for image: CGImage) -> CGContext? {
+        guard let ctx = emptyBitmap(like: image, width: image.width, height: image.height) else { return nil }
+        ctx.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+        return ctx
+    }
+
+    /// An empty `width`×`height` RGBA bitmap matching `image`'s colour space and depth, as `bitmap(for:)`
+    /// makes it: for a transform whose output has a different shape (rotate).
+    static func emptyBitmap(like image: CGImage, width: Int, height: Int) -> CGContext? {
         let own = image.colorSpace.flatMap { $0.model == .rgb ? $0 : nil }
         let deep = image.bitsPerComponent > 8
         let info = CGImageAlphaInfo.premultipliedLast.rawValue | (deep ? CGBitmapInfo.byteOrder16Little.rawValue : 0)
-        guard let space = own ?? CGColorSpace(name: CGColorSpace.sRGB),
-              let ctx = CGContext(data: nil, width: image.width, height: image.height, bitsPerComponent: deep ? 16 : 8,
-                                  bytesPerRow: 0, space: space, bitmapInfo: info) else { return nil }
-        ctx.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
-        return ctx
+        guard let space = own ?? CGColorSpace(name: CGColorSpace.sRGB) else { return nil }
+        return CGContext(data: nil, width: width, height: height, bitsPerComponent: deep ? 16 : 8,
+                         bytesPerRow: 0, space: space, bitmapInfo: info)
     }
 
     /// `region` (top-left origin) as a rect in a bitmap of this height (bottom-left origin).
