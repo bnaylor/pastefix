@@ -60,7 +60,18 @@ final class AppModel: ObservableObject {
     /// no entry, so undo or redo clears it. `PanelView` shows one banner: error first, then this,
     /// then the notice.
     @Published var transformNote: String?
-    @Published private(set) var isApplying = false
+    @Published private(set) var isApplying = false {
+        didSet {
+            guard oldValue, !isApplying else { return }
+            // An apply just ended: if it was a mark, that mark is done, landed or failed (a failed
+            // one is dropped; its error shows as usual). Then the next one (annotate spec).
+            if markInFlight {
+                markInFlight = false
+                if !pendingMarks.isEmpty { pendingMarks.removeFirst() }
+            }
+            drainMarks()
+        }
+    }
     /// The panel window, set by `WindowUndoBinding`. Its undo manager is the ONE stack for the
     /// editor's typing and for transforms (#103): the TextEditor's typing undo already lives there,
     /// so transforms register there too, and ⌘Z — Edit ▸ Undo, up the responder chain — walks both in
@@ -100,6 +111,32 @@ final class AppModel: ObservableObject {
     @Published var pendingSelection: PendingSelection?
     /// The region ⌘Z restores on the image entry it names (crop spec); `PanelView` consumes it.
     @Published var pendingImageRegion: PendingImageRegion?
+    /// Markup marks waiting to be burned in (annotate spec), in order. The head applies when no apply
+    /// is running; each is one undo step. Never dropped by a fast second stroke, emptied at session
+    /// boundaries (`resetUndo`).
+    @Published private(set) var pendingMarks: [ImageMark] = []
+    /// True while the head of `pendingMarks` is the apply in flight.
+    private var markInFlight = false
+    /// The lane `AnnotateImage` runs on: the shared image lane; tests give it a private one.
+    var annotateLane: ImageTransformLane.Lane = ImageTransformLane.shared
+    /// The markup tool and colour, for the app's run (not saved, not published: `PanelView` owns
+    /// the live copies and writes them back).
+    var markupTool: ImageMark.Tool = .box
+    var markupColor: ImageMark.Color = .red
+    /// A write-only mirror of `PanelView`'s markup mode, for the hosted tests (as `imageRegionOnScreen`).
+    var markupModeOnScreen = false
+
+    func enqueueMark(_ mark: ImageMark) {
+        pendingMarks.append(mark)
+        drainMarks()
+    }
+
+    /// Applies the queue's head if nothing is applying. Called on enqueue and whenever an apply ends.
+    private func drainMarks() {
+        guard !isApplying, !markInFlight, let next = pendingMarks.first, document != nil else { return }
+        markInFlight = true
+        apply(AnnotateImage(next, lane: annotateLane))
+    }
     /// A write-only mirror of the region `PanelView` holds, for the hosted tests: SwiftUI builds no
     /// accessibility tree in-process, so they can't read the footer. The app never reads it, and it
     /// isn't `@Published`, so writing it re-renders nothing (the #25 lesson about selection state).
@@ -394,7 +431,9 @@ final class AppModel: ObservableObject {
             // Only an apply that changed something is a use (#26): failures, "nothing to do" and an
             // unchanged buffer don't make a transform rank higher.
             switch outcome {
-            case .applied, .appliedWithNote: self.settings.recordTransformUse(transformer.id)
+            case .applied, .appliedWithNote:
+                // A markup mark isn't a transform the user chose from a list (annotate spec).
+                if !(transformer is AnnotateImage) { self.settings.recordTransformUse(transformer.id) }
             case .unchanged, .nothingToDo, .failed: break
             }
             switch outcome {
@@ -774,6 +813,8 @@ final class AppModel: ObservableObject {
     private func resetUndo() {
         pendingSelection = nil
         pendingImageRegion = nil
+        pendingMarks = []
+        markInFlight = false
         undoManager?.removeAllActions()
         breakTypingCoalescing()
         refreshUndoState()
