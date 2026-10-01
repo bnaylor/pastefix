@@ -16,6 +16,8 @@ struct MarkupConfig {
     /// Marks queued but not yet burned in, previewed so a fast stroke is visible at once.
     let pending: [ImageMark]
     let textDraft: Binding<TextDraft?>
+    /// The size a new label is drawn at (#135).
+    var textSize: ImageMark.TextSize = .m
     /// False while a transform the user chose runs (`AppModel.isApplyingNonMark`).
     var enabled: Bool = true
     let onMark: (ImageMark) -> Void
@@ -53,8 +55,7 @@ struct MarkupOverlay: View {
                     // a field here: an AppKit text field inside this view stops SwiftUI delivering the
                     // drag gesture at all (measured), so "click elsewhere to finish" couldn't work.
                     Text(draft.text.isEmpty ? "Type a label…" : draft.text)
-                        .font(.system(size: Double(MarkGeometry.fontSize(longerSide: max(pixelSize.width, pixelSize.height))) * scale,
-                                      weight: .bold))
+                        .font(.system(size: Self.previewFontSize(config.textSize, pixelSize: pixelSize, scale: scale), weight: .bold))
                         .foregroundStyle(draft.text.isEmpty ? Color.secondary : swiftUIColor(config.color))
                         .fixedSize()
                         .offset(x: draft.viewPoint.x, y: draft.viewPoint.y)
@@ -87,6 +88,15 @@ struct MarkupOverlay: View {
                 })
             .disabled(!config.enabled)
         }
+        // Clipped to the image: a label that runs off the edge is cut there when burned in, so the
+        // preview must not spill onto the panel and show it whole (#135 review).
+        .clipped()
+    }
+
+    /// A label's preview font size, in view points: the renderer's pixels for that size × the display
+    /// scale. The one place both previews take it from, so they can't drift from what's burned in.
+    static func previewFontSize(_ size: ImageMark.TextSize, pixelSize: (width: Int, height: Int), scale: Double) -> Double {
+        Double(MarkGeometry.fontSize(longerSide: max(pixelSize.width, pixelSize.height), size: size)) * scale
     }
 
     private func commitText() {
@@ -94,7 +104,7 @@ struct MarkupOverlay: View {
         config.textDraft.wrappedValue = nil
         let text = draft.text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
-        config.onMark(ImageMark(tool: .text, color: config.color, points: [draft.point], text: text))
+        config.onMark(ImageMark(tool: .text, color: config.color, points: [draft.point], text: text, textSize: config.textSize))
     }
 
     private func swiftUIColor(_ c: ImageMark.Color) -> Color { Color(.sRGB, red: c.rgb.r, green: c.rgb.g, blue: c.rgb.b) }
@@ -128,7 +138,7 @@ struct MarkupOverlay: View {
             context.stroke(Path(MarkGeometry.smoothPath(pts)), with: .color(color), style: style)
         case .text:
             if let text = mark.text, let p = mark.points.first {
-                let size = Double(MarkGeometry.fontSize(longerSide: longer)) * scale
+                let size = Self.previewFontSize(mark.textSize, pixelSize: pixelSize, scale: scale)
                 context.draw(Text(text).font(.system(size: size, weight: .bold)).foregroundStyle(color), at: v(p), anchor: .topLeading)
             }
         default:

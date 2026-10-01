@@ -142,13 +142,14 @@ struct MarkupReviewFixTests {
     final class StripBox: ObservableObject {
         @Published var tool: ImageMark.Tool = .text
         @Published var color: ImageMark.Color = .red
+        @Published var size: ImageMark.TextSize = .m
         @Published var draft: TextDraft? = TextDraft(point: ImagePoint(x: 10, y: 10), viewPoint: .zero, text: "half-typed")
         var committed = 0
     }
     private struct StripHost: View {
         @ObservedObject var box: StripBox
         var body: some View {
-            MarkupStrip(tool: $box.tool, color: $box.color, textDraft: $box.draft, commitText: { box.committed += 1 }, done: {})
+            MarkupStrip(tool: $box.tool, color: $box.color, textDraft: $box.draft, textSize: $box.size, commitText: { box.committed += 1 }, done: {})
                 .frame(width: 640)
         }
     }

@@ -112,6 +112,7 @@ final class AppModel: ObservableObject {
     /// the live copies and writes them back).
     var markupTool: ImageMark.Tool = .box
     var markupColor: ImageMark.Color = .red
+    var markupTextSize: ImageMark.TextSize = .m
     /// A write-only mirror of `PanelView`'s markup mode, for the hosted tests (as `imageRegionOnScreen`).
     var markupModeOnScreen = false
     /// Whether `PanelView` has a markup label open: a write-only mirror for the hosted tests.

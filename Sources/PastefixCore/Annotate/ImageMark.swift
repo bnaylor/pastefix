@@ -13,14 +13,20 @@ public struct ImagePoint: Sendable, Equatable, Codable {
 public struct ImageMark: Sendable, Equatable, Codable {
     public enum Tool: String, Sendable, Codable, CaseIterable { case box, arrow, text, highlight, freehand }
     public enum Color: String, Sendable, Codable, CaseIterable { case red, yellow, blue, black, white }
+    /// A label's size (#135): S/M/L/XL, multiples of the base text size. M is the default.
+    public enum TextSize: String, Sendable, Codable, CaseIterable { case s, m, l, xl }
 
     public let tool: Tool
     public let color: Color
     public let points: [ImagePoint]
     public let text: String?
+    /// The label's size, chosen when the label was drawn: a queued label is burned at it even if the
+    /// strip's size has changed since. (Undo and redo restore image snapshots; they don't re-render.)
+    /// Ignored by shapes.
+    public let textSize: TextSize
 
-    public init(tool: Tool, color: Color, points: [ImagePoint], text: String? = nil) {
-        self.tool = tool; self.color = color; self.points = points; self.text = text
+    public init(tool: Tool, color: Color, points: [ImagePoint], text: String? = nil, textSize: TextSize = .m) {
+        self.tool = tool; self.color = color; self.points = points; self.text = text; self.textSize = textSize
     }
 }
 
@@ -44,6 +50,18 @@ public extension ImageMark.Tool {
         case .freehand: "Drawing added."
         }
     }
+}
+
+public extension ImageMark.TextSize {
+    var scale: Double {
+        switch self {
+        case .s: 1
+        case .m: 1.5
+        case .l: 2
+        case .xl: 3
+        }
+    }
+    var label: String { rawValue.uppercased() }
 }
 
 public extension ImageMark.Color {
