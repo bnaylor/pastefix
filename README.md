@@ -108,6 +108,7 @@ These image transforms appear in the palette for a picture:
 - **Redact Selection** covers the part of the picture you selected with a solid black box. Use it to hide a password, a token, a name or anything else before you share a screenshot. Select the way you do for cropping. ⌘Z brings back what was there and your selection. Your history still holds the picture as you copied it, unredacted, until you remove it (⌘⌫ in the history overlay).
 - **Blur Selection** blurs the part you selected. It's for tidying a picture, not hiding things: blurred text can often be read back, so use Redact Selection for anything secret.
 - **Rotate Left**, **Rotate Right**, **Flip Horizontal** and **Flip Vertical** turn or mirror the whole picture without blurring it: every pixel just moves. ⌘Z undoes each one.
+- **Scale to 50%** and **Fit Within 1920 px** make the picture smaller for pasting into chat or a web page. Fewer pixels is what shrinks those pastes: halving a Retina screenshot cuts it to about a quarter of the size. The result stays a PNG, so it pastes everywhere. Fit Within 1920 px only shrinks a picture whose longer side is over 1920 pixels.
 
 A photo copied from Photos opens as a picture, even though Photos also puts a file reference on the clipboard. A file copied in Finder and a picture embedded in formatted text do not; see [Known limitations](#known-limitations-and-gotchas).
 
@@ -236,7 +237,7 @@ On a very large paste the panel appears first, and the `Detected:` label and sec
 
 ### Built-in transforms
 
-Thirty-seven built-in transforms, grouped in the sidebar by category in this order. Your regex presets follow under **Presets**, then any custom script categories alphabetically, then **Scripts**.
+Thirty-nine built-in transforms, grouped in the sidebar by category in this order. Your regex presets follow under **Presets**, then any custom script categories alphabetically, then **Scripts**.
 
 | Category | Transforms |
 |---|---|
@@ -248,7 +249,7 @@ Thirty-seven built-in transforms, grouped in the sidebar by category in this ord
 | Data | JSON Prettify, JSON Minify, Escape as JSON String, Base64 Encode, Base64 Decode, URL Encode, URL Decode, HTML Encode, HTML Decode, Decode JWT |
 | Colors | Color → CSS Hex, Color → CSS rgb(), Color → CSS hsl(), Color → SwiftUI Color |
 | Privacy | Redact Secrets, Strip Image Metadata |
-| Images | Extract Text (OCR), Crop to Selection, Redact Selection, Blur Selection, Rotate Left, Rotate Right, Flip Horizontal, Flip Vertical |
+| Images | Extract Text (OCR), Crop to Selection, Redact Selection, Blur Selection, Rotate Left, Rotate Right, Flip Horizontal, Flip Vertical, Scale to 50%, Fit Within 1920 px |
 
 #### Layout
 
@@ -317,6 +318,7 @@ All four accept `#hex`, `rgb()`/`rgba()` and `hsl()`/`hsla()`, in comma-separate
 - **Redact Selection:** see [Images](#images).
 - **Blur Selection:** see [Images](#images).
 - **Rotate Left, Rotate Right, Flip Horizontal, Flip Vertical:** see [Images](#images).
+- **Scale to 50%, Fit Within 1920 px:** see [Images](#images).
 
 ### User scripts
 
