@@ -60,6 +60,29 @@ import ImageIO
         #expect(isWhite(RedactBlurTests.at(b, 600, 457)))
     }
 
+    /// #135: label sizes S/M/L/XL are 1×/1.5×/2×/3× the base (L/40); the halo scales with the font.
+    @Test func labelSizes() {
+        let sizes = ImageMark.TextSize.allCases.map { MarkGeometry.fontSize(longerSide: 1200, size: $0) }
+        #expect(sizes == [30, 45, 60, 90])
+        #expect(ImageMark.TextSize.allCases.map { MarkGeometry.fontSize(longerSide: 400, size: $0) } == [12, 18, 24, 36])
+        #expect(MarkGeometry.haloWidth(fontSize: 12) == 1 && MarkGeometry.haloWidth(fontSize: 30) == 3 && MarkGeometry.haloWidth(fontSize: 90) == 9)
+        #expect(ImageMark(tool: .text, color: .red, points: [], text: "x").textSize == .m, "M is the default")
+    }
+
+    @Test func anXLLabelIsBiggerThanAnSOne() async throws {
+        let png = try Self.page(1200, 900)
+        func redHeight(_ size: ImageMark.TextSize) async throws -> Int {
+            let (out, _) = try await mark(ImageMark(tool: .text, color: .red, points: [ImagePoint(x: 100, y: 100)], text: "Hello", textSize: size), on: png)
+            let b = try RedactBlurTests.pixels(out)
+            var rows = Set<Int>()
+            for y in 0..<b.h { for x in 0..<b.w where isRed(RedactBlurTests.at(b, x, y)) { rows.insert(y) } }
+            #expect(rows.allSatisfy { $0 >= 90 }, "nothing above the label's top")
+            return (rows.max() ?? 0) - (rows.min() ?? 0)
+        }
+        let s = try await redHeight(.s), xl = try await redHeight(.xl)
+        #expect(s > 10 && xl > s * 5 / 2, "S \(s) px, XL \(xl) px")
+    }
+
     @Test func arrowHeadPoints() {
         let h = MarkGeometry.arrowHead(tail: CGPoint(x: 0, y: 0), tip: CGPoint(x: 100, y: 0), stroke: 5)
         #expect(h.tip == CGPoint(x: 100, y: 0) && h.base == CGPoint(x: 80, y: 0))

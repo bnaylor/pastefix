@@ -8,6 +8,13 @@ public enum MarkGeometry {
     /// the head scales with it.
     public static func arrowStrokeWidth(longerSide: Int) -> Int { 2 * strokeWidth(longerSide: longerSide) }
     public static func fontSize(longerSide: Int) -> Int { max(12, Int((Double(longerSide) / 40).rounded())) }
+    /// A label's size in pixels (#135): S/M/L/XL = 1×/1.5×/2×/3× the base, `max(12, L/40)`.
+    public static func fontSize(longerSide: Int, size: ImageMark.TextSize) -> Int {
+        Int((Double(fontSize(longerSide: longerSide)) * size.scale).rounded())
+    }
+    /// A label's halo, a tenth of its font size (at least 1 px): it scales with the text, so a big
+    /// label keeps a readable edge instead of a hairline (#135).
+    public static func haloWidth(fontSize: Int) -> Int { max(1, Int((Double(fontSize) / 10).rounded())) }
     public static func haloWidth(stroke: Int) -> Int { max(1, Int((Double(stroke) / 2).rounded())) }
 
     /// The filled head at `tip`: 4 × stroke long, 3 × stroke wide, centred on the line.

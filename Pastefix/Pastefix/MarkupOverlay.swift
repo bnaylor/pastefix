@@ -16,6 +16,8 @@ struct MarkupConfig {
     /// Marks queued but not yet burned in, previewed so a fast stroke is visible at once.
     let pending: [ImageMark]
     let textDraft: Binding<TextDraft?>
+    /// The size a new label is drawn at (#135).
+    var textSize: ImageMark.TextSize = .m
     /// False while a transform the user chose runs (`AppModel.isApplyingNonMark`).
     var enabled: Bool = true
     let onMark: (ImageMark) -> Void
@@ -53,8 +55,8 @@ struct MarkupOverlay: View {
                     // a field here: an AppKit text field inside this view stops SwiftUI delivering the
                     // drag gesture at all (measured), so "click elsewhere to finish" couldn't work.
                     Text(draft.text.isEmpty ? "Type a label…" : draft.text)
-                        .font(.system(size: Double(MarkGeometry.fontSize(longerSide: max(pixelSize.width, pixelSize.height))) * scale,
-                                      weight: .bold))
+                        .font(.system(size: Double(MarkGeometry.fontSize(longerSide: max(pixelSize.width, pixelSize.height),
+                                                                         size: config.textSize)) * scale, weight: .bold))
                         .foregroundStyle(draft.text.isEmpty ? Color.secondary : swiftUIColor(config.color))
                         .fixedSize()
                         .offset(x: draft.viewPoint.x, y: draft.viewPoint.y)
@@ -94,7 +96,7 @@ struct MarkupOverlay: View {
         config.textDraft.wrappedValue = nil
         let text = draft.text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
-        config.onMark(ImageMark(tool: .text, color: config.color, points: [draft.point], text: text))
+        config.onMark(ImageMark(tool: .text, color: config.color, points: [draft.point], text: text, textSize: config.textSize))
     }
 
     private func swiftUIColor(_ c: ImageMark.Color) -> Color { Color(.sRGB, red: c.rgb.r, green: c.rgb.g, blue: c.rgb.b) }
@@ -128,7 +130,7 @@ struct MarkupOverlay: View {
             context.stroke(Path(MarkGeometry.smoothPath(pts)), with: .color(color), style: style)
         case .text:
             if let text = mark.text, let p = mark.points.first {
-                let size = Double(MarkGeometry.fontSize(longerSide: longer)) * scale
+                let size = Double(MarkGeometry.fontSize(longerSide: longer, size: mark.textSize)) * scale
                 context.draw(Text(text).font(.system(size: size, weight: .bold)).foregroundStyle(color), at: v(p), anchor: .topLeading)
             }
         default:

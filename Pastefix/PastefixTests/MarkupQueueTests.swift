@@ -48,6 +48,24 @@ struct MarkupQueueTests {
         #expect(f.settings.transformUsage.keys.allSatisfy { !$0.hasPrefix("builtin.annotate") }, "marks aren't transform uses")
     }
 
+    /// #135: a label's size travels on its mark, so undo and redo replay it exactly as drawn.
+    @Test func undoAndRedoReplayALabelsSize() async throws {
+        let f = try ModelFixture(); defer { f.finish() }
+        f.model.annotateLane = ImageTransformLane.makeLane(label: "test.annotate.size")
+        let original = try png()
+        f.model.beginSession(from: ClipboardSnapshot(plainText: nil, richRTFD: nil, imagePNG: original))
+        let window = host(f); defer { window.orderOut(nil) }
+        #expect(await f.eventually { f.model.undoManager != nil })
+        f.model.enqueueMark(ImageMark(tool: .text, color: .red, points: [ImagePoint(x: 10, y: 10)], text: "Big", textSize: .xl))
+        #expect(await f.eventually { f.model.pendingMarks.isEmpty && !f.model.isApplying && f.model.transformNote == "Text added." })
+        let drawn = try #require(f.model.document?.imagePNG)
+        let um = try #require(f.model.undoManager)
+        um.undo()
+        #expect(await f.eventually { f.model.document?.imagePNG == original })
+        um.redo()
+        #expect(await f.eventually { f.model.document?.imagePNG == drawn }, "redo restores the XL label byte for byte")
+    }
+
     /// Review Focus 2.
     @Test func boundaryEmptiesTheQueue() async throws {
         let f = try ModelFixture(); defer { f.finish() }

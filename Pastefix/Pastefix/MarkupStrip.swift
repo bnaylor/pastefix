@@ -8,6 +8,8 @@ struct MarkupStrip: View {
     @Binding var color: ImageMark.Color
     /// The label being typed, if any: its field lives here, previewed on the image.
     @Binding var textDraft: TextDraft?
+    /// The label size (#135), shown only for the Text tool.
+    @Binding var textSize: ImageMark.TextSize
     let commitText: () -> Void
     let done: () -> Void
     @FocusState private var labelFocused: Bool
@@ -21,6 +23,8 @@ struct MarkupStrip: View {
         case .freehand: "scribble"
         }
     }
+
+    static func showsTextSize(_ tool: ImageMark.Tool) -> Bool { tool == .text }
 
     var body: some View {
         HStack(spacing: 6) {
@@ -43,6 +47,16 @@ struct MarkupStrip: View {
                 .help(c.rawValue.capitalized)
                 .accessibilityLabel("\(c.rawValue.capitalized) colour")
                 .accessibilityAddTraits(color == c ? .isSelected : [])
+            }
+            if Self.showsTextSize(tool) {
+                Picker("Label size", selection: $textSize) {
+                    ForEach(ImageMark.TextSize.allCases, id: \.self) { Text($0.label).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .frame(width: 130)
+                .help("Label size")
+                .accessibilityLabel("Label size")
             }
             if textDraft != nil {
                 Divider().frame(height: 16)

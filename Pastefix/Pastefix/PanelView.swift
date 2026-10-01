@@ -33,6 +33,7 @@ struct PanelView: View {
     @State private var markupMode = false
     @State private var markupTool: ImageMark.Tool = .box
     @State private var markupColor: ImageMark.Color = .red
+    @State private var markupTextSize: ImageMark.TextSize = .m
     @State private var textDraft: TextDraft?
     @FocusState private var editorFocused: Bool
     @FocusState private var pinTitleFocused: Bool
@@ -184,7 +185,7 @@ struct PanelView: View {
                             // SwiftUI would otherwise keep its state too).
                             VStack(spacing: 0) {
                                 if markupMode {
-                                    MarkupStrip(tool: $markupTool, color: $markupColor, textDraft: $textDraft,
+                                    MarkupStrip(tool: $markupTool, color: $markupColor, textDraft: $textDraft, textSize: $markupTextSize,
                                                 commitText: commitTextDraft, done: leaveMarkup)
                                     Divider()
                                 }
@@ -192,6 +193,7 @@ struct PanelView: View {
                                                  region: $imageRegion, interactive: !(model.isApplying || isUploadOpen),
                                                  markup: markupMode ? MarkupConfig(tool: markupTool, color: markupColor,
                                                                                     pending: model.pendingMarks, textDraft: $textDraft,
+                                                                                    textSize: markupTextSize,
                                                                                     enabled: !model.isApplyingNonMark,
                                                                                     onMark: { model.enqueueMark($0) }) : nil)
                                     .id(model.sessionGeneration)
@@ -308,9 +310,10 @@ struct PanelView: View {
         }
         .onChange(of: markupMode) { _, on in model.markupModeOnScreen = on }
         .onChange(of: textDraft) { _, d in model.markupTextDraftOnScreen = d != nil }
-        .onAppear { markupTool = model.markupTool; markupColor = model.markupColor }
+        .onAppear { markupTool = model.markupTool; markupColor = model.markupColor; markupTextSize = model.markupTextSize }
         .onChange(of: markupTool) { _, t in model.markupTool = t }
         .onChange(of: markupColor) { _, c in model.markupColor = c }
+        .onChange(of: markupTextSize) { _, z in model.markupTextSize = z }
         .onChange(of: model.document?.displaysAsImage) { _, isImage in
             if isImage != true { markupMode = false; textDraft = nil }   // e.g. after Extract Text
         }
@@ -680,7 +683,7 @@ struct PanelView: View {
         guard let draft = textDraft else { return }
         textDraft = nil
         let text = draft.text.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !text.isEmpty { model.enqueueMark(ImageMark(tool: .text, color: markupColor, points: [draft.point], text: text)) }
+        if !text.isEmpty { model.enqueueMark(ImageMark(tool: .text, color: markupColor, points: [draft.point], text: text, textSize: markupTextSize)) }
     }
 
     private func closePalette() {

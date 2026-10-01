@@ -39,10 +39,11 @@ enum MarkRenderer {
             ctx.addPath(MarkGeometry.smoothPath(pts)); ctx.strokePath()
         case .text:
             guard let text = mark.text else { return }
-            let size = CGFloat(MarkGeometry.fontSize(longerSide: longer))
+            let fontPixels = MarkGeometry.fontSize(longerSide: longer, size: mark.textSize)
+            let size = CGFloat(fontPixels)
             let font = CTFontCreateUIFontForLanguage(.emphasizedSystem, size, nil)
                 ?? CTFontCreateWithName("Helvetica-Bold" as CFString, size, nil)
-            let halo = CGFloat(MarkGeometry.haloWidth(stroke: Int(stroke)))
+            let halo = CGFloat(MarkGeometry.haloWidth(fontSize: fontPixels))
             let origin = flip(mark.points[0])
             let ascent = CTFontGetAscent(font)
             let baseline = CGPoint(x: origin.x, y: origin.y - ascent)

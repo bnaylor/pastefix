@@ -12,6 +12,7 @@ struct MarkupOverlayTests {
     final class Box: ObservableObject {
         @Published var tool: ImageMark.Tool = .box
         @Published var draft: TextDraft?
+        var size: ImageMark.TextSize = .m
         var marks: [ImageMark] = []
     }
     private struct Host: View {
@@ -19,7 +20,7 @@ struct MarkupOverlayTests {
         var body: some View {
             MarkupOverlay(pixelSize: (600, 400),
                           config: MarkupConfig(tool: box.tool, color: .red, pending: [],
-                                               textDraft: $box.draft, onMark: { box.marks.append($0) }))
+                                               textDraft: $box.draft, textSize: box.size, onMark: { box.marks.append($0) }))
                 .frame(width: 300, height: 200)
         }
     }
@@ -62,6 +63,21 @@ struct MarkupOverlayTests {
         await drag(w, (0...10).map { CGPoint(x: 40 + Double($0) * 10, y: 100 + Double($0 % 3) * 5) })
         #expect(box.marks.count == 1 && box.marks[0].tool == .freehand && box.marks[0].points.count >= 3)
         #expect(box.marks.first?.points.first == ImagePoint(x: 80, y: 200))
+    }
+
+    /// #135: a label is drawn at the size chosen in the strip.
+    @Test func aLabelCarriesTheChosenSize() async {
+        let box = Box(); box.tool = .text; box.size = .xl
+        let w = window(box); defer { w.orderOut(nil) }
+        try? await Task.sleep(for: .milliseconds(100))
+        await drag(w, [CGPoint(x: 60, y: 40)])
+        box.draft?.text = "Big"
+        await drag(w, [CGPoint(x: 200, y: 150)])
+        #expect(box.marks.first?.textSize == .xl)
+    }
+
+    @Test func theSizeControlShowsOnlyForText() {
+        #expect(ImageMark.Tool.allCases.filter(MarkupStrip.showsTextSize) == [.text])
     }
 
     @Test func aTextClickOpensADraftAndASecondClickCommitsIt() async {
