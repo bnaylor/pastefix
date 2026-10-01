@@ -28,6 +28,12 @@ struct PanelView: View {
     /// The region drawn on the image (crop spec): view state, like `editorSelection`, never on the
     /// model. ⌘Z hands one back through `model.pendingImageRegion`.
     @State private var imageRegion: ImageRegion?
+    /// Markup mode (annotate spec): view state, like the region. Tool and colour live on the model
+    /// for the app's run; these are the live copies.
+    @State private var markupMode = false
+    @State private var markupTool: ImageMark.Tool = .box
+    @State private var markupColor: ImageMark.Color = .red
+    @State private var textDraft: TextDraft?
     @FocusState private var editorFocused: Bool
     @FocusState private var pinTitleFocused: Bool
 
@@ -176,9 +182,20 @@ struct PanelView: View {
                             // history item must start it over rather than inherit the last
                             // session's image (the view keeps its place in the hierarchy, so
                             // SwiftUI would otherwise keep its state too).
-                            ImageSessionView(imagePNG: imagePNG, revision: document.detectionRevision,
-                                             region: $imageRegion, interactive: !(model.isApplying || isUploadOpen))
-                                .id(model.sessionGeneration)
+                            VStack(spacing: 0) {
+                                if markupMode {
+                                    MarkupStrip(tool: $markupTool, color: $markupColor, textDraft: $textDraft,
+                                                commitText: commitTextDraft, done: leaveMarkup)
+                                    Divider()
+                                }
+                                ImageSessionView(imagePNG: imagePNG, revision: document.detectionRevision,
+                                                 region: $imageRegion, interactive: !(model.isApplying || isUploadOpen),
+                                                 markup: markupMode ? MarkupConfig(tool: markupTool, color: markupColor,
+                                                                                    pending: model.pendingMarks, textDraft: $textDraft,
+                                                                                    enabled: !model.isApplyingNonMark,
+                                                                                    onMark: { model.enqueueMark($0) }) : nil)
+                                    .id(model.sessionGeneration)
+                            }
                         } else {
                             TextEditor(text: workingBinding, selection: selectionBinding)
                                 .font(.system(.body, design: .monospaced))
@@ -289,7 +306,17 @@ struct PanelView: View {
             }
             imageRegion = nil
         }
+        .onChange(of: markupMode) { _, on in model.markupModeOnScreen = on }
+        .onChange(of: textDraft) { _, d in model.markupTextDraftOnScreen = d != nil }
+        .onAppear { markupTool = model.markupTool; markupColor = model.markupColor }
+        .onChange(of: markupTool) { _, t in model.markupTool = t }
+        .onChange(of: markupColor) { _, c in model.markupColor = c }
+        .onChange(of: model.document?.displaysAsImage) { _, isImage in
+            if isImage != true { markupMode = false; textDraft = nil }   // e.g. after Extract Text
+        }
         .onChange(of: model.sessionGeneration) { _, _ in
+            markupMode = false
+            textDraft = nil
             isPaletteOpen = false
             isHistoryOpen = false
             // The upload overlay holds a snapshot of the buffer it opened on and an in-flight
@@ -366,6 +393,8 @@ struct PanelView: View {
             uploadGeneration &+= 1
             // The overlay snapshots the buffer when it opens; marked text isn't in it yet.
             model.settleComposition()
+            markupMode = false
+            textDraft = nil
             isUploadOpen = true
             model.uploadOverlayRequested = false
         }
@@ -409,6 +438,13 @@ struct PanelView: View {
                 // stale error.
                 .onDisappear { pinTitle = ""; pinError = nil }
             }
+            Button { toggleMarkup() } label: {
+                Image(systemName: markupMode ? "pencil.tip.crop.circle.fill" : "pencil.tip.crop.circle")
+            }
+            .help(markupMode ? "Done marking up (⌘⇧A)" : "Mark up the image (⌘⇧A)")
+            .accessibilityLabel(markupMode ? "Done marking up" : "Mark up the image")
+            .keyboardShortcut(isPaletteOpen || isHistoryOpen || isUploadOpen ? nil : KeyboardShortcut("a", modifiers: [.command, .shift]))
+            .disabled(model.document?.displaysAsImage != true || isPaletteOpen || isHistoryOpen || isUploadOpen)
             Button { togglePreview() } label: {
                 Image(systemName: isPreviewing ? "eye.fill" : "eye")
             }
@@ -609,23 +645,42 @@ struct PanelView: View {
         Task { @MainActor in focusEditorUnlessRefusedImage() }
     }
 
-    /// Esc: close whichever overlay is open, then the preview, then clear the image region,
-    /// otherwise end the session.
+    /// Esc, in `PanelEscape`'s order: overlays, preview, the markup text field, markup mode, the
+    /// image region, then the panel.
     private func escape() {
-        if isPaletteOpen {
-            closePalette()
-        } else if isHistoryOpen {
-            closeHistory()
-        } else if isUploadOpen {
-            closeUpload()
-        } else if isPreviewing {
-            closePreview()
-        } else if imageRegion != nil {
-            // The region clears before the panel cancels, as a selection does everywhere (crop spec).
-            imageRegion = nil
-        } else {
-            model.cancel()
+        switch PanelEscape.action(paletteOpen: isPaletteOpen, historyOpen: isHistoryOpen, uploadOpen: isUploadOpen,
+                                  previewing: isPreviewing, textDraftOpen: textDraft != nil, markupMode: markupMode,
+                                  regionUp: imageRegion != nil) {
+        case .closePalette: closePalette()
+        case .closeHistory: closeHistory()
+        case .closeUpload: closeUpload()
+        case .closePreview: closePreview()
+        case .discardText: textDraft = nil
+        case .leaveMarkup: markupMode = false
+        // The region clears before the panel cancels, as a selection does everywhere (crop spec).
+        case .clearRegion: imageRegion = nil
+        case .cancel: model.cancel()
         }
+    }
+
+    private func toggleMarkup() {
+        guard model.document?.displaysAsImage == true else { return }
+        if markupMode { leaveMarkup() } else { markupMode = true; imageRegion = nil }
+    }
+
+    /// Leaves markup mode. A text label being typed is finished, as clicking away would; queued
+    /// marks keep applying, since the queue is the model's.
+    private func leaveMarkup() {
+        commitTextDraft()
+        markupMode = false
+    }
+
+    /// Queues the label being typed, if it has any text, and closes its field.
+    private func commitTextDraft() {
+        guard let draft = textDraft else { return }
+        textDraft = nil
+        let text = draft.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !text.isEmpty { model.enqueueMark(ImageMark(tool: .text, color: markupColor, points: [draft.point], text: text)) }
     }
 
     private func closePalette() {

@@ -34,6 +34,8 @@ struct ImageSessionView: View {
     /// False while a transform runs or the upload overlay is up: the region can't move then, so the
     /// region an apply recorded is the one on screen.
     let interactive: Bool
+    /// Markup mode's tools and queue (annotate spec), or nil for the region selection.
+    let markup: MarkupConfig?
 
     /// nil until the decode lands. `NSImage` is built here on the main actor from a `CGImage`
     /// carried across, matching `HistoryOverlayView`'s thumbnail path: nothing AppKit-mutable is
@@ -80,7 +82,11 @@ struct ImageSessionView: View {
                 .overlay {
                     // On the fitted image, so the overlay's geometry is exactly the image's rect.
                     if let pixels {
-                        ImageRegionOverlay(region: $region, pixelSize: (pixels.width, pixels.height), enabled: interactive)
+                        if let markup {
+                            MarkupOverlay(pixelSize: (pixels.width, pixels.height), config: markup)
+                        } else {
+                            ImageRegionOverlay(region: $region, pixelSize: (pixels.width, pixels.height), enabled: interactive)
+                        }
                     }
                 }
                 .padding(12)
@@ -146,8 +152,13 @@ struct ImageSessionView: View {
         guard settledRevision != revision else { return }
         // The image on screen belongs to the revision that is going away, so it goes with it: a
         // spinner for the length of a decode is honest, the previous clipboard's picture is not.
-        image = nil
-        pixels = nil
+        // Except in markup mode, where a new revision is a mark landing on this same picture: tearing
+        // the image (and the overlay with it) down to a spinner would cancel the stroke the user is
+        // drawing and flash after every mark (annotate final review I1). It's swapped when the decode lands.
+        if markup == nil {
+            image = nil
+            pixels = nil
+        }
         failed = false
         let data = imagePNG
         let maxPixelSize = Self.displayMaxPixelSize
