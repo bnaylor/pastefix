@@ -64,6 +64,8 @@ public struct TransformerRegistry {
             (117, "Rotate Right", ReorientImage(.rotateRight)),
             (118, "Flip Horizontal", ReorientImage(.flipHorizontal)),
             (119, "Flip Vertical", ReorientImage(.flipVertical)),
+            (120, "Scale to 50%", ScaleImage(.half)),
+            (121, "Fit Within 1920 px", ScaleImage(.fit1920)),
         ]
 
         // Presets sit after every built-in (band 900) and before discovered scripts (1000+).

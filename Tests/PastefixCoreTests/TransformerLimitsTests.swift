@@ -36,6 +36,8 @@ private struct Bare: Transformer {
             "builtin.rotateright": (TransformLimits.defaultMaxInputBytes, 10),
             "builtin.fliphorizontal": (TransformLimits.defaultMaxInputBytes, 10),
             "builtin.flipvertical": (TransformLimits.defaultMaxInputBytes, 10),
+            "builtin.scalehalf": (TransformLimits.defaultMaxInputBytes, 10),
+            "builtin.fitwithin1920": (TransformLimits.defaultMaxInputBytes, 10),
             "builtin.richtoplain": (4_194_304, 3),
             "builtin.richtomarkdown": (4_194_304, 3),
             RegexPresetTransformer.transformerID(for: preset.id): (262_144, 3),
