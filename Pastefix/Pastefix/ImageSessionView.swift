@@ -152,8 +152,13 @@ struct ImageSessionView: View {
         guard settledRevision != revision else { return }
         // The image on screen belongs to the revision that is going away, so it goes with it: a
         // spinner for the length of a decode is honest, the previous clipboard's picture is not.
-        image = nil
-        pixels = nil
+        // Except in markup mode, where a new revision is a mark landing on this same picture: tearing
+        // the image (and the overlay with it) down to a spinner would cancel the stroke the user is
+        // drawing and flash after every mark (annotate final review I1). It's swapped when the decode lands.
+        if markup == nil {
+            image = nil
+            pixels = nil
+        }
         failed = false
         let data = imagePNG
         let maxPixelSize = Self.displayMaxPixelSize

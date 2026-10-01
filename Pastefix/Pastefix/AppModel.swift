@@ -60,18 +60,7 @@ final class AppModel: ObservableObject {
     /// no entry, so undo or redo clears it. `PanelView` shows one banner: error first, then this,
     /// then the notice.
     @Published var transformNote: String?
-    @Published private(set) var isApplying = false {
-        didSet {
-            guard oldValue, !isApplying else { return }
-            // An apply just ended: if it was a mark, that mark is done, landed or failed (a failed
-            // one is dropped; its error shows as usual). Then the next one (annotate spec).
-            if markInFlight {
-                markInFlight = false
-                if !pendingMarks.isEmpty { pendingMarks.removeFirst() }
-            }
-            drainMarks()
-        }
-    }
+    @Published private(set) var isApplying = false
     /// The panel window, set by `WindowUndoBinding`. Its undo manager is the ONE stack for the
     /// editor's typing and for transforms (#103): the TextEditor's typing undo already lives there,
     /// so transforms register there too, and ⌘Z — Edit ▸ Undo, up the responder chain — walks both in
@@ -125,6 +114,11 @@ final class AppModel: ObservableObject {
     var markupColor: ImageMark.Color = .red
     /// A write-only mirror of `PanelView`'s markup mode, for the hosted tests (as `imageRegionOnScreen`).
     var markupModeOnScreen = false
+    /// Whether `PanelView` has a markup label open: a write-only mirror for the hosted tests.
+    var markupTextDraftOnScreen = false
+    /// A transform the user chose is running (not a mark). Markup drawing is off then: its result
+    /// can move or resize the pixels a mark drawn meanwhile was placed on (annotate final review I2).
+    var isApplyingNonMark: Bool { isApplying && !markInFlight }
 
     func enqueueMark(_ mark: ImageMark) {
         pendingMarks.append(mark)
@@ -136,6 +130,19 @@ final class AppModel: ObservableObject {
         guard !isApplying, !markInFlight, let next = pendingMarks.first, document != nil else { return }
         markInFlight = true
         apply(AnnotateImage(next, lane: annotateLane))
+        if !isApplying { markInFlight = false }   // apply refused it; the mark stays queued
+    }
+
+    /// The apply that just LANDED was a mark: it's done (landed or failed — a failed one is dropped,
+    /// its error shown as usual); on to the next. Only the landing path calls this. A cancel (⌘Z)
+    /// or an abandon (session switch) clears `markInFlight` without draining: draining there started
+    /// the next mark on the document that was about to be replaced, leaving the new session stuck
+    /// "applying", or landed a mark on top of the undo (annotate final review C1).
+    private func markLanded() {
+        guard markInFlight else { return }
+        markInFlight = false
+        if !pendingMarks.isEmpty { pendingMarks.removeFirst() }
+        drainMarks()
     }
     /// A write-only mirror of the region `PanelView` holds, for the hosted tests: SwiftUI builds no
     /// accessibility tree in-process, so they can't read the footer. The app never reads it, and it
@@ -231,6 +238,7 @@ final class AppModel: ObservableObject {
         applyTask = nil
         applyID &+= 1
         detection.cancelAll()
+        markInFlight = false   // the queue is emptied by the boundary's resetUndo; never drained here
         isApplying = false
         // Every caller also bumps `sessionGeneration`, so the cached preparation is no longer
         // anyone's; dropping it skips it on the lane if it has not started.
@@ -451,6 +459,7 @@ final class AppModel: ObservableObject {
             }
             self.isApplying = false
             self.applyTask = nil
+            self.markLanded()
         }
     }
 
@@ -805,6 +814,9 @@ final class AppModel: ObservableObject {
         applyTask?.cancel()
         applyTask = nil
         applyID &+= 1
+        // A cancelled mark stays at the queue's head, not landed and not dropped; the queue resumes
+        // once the undo or redo that cancelled it has moved the document (`observeUndoManager`).
+        markInFlight = false
         isApplying = false
     }
 
@@ -963,6 +975,12 @@ final class AppModel: ObservableObject {
         undoObservers = names.map {
             NotificationCenter.default.addObserver(forName: $0, object: um, queue: nil) { [weak self] _ in
                 MainActor.assumeIsolated { self?.refreshUndoState() }
+            }
+        }
+        // Marks queued when an undo or redo cancelled one resume on the document it produced.
+        undoObservers += [Notification.Name.NSUndoManagerDidUndoChange, .NSUndoManagerDidRedoChange].map {
+            NotificationCenter.default.addObserver(forName: $0, object: um, queue: nil) { [weak self] _ in
+                MainActor.assumeIsolated { self?.drainMarks() }
             }
         }
         undoObservers += [Notification.Name.NSUndoManagerWillUndoChange, .NSUndoManagerWillRedoChange].map {

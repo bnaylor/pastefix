@@ -51,7 +51,12 @@ struct MarkupStrip: View {
                     .frame(maxWidth: 220)
                     .focused($labelFocused)
                     .onSubmit(commitText)
-                    .onAppear { labelFocused = true }
+                    // Esc in the focused field: the field editor takes the key before the panel's Cancel
+                    // shortcut sees it, so the field discards the label itself (annotate final review I3, measured).
+                    .onExitCommand { textDraft = nil }
+                    // A turn later: set in onAppear itself, the field isn't in the window yet and the
+                    // focus request is dropped (measured: first responder stayed the window).
+                    .onAppear { DispatchQueue.main.async { labelFocused = true } }
                     .accessibilityLabel("Label text")
             }
             Spacer()

@@ -192,6 +192,7 @@ struct PanelView: View {
                                                  region: $imageRegion, interactive: !(model.isApplying || isUploadOpen),
                                                  markup: markupMode ? MarkupConfig(tool: markupTool, color: markupColor,
                                                                                     pending: model.pendingMarks, textDraft: $textDraft,
+                                                                                    enabled: !model.isApplyingNonMark,
                                                                                     onMark: { model.enqueueMark($0) }) : nil)
                                     .id(model.sessionGeneration)
                             }
@@ -306,6 +307,7 @@ struct PanelView: View {
             imageRegion = nil
         }
         .onChange(of: markupMode) { _, on in model.markupModeOnScreen = on }
+        .onChange(of: textDraft) { _, d in model.markupTextDraftOnScreen = d != nil }
         .onAppear { markupTool = model.markupTool; markupColor = model.markupColor }
         .onChange(of: markupTool) { _, t in model.markupTool = t }
         .onChange(of: markupColor) { _, c in model.markupColor = c }

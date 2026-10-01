@@ -16,6 +16,8 @@ struct MarkupConfig {
     /// Marks queued but not yet burned in, previewed so a fast stroke is visible at once.
     let pending: [ImageMark]
     let textDraft: Binding<TextDraft?>
+    /// False while a transform the user chose runs (`AppModel.isApplyingNonMark`).
+    var enabled: Bool = true
     let onMark: (ImageMark) -> Void
 }
 
@@ -83,6 +85,7 @@ struct MarkupOverlay: View {
                         config.onMark(mark)
                     }
                 })
+            .disabled(!config.enabled)
         }
     }
 
