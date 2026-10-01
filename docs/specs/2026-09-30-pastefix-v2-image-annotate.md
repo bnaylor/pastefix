@@ -71,7 +71,7 @@ a drawing program.
   - `tool`: box, arrow, text, highlight or freehand;
   - `color`: red, yellow, blue, black or white;
   - `points`: `[ImagePoint]` with `Int` x and y. Box, arrow and highlight use two points;
-    freehand uses one or more; text uses one, the baseline origin's top-left;
+    freehand uses one or more; text uses one, the top-left corner of the text's box (where the user clicked);
   - `text`: `String?`.
 - `AnnotateImage: ImageTransformer` holds one `ImageMark`.
   - Its `name` is the tool's name ("Box", "Arrow", "Text", "Highlight", "Freehand"), which the
