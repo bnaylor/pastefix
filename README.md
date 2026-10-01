@@ -448,6 +448,8 @@ A preset whose pattern matches the empty string applies its replacement at every
 
 ## Known limitations and gotchas
 
+**One copy at a time.** Only one Pastefix runs at once. Opening another copy, such as a different build or a second launch, quits the one already running, so a shortcut never opens two panels.
+
 **Secrets**
 
 - The secret scan only covers buffers up to 256 KB. Over that it doesn't run, and a grey **Not scanned for secrets** badge appears instead of a clean-looking action bar. Redact Secrets refuses the buffer with an error rather than quietly doing nothing, and a history item that was never scanned carries no shield either way. (Uploads are different: ⌘⇧U scans the full text, with no cap.)
