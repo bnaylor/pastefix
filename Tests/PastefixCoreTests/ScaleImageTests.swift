@@ -83,6 +83,38 @@ import ImageIO
         }
     }
 
+    /// Pins the interpolation quality, not just "not skipped": 1-px white lines every 4 px on black,
+    /// at 2.67× (5120 → 1920). The ideal is a flat 64 (a quarter white); measured, `.high` gives
+    /// 45...83, `.medium` 0...96 (lines dropped between beats), `.none` 0...0. (Final review: the
+    /// checkerboard alone passed under `.medium`, and with the `.high` line deleted.)
+    @Test func fineLinesStayEvenAtLargeRatios() async throws {
+        let w = 5120, h = 24
+        var px = [UInt8](repeating: 0, count: w * h * 4)
+        for y in 0..<h { for x in 0..<w { let v: UInt8 = x % 4 == 0 ? 255 : 0; let i = (y * w + x) * 4
+            px[i] = v; px[i + 1] = v; px[i + 2] = v; px[i + 3] = 255 } }
+        let ctx = try #require(CGContext(data: &px, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4,
+                                         space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                         bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        let image = try #require(ctx.makeImage())
+        let png = try #require(PNGEncoder.encode(image))
+        guard case .image(let out, _) = try await run(.fit1920, png) else { Issue.record("expected an image"); return }
+        let p = try RedactBlurTests.pixels(out)
+        let row = (4..<(p.w - 4)).map { Int(RedactBlurTests.at(p, $0, p.h / 2)[0]) }
+        let lo = row.min()!, hi = row.max()!
+        #expect(lo >= 35 && hi <= 95, "range \(lo)...\(hi) (ideal 64)")
+    }
+
+    /// The size rule, without decoding anything: nearest rounding, the 1-px floor, the 1920 boundary.
+    @Test func targetSizes() {
+        func t(_ k: ScaleImage.Kind, _ w: Int, _ h: Int) -> [Int]? { ScaleImage.target(k, width: w, height: h).map { [$0.width, $0.height] } }
+        #expect(t(.fit1920, 100_000, 2) == [1920, 1], "the floor: 0.04 rounds to 0 without it")
+        #expect(t(.fit1920, 5000, 1) == [1920, 1])
+        #expect(t(.fit1920, 1920, 500) == nil && t(.fit1920, 500, 1920) == nil, "exactly 1920 is within")
+        #expect(t(.fit1920, 1921, 3) == [1920, 3])
+        #expect(t(.half, 1, 1) == nil, "too small")
+        #expect(t(.half, 1, 2) == [1, 1] && t(.half, 2, 1) == [1, 1] && t(.half, 3, 3) == [2, 2])
+    }
+
     @Test func scalesWhatIsDisplayed() async throws {
         let png = try #require(Fixture.image(as: "public.png", orientation: 6))   // shows 40×60, red on top
         guard case .image(let out, _) = try await run(.half, png) else { Issue.record("expected an image"); return }

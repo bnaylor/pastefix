@@ -49,7 +49,7 @@ public struct ScaleImage: ImageTransformer {
               let ctx = OrientedSource.emptyBitmap(like: image, width: size.width, height: size.height) else {
             throw TransformError.invalidInput("\(name) couldn't scale this image.")
         }
-        ctx.interpolationQuality = .high
+        ctx.interpolationQuality = .high   // CG's default measures the same; explicit so a reader knows it matters
         ctx.setBlendMode(.copy)
         ctx.draw(image, in: CGRect(x: 0, y: 0, width: size.width, height: size.height))
         guard let result = ctx.makeImage(), let out = PNGEncoder.encode(result) else {
