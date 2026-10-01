@@ -48,16 +48,16 @@ import ImageIO
         #expect(MarkGeometry.haloWidth(stroke: 2) == 1 && MarkGeometry.haloWidth(stroke: 5) == 3 && MarkGeometry.haloWidth(stroke: 20) == 10)
     }
 
-    /// Owner, after the GUI pass: arrows a little thicker than boxes and freehand — 1.5× the stroke.
+    /// Owner, after the GUI pass: arrows heavier than boxes and freehand — 2× the stroke.
     @Test func arrowsAreThicker() async throws {
-        #expect(MarkGeometry.arrowStrokeWidth(longerSide: 400) == 3 && MarkGeometry.arrowStrokeWidth(longerSide: 1200) == 8
-                && MarkGeometry.arrowStrokeWidth(longerSide: 5120) == 30)
+        #expect(MarkGeometry.arrowStrokeWidth(longerSide: 400) == 4 && MarkGeometry.arrowStrokeWidth(longerSide: 1200) == 10
+                && MarkGeometry.arrowStrokeWidth(longerSide: 5120) == 40)
         let png = try Self.page(1200, 900)
         let (out, _) = try await mark(ImageMark(tool: .arrow, color: .red, points: [ImagePoint(x: 100, y: 450), ImagePoint(x: 1100, y: 450)]), on: png)
         let b = try RedactBlurTests.pixels(out)
-        // Pixel centre 3.5 px off the line: inside an 8 px line, outside the 5 px box stroke.
-        #expect(isRed(RedactBlurTests.at(b, 600, 453)) && isRed(RedactBlurTests.at(b, 600, 446)))
-        #expect(isWhite(RedactBlurTests.at(b, 600, 456)))
+        // Pixel centre 4.5 px off the line: inside a 10 px line, outside an 8 px one (1.5×).
+        #expect(isRed(RedactBlurTests.at(b, 600, 454)) && isRed(RedactBlurTests.at(b, 600, 445)))
+        #expect(isWhite(RedactBlurTests.at(b, 600, 457)))
     }
 
     @Test func arrowHeadPoints() {

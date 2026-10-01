@@ -4,11 +4,9 @@ import CoreGraphics
 /// mark looks alike on a small crop and a 5K screenshot.
 public enum MarkGeometry {
     public static func strokeWidth(longerSide: Int) -> Int { max(2, Int((Double(longerSide) / 250).rounded())) }
-    /// Arrows are drawn heavier than boxes and freehand, 1.5× the stroke (owner, after the GUI pass);
+    /// Arrows are drawn heavier than boxes and freehand, 2× the stroke (owner, after the GUI pass);
     /// the head scales with it.
-    public static func arrowStrokeWidth(longerSide: Int) -> Int {
-        Int((Double(strokeWidth(longerSide: longerSide)) * 1.5).rounded())
-    }
+    public static func arrowStrokeWidth(longerSide: Int) -> Int { 2 * strokeWidth(longerSide: longerSide) }
     public static func fontSize(longerSide: Int) -> Int { max(12, Int((Double(longerSide) / 40).rounded())) }
     public static func haloWidth(stroke: Int) -> Int { max(1, Int((Double(stroke) / 2).rounded())) }
 
