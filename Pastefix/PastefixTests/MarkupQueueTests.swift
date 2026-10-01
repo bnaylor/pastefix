@@ -48,8 +48,9 @@ struct MarkupQueueTests {
         #expect(f.settings.transformUsage.keys.allSatisfy { !$0.hasPrefix("builtin.annotate") }, "marks aren't transform uses")
     }
 
-    /// #135: a label's size travels on its mark, so undo and redo replay it exactly as drawn.
-    @Test func undoAndRedoReplayALabelsSize() async throws {
+    /// #135: a queued label is burned at the size chosen when it was drawn — the same bytes as rendering
+    /// that mark at XL directly, not an S one — and undo/redo (snapshots) bring that image back.
+    @Test func aQueuedLabelIsBurnedAtItsSize() async throws {
         let f = try ModelFixture(); defer { f.finish() }
         f.model.annotateLane = ImageTransformLane.makeLane(label: "test.annotate.size")
         let original = try png()
@@ -59,6 +60,13 @@ struct MarkupQueueTests {
         f.model.enqueueMark(ImageMark(tool: .text, color: .red, points: [ImagePoint(x: 10, y: 10)], text: "Big", textSize: .xl))
         #expect(await f.eventually { f.model.pendingMarks.isEmpty && !f.model.isApplying && f.model.transformNote == "Text added." })
         let drawn = try #require(f.model.document?.imagePNG)
+        let xl = ImageMark(tool: .text, color: .red, points: [ImagePoint(x: 10, y: 10)], text: "Big", textSize: .xl)
+        guard case .image(let direct, _) = try AnnotateImage(xl).transformImage(original),
+              case .image(let small, _) = try AnnotateImage(ImageMark(tool: .text, color: .red, points: [ImagePoint(x: 10, y: 10)],
+                                                                      text: "Big", textSize: .s)).transformImage(original) else {
+            Issue.record("expected images"); return
+        }
+        #expect(drawn == direct && drawn != small, "burned at XL")
         let um = try #require(f.model.undoManager)
         um.undo()
         #expect(await f.eventually { f.model.document?.imagePNG == original })

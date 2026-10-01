@@ -20,7 +20,9 @@ public struct ImageMark: Sendable, Equatable, Codable {
     public let color: Color
     public let points: [ImagePoint]
     public let text: String?
-    /// The label's size; carried on the mark so undo and redo replay it as drawn. Ignored by shapes.
+    /// The label's size, chosen when the label was drawn: a queued label is burned at it even if the
+    /// strip's size has changed since. (Undo and redo restore image snapshots; they don't re-render.)
+    /// Ignored by shapes.
     public let textSize: TextSize
 
     public init(tool: Tool, color: Color, points: [ImagePoint], text: String? = nil, textSize: TextSize = .m) {

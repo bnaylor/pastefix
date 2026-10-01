@@ -76,6 +76,17 @@ struct MarkupOverlayTests {
         #expect(box.marks.first?.textSize == .xl)
     }
 
+    /// Review: the previews (the label being typed, and queued labels) use the renderer's size for the
+    /// chosen step, at display scale.
+    @Test func previewFontSizeFollowsTheLabelSize() {
+        let px = (width: 1200, height: 800), scale = 0.5
+        for size in ImageMark.TextSize.allCases {
+            #expect(MarkupOverlay.previewFontSize(size, pixelSize: px, scale: scale)
+                    == Double(MarkGeometry.fontSize(longerSide: 1200, size: size)) * scale, "\(size)")
+        }
+        #expect(MarkupOverlay.previewFontSize(.xl, pixelSize: px, scale: scale) > MarkupOverlay.previewFontSize(.s, pixelSize: px, scale: scale))
+    }
+
     @Test func theSizeControlShowsOnlyForText() {
         #expect(ImageMark.Tool.allCases.filter(MarkupStrip.showsTextSize) == [.text])
     }

@@ -55,8 +55,7 @@ struct MarkupOverlay: View {
                     // a field here: an AppKit text field inside this view stops SwiftUI delivering the
                     // drag gesture at all (measured), so "click elsewhere to finish" couldn't work.
                     Text(draft.text.isEmpty ? "Type a label…" : draft.text)
-                        .font(.system(size: Double(MarkGeometry.fontSize(longerSide: max(pixelSize.width, pixelSize.height),
-                                                                         size: config.textSize)) * scale, weight: .bold))
+                        .font(.system(size: Self.previewFontSize(config.textSize, pixelSize: pixelSize, scale: scale), weight: .bold))
                         .foregroundStyle(draft.text.isEmpty ? Color.secondary : swiftUIColor(config.color))
                         .fixedSize()
                         .offset(x: draft.viewPoint.x, y: draft.viewPoint.y)
@@ -89,6 +88,15 @@ struct MarkupOverlay: View {
                 })
             .disabled(!config.enabled)
         }
+        // Clipped to the image: a label that runs off the edge is cut there when burned in, so the
+        // preview must not spill onto the panel and show it whole (#135 review).
+        .clipped()
+    }
+
+    /// A label's preview font size, in view points: the renderer's pixels for that size × the display
+    /// scale. The one place both previews take it from, so they can't drift from what's burned in.
+    static func previewFontSize(_ size: ImageMark.TextSize, pixelSize: (width: Int, height: Int), scale: Double) -> Double {
+        Double(MarkGeometry.fontSize(longerSide: max(pixelSize.width, pixelSize.height), size: size)) * scale
     }
 
     private func commitText() {
@@ -130,7 +138,7 @@ struct MarkupOverlay: View {
             context.stroke(Path(MarkGeometry.smoothPath(pts)), with: .color(color), style: style)
         case .text:
             if let text = mark.text, let p = mark.points.first {
-                let size = Double(MarkGeometry.fontSize(longerSide: longer, size: mark.textSize)) * scale
+                let size = Self.previewFontSize(mark.textSize, pixelSize: pixelSize, scale: scale)
                 context.draw(Text(text).font(.system(size: size, weight: .bold)).foregroundStyle(color), at: v(p), anchor: .topLeading)
             }
         default:
