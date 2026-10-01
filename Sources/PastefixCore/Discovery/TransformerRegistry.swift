@@ -60,6 +60,10 @@ public struct TransformerRegistry {
             (113, "Crop to Selection", CropToSelection()),
             (114, "Redact Selection", RedactSelection()),
             (115, "Blur Selection", BlurSelection()),
+            (116, "Rotate Left", ReorientImage(.rotateLeft)),
+            (117, "Rotate Right", ReorientImage(.rotateRight)),
+            (118, "Flip Horizontal", ReorientImage(.flipHorizontal)),
+            (119, "Flip Vertical", ReorientImage(.flipVertical)),
         ]
 
         // Presets sit after every built-in (band 900) and before discovered scripts (1000+).
