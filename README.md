@@ -16,11 +16,13 @@ Things you can do with it:
 - **Add your own:** any shell script or JavaScript function in your scripts folder shows up as a transform.
 
 <!--
-docs/media/pastefix-tour.gif: window-only captures of planted demo content (no real clipboard or
-history), 720 px wide, ~21 s. Scenes: the ⌘K palette on messy text; JSON Prettify; Clean URL
-Tracking (before/after); a secret found and redacted; Extract Text on a screenshot (before/after);
-Strip Image Metadata; the history overlay with a pinned snippet. Rebuild from 1440×920 PNGs with
-ffmpeg concat + palettegen (256 colours, bayer dither), -fps_mode vfr.
+docs/media/pastefix-tour.gif: the real panel window in dark mode, rendered by the DemoReel test from
+planted demo content (no real clipboard or history), 720 px wide, ~32 s. Scenes: markup (box, arrow,
+label); Redact Selection; Blur Selection; Crop to Selection; ⌘K → JSON Prettify; secrets badge →
+Redact Secrets; Markdown → ⌘⇧M preview; a rot13 user script on a selection; the history overlay with
+a pinned snippet. Rebuild: TEST_RUNNER_PFX_DEMO_OUT=/tmp/pastefix-demo scripts/test-app.sh
+"-only-testing:PastefixTests/DemoReel/tour()" (under the GUI lease), then
+scripts/make-demo-gif.sh /tmp/pastefix-demo/tour docs/media/pastefix-tour.gif.
 -->
 ![Pastefix in action](docs/media/pastefix-tour.gif)
 
