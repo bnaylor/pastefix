@@ -87,6 +87,19 @@ struct MarkupOverlayTests {
         #expect(MarkupOverlay.previewFontSize(.xl, pixelSize: px, scale: scale) > MarkupOverlay.previewFontSize(.s, pixelSize: px, scale: scale))
     }
 
+    /// Owner, GUI pass: Done was squeezed. The strip's ideal width (`fittingSize`) was 461 / 597 / 655 pt
+    /// (box / text / text with a label open) against a 560 pt minimum main area. Every state must fit
+    /// well inside it.
+    @Test func theStripFitsThePanel() {
+        for (tool, draft) in [(ImageMark.Tool.box, false), (.text, false), (.text, true), (.freehand, false)] {
+            let strip = MarkupStrip(tool: .constant(tool), color: .constant(.red),
+                                    textDraft: .constant(draft ? TextDraft(point: ImagePoint(x: 0, y: 0), viewPoint: .zero, text: "") : nil),
+                                    textSize: .constant(.m), commitText: {}, done: {})
+            let width = NSHostingView(rootView: strip).fittingSize.width
+            #expect(width <= 480, "\(tool), label open \(draft): \(width) pt")
+        }
+    }
+
     @Test func theSizeControlShowsOnlyForText() {
         #expect(ImageMark.Tool.allCases.filter(MarkupStrip.showsTextSize) == [.text])
     }
