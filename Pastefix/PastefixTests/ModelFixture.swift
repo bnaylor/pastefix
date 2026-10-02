@@ -67,9 +67,15 @@ final class ModelFixture {
 
     func copy(text: String) { copy([.string: Data(text.utf8)]) }
 
-    /// Waits for a condition, polling with a ceiling rather than sleeping a fixed time.
+    /// Waits for a condition, polling every 10 ms up to a 10 s wall-clock deadline. A passing test
+    /// returns as soon as the condition holds, so the ceiling only costs time when a test is failing;
+    /// it was 300 polls (~3 s), which a loaded machine overran (#132: a 24.8 s hosted run, load ~8).
     func eventually(_ condition: () -> Bool) async -> Bool {
-        for _ in 0..<300 { if condition() { return true }; try? await Task.sleep(nanoseconds: 10_000_000) }
+        let deadline = ContinuousClock.now + .seconds(10)
+        while ContinuousClock.now < deadline {
+            if condition() { return true }
+            try? await Task.sleep(nanoseconds: 10_000_000)
+        }
         return condition()
     }
 }

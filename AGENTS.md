@@ -220,6 +220,11 @@ Sources/PastefixAppCore/              # app pure model (depends on PastefixCore,
 Tests/PastefixAppCoreTests/           # swift-test suites for the model; HistoryStoreTests write to FileManager.temporaryDirectory, not the real Application Support directory
 Pastefix/                             # the Xcode app (KeyboardShortcuts + Sparkle dependencies only)
   Pastefix.xcodeproj                  # ENABLE_APP_SANDBOX = NO, ENABLE_HARDENED_RUNTIME = YES
+  # TIMING TESTS (#132): the suites run in parallel, and a busy machine stretches wall clock several-fold.
+  #   - A bound guarding against a hang must sit far below the hang: make the stub delay or timeout ~60 s and the bound ~30 s, never "3 s against 10 s".
+  #   - Ratios and process-wide footprints are noisy: take the fastest of several timings, or retry up to 3 times and pass on the first clean one. A real leak or superlinear curve fails every attempt.
+  #   - The hosted ModelFixture.eventually is a 10 s wall-clock deadline.
+  #   - Verified with `yes > /dev/null` hogs (8 and 32 on 16 cores): 9/9 full runs green.
   PastefixTests/                      # hosted unit tests (sibling folder: anything inside Pastefix/Pastefix is compiled into the app). ModelFixture + one suite per shipped defect, each pinned by reverting its historical fix. Links NO package products (static libs would load twice: "implemented in both"); imports via BUNDLE_LOADER
     DemoReel.swift                    # README GIF renderer (docs/media/pastefix-tour.gif), OPT-IN: runs only with PFX_DEMO_OUT (TEST_RUNNER_PFX_DEMO_OUT=… scripts/test-app.sh "-only-testing:PastefixTests/DemoReel/tour()"); drives the real PanelView in .darkAqua through planted content and captures the composited window via CGWindowListCreateImage called through dlsym (unavailable in the macOS 15 SDK, still present at runtime; a process may capture its OWN windows without Screen Recording). NOT cacheDisplay: it drops the window background and most controls — a white page with light text, which is how the old GIF came out "light". Region scenes show the selection by apply → undo (the region comes back) → capture → redo. scripts/make-demo-gif.sh composites backdrop + captions and builds the GIF
   launch.sh                           # build Debug + open the .app

@@ -54,10 +54,18 @@ struct PNGEncoderTests {
         var outputSize = 0
         for _ in 0..<4 { autoreleasepool { outputSize = PNGEncoder.encode(image)?.count ?? 0 } }
         #expect(outputSize > 0)
-        let before = Self.physFootprint()
-        for _ in 0..<8 { autoreleasepool { _ = PNGEncoder.encode(image) } }
-        let grown = Self.physFootprint() - before
-        #expect(grown < outputSize, "footprint grew \(grown / 1_048_576) MB over 8 encodes of a \(outputSize / 1_048_576) MB PNG")
+        // Up to three measurements, passing on the first clean one. The footprint is the whole
+        // process's, so a parallel suite's large allocations can land inside one window (#132); a
+        // leak grows ~1× the output on EVERY call, so it fails all three.
+        var growths: [Int] = []
+        for _ in 0..<3 {
+            let before = Self.physFootprint()
+            for _ in 0..<8 { autoreleasepool { _ = PNGEncoder.encode(image) } }
+            growths.append(Self.physFootprint() - before)
+            if growths.last! < outputSize { break }
+        }
+        #expect(growths.contains { $0 < outputSize },
+                "footprint grew \(growths.map { $0 / 1_048_576 }) MB over three sets of 8 encodes of a \(outputSize / 1_048_576) MB PNG")
     }
 
     /// A directory of this test's own — the shared one is written to concurrently by other suites.

@@ -69,7 +69,9 @@ import Foundation
         await #expect(throws: TransformError.invalidInput("Replacement output is too large (limit 2 MB)")) {
             try await run(p, String(repeating: "a", count: 65_536))
         }
-        #expect(ContinuousClock.now - start < .seconds(2))
+        // The thrown error already proves the size cap fired (the 3 s deadline throws a different
+        // one), so the clock only has to show no runaway: 2 s was overrun under load (#132).
+        #expect(ContinuousClock.now - start < .seconds(10))
     }
 
     @Test func previewIsCappedLikeApply() {

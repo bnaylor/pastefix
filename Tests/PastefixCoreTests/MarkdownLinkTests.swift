@@ -51,11 +51,15 @@ private struct StubTitleFetcher: TitleFetcher {
         #expect(await stub.log.urls.count == 2)
     }
     @Test func slowFetcherFallsBackWithinTimeout() async throws {
-        let t = MarkdownLink(fetcher: StubTitleFetcher(delay: .seconds(10)), fetchTimeout: 0.2)
+        // What this guards against is waiting out the fetch, so the fetch is made far slower than the
+        // bound (60 s against 30 s): ignoring the 0.2 s timeout fails clearly, while a loaded machine —
+        // the full parallel suite with every core busy took 3.2–3.8 s, against an old 3 s bound (#132) —
+        // stays far inside it.
+        let t = MarkdownLink(fetcher: StubTitleFetcher(delay: .seconds(60)), fetchTimeout: 0.2)
         let start = ContinuousClock.now
         let out = try await t.apply(.init(text: "https://slow.test/p"))
         #expect(out == "[slow.test/p](https://slow.test/p)")
-        #expect(ContinuousClock.now - start < .seconds(3))
+        #expect(ContinuousClock.now - start < .seconds(30))
     }
     @Test func noURLsUnchanged() async throws {
         #expect(try await MarkdownLink(fetcher: StubTitleFetcher()).apply(.init(text: "plain")) == "plain")

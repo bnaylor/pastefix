@@ -33,14 +33,36 @@ struct SecretDetectorScaleTests {
     /// ones).
     @Test("uncapped scan cost stays linear well past maxBytes", .timeLimit(.minutes(1)))
     func scaleCurve() {
+        // Up to three curves, passing on the first that's linear: scheduling noise from the parallel
+        // suite spoils some measurements (#132: 36–45x against the 32x bound under heavy load), while
+        // the superlinear cost this guards against is 256x on every curve.
+        var best = Double.infinity
+        for _ in 0..<3 {
+            guard let growth = measureCurve() else { return }
+            if growth <= 2 { return }
+            best = min(best, growth)
+        }
+        Issue.record("on three curves the time grew at least \(best)x faster than the input — that is superlinear")
+    }
+
+    /// One scale curve's cost growth relative to its size growth (time ratio ÷ byte ratio, largest
+    /// input over smallest): ~1 is linear, 2 is the bound, quadratic is ~16. Nil after recording a
+    /// clock problem.
+    private func measureCurve() -> Double? {
         var measurements: [(bytes: Int, seconds: Double)] = []
         for multiple in [1, 4, 16] {
             let text = realisticCorpus(bytes: SecretDetector.maxBytes * multiple)
-            let start = ContinuousClock.now
-            let matches = SecretDetector.scanIgnoringSizeCap(text)
-            let elapsed = ContinuousClock.now - start
-            let seconds = Double(elapsed.components.seconds)
-                + Double(elapsed.components.attoseconds) / 1e18
+            // The fastest of three: scheduling noise from the parallel suite only ever adds time, so
+            // the minimum is the cleanest reading. One noisy pass on the small input pushed the ratio
+            // to 45x against the 32x bound under load (#132).
+            var seconds = Double.infinity
+            var matches: [SecretMatch] = []
+            for _ in 0..<3 {
+                let start = ContinuousClock.now
+                matches = SecretDetector.scanIgnoringSizeCap(text)
+                let elapsed = ContinuousClock.now - start
+                seconds = min(seconds, Double(elapsed.components.seconds) + Double(elapsed.components.attoseconds) / 1e18)
+            }
             measurements.append((text.utf8.count, seconds))
             // A sanity check on the corpus, not on the cap: `pastTheCapIsActuallyScanned`
             // below is what asserts the scan reaches bytes past `maxBytes`. This corpus's
@@ -69,13 +91,12 @@ struct SecretDetectorScaleTests {
         let sizeRatio = Double(largest.bytes) / Double(base.bytes)
         guard base.seconds > 0 else {
             Issue.record("the \(base.bytes)-byte scan measured 0 s; the clock is not usable here")
-            return
+            return nil
         }
         let costRatio = largest.seconds / base.seconds
         print("SecretDetector.scanIgnoringSizeCap: \(String(format: "%.1f", sizeRatio))x the bytes "
               + "cost \(String(format: "%.1f", costRatio))x the time")
-        #expect(costRatio <= sizeRatio * 2,
-                "\(largest.bytes) bytes took \(costRatio)x the time of \(base.bytes) bytes, against \(sizeRatio)x the input — that is superlinear")
+        return costRatio / sizeRatio
     }
 
     /// The claim `scanIgnoringSizeCap` exists to make: it reads *past* 256 KB.
