@@ -240,7 +240,7 @@ On a very large paste the panel appears first, and the `Detected:` label and sec
 
 ### Built-in transforms
 
-Thirty-nine built-in transforms, grouped in the sidebar by category in this order. Your regex presets follow under **Presets**, then any custom script categories alphabetically, then **Scripts**.
+Forty-one built-in transforms, grouped in the sidebar by category in this order. Your regex presets follow under **Presets**, then any custom script categories alphabetically, then **Scripts**.
 
 | Category | Transforms |
 |---|---|
@@ -249,10 +249,10 @@ Thirty-nine built-in transforms, grouped in the sidebar by category in this orde
 | Characters | Transliterate to ASCII |
 | URLs | Clean URL Tracking, URL → Markdown Link |
 | Case | camelCase, snake_case, kebab-case, CONSTANT_CASE |
-| Data | JSON Prettify, JSON Minify, Escape as JSON String, Base64 Encode, Base64 Decode, URL Encode, URL Decode, HTML Encode, HTML Decode, Decode JWT |
+| Data | JSON Prettify, JSON Minify, Escape as JSON String, Base64 Encode, Base64 Decode, URL Encode, URL Decode, HTML Encode, HTML Decode, Decode JWT, Make QR Code |
 | Colors | Color → CSS Hex, Color → CSS rgb(), Color → CSS hsl(), Color → SwiftUI Color |
 | Privacy | Redact Secrets, Strip Image Metadata |
-| Images | Extract Text (OCR), Crop to Selection, Redact Selection, Blur Selection, Rotate Left, Rotate Right, Flip Horizontal, Flip Vertical, Scale to 50%, Fit Within 1920 px |
+| Images | Extract Text (OCR), Crop to Selection, Redact Selection, Blur Selection, Rotate Left, Rotate Right, Flip Horizontal, Flip Vertical, Scale to 50%, Fit Within 1920 px, Read QR Code |
 
 #### Layout
 
@@ -322,6 +322,8 @@ All four accept `#hex`, `rgb()`/`rgba()` and `hsl()`/`hsla()`, in comma-separate
 - **Blur Selection:** see [Images](#images).
 - **Rotate Left, Rotate Right, Flip Horizontal, Flip Vertical:** see [Images](#images).
 - **Scale to 50%, Fit Within 1920 px:** see [Images](#images).
+- **Read QR Code:** reads every QR code in the picture into the editor, one per line, in place of the picture. ⌘Z brings the picture back.
+- **Make QR Code:** turns the text into a QR code picture, crisp black and white with a quiet border, which Save puts on your clipboard. It holds up to 2,331 bytes; ⌘Z brings the text back.
 
 ### User scripts
 

@@ -9,6 +9,9 @@ import ImageIO
 /// blur can be reversed, so the note points at Redact Selection. Best effort: no text, or no
 /// secret, is today's note; OCR never makes a blur fail.
 @Suite struct BlurSecretWarningTests {
+    /// Time enough for OCR even when the parallel suite has Vision queued (the app's 3 s budget is
+    /// pinned by `readingOverBudgetIsAbandoned`).
+    static let generous: Duration = .seconds(120)
     /// `width`×`height` white, with each line drawn in black monospace at its top-left point.
     static func page(_ lines: [(String, CGFloat, CGFloat)], width: Int = 1400, height: Int = 400) throws -> Data {
         let ctx = try #require(CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
@@ -29,7 +32,7 @@ import ImageIO
         return try #require(PNGEncoder.encode(image))
     }
     private func note(_ png: Data, _ region: ImageRegion) async throws -> String? {
-        guard case .image(_, let note) = try await offThePool({ try BlurSelection().transformImage(png, region: region) }) else {
+        guard case .image(_, let note) = try await offThePool({ try BlurSelection(secretCheckBudget: Self.generous).transformImage(png, region: region) }) else {
             Issue.record("expected an image"); return nil
         }
         return note
@@ -98,7 +101,7 @@ import ImageIO
         let start = ContinuousClock.now
         #expect(BlurSelection.secretKinds(in: image, region: region, budget: .milliseconds(1)).isEmpty)
         #expect(ContinuousClock.now - start < .seconds(2), "it returned at the budget, not when the read finished")
-        #expect(BlurSelection.secretKinds(in: image, region: region) == [.awsAccessKey], "and with the normal budget it reads")
+        #expect(BlurSelection.secretKinds(in: image, region: region, budget: Self.generous) == [.awsAccessKey], "and with time to read, it reads")
     }
 
     /// The cap, at its boundary: 4,000,000 px is read, one row more is not.
@@ -106,7 +109,7 @@ import ImageIO
         func kinds(_ w: Int, _ h: Int) throws -> [SecretKind] {
             let png = try Self.page([("AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE", 40, 60)], width: w, height: h)
             let image = try #require(OrientedSource(png)?.image())
-            return BlurSelection.secretKinds(in: image, region: ImageRegion(x: 0, y: 0, width: w, height: h))
+            return BlurSelection.secretKinds(in: image, region: ImageRegion(x: 0, y: 0, width: w, height: h), budget: Self.generous)
         }
         #expect(try kinds(2000, 2000) == [.awsAccessKey])
         #expect(try kinds(2000, 2001).isEmpty)

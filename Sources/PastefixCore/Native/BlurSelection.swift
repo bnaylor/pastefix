@@ -15,7 +15,12 @@ public struct BlurSelection: RegionImageTransformer {
     public let source: TransformerSource = .builtin
     public let category: String? = TransformCategory.images
 
-    public init() {}
+    /// How long the secret check may read before it's abandoned (see `secretKinds`). Tests pass a
+    /// long one: in the full parallel suite Vision queues behind other OCR tests and a 3 s read
+    /// overran, so the warning tests failed on load, not on the warning (#132's lesson).
+    public let secretCheckBudget: Duration
+
+    public init(secretCheckBudget: Duration = .seconds(3)) { self.secretCheckBudget = secretCheckBudget }
 
     public static let noRegionMessage = "Drag on the image to choose what to blur, then choose Blur Selection."
     public static func resultNote(_ w: Int, _ h: Int) -> String {
@@ -110,7 +115,7 @@ public struct BlurSelection: RegionImageTransformer {
         guard let result = ctx.makeImage(), let out = PNGEncoder.encode(result) else {
             throw TransformError.invalidInput("\(name) couldn't blur this image.")
         }
-        let kinds = Self.secretKinds(in: image, region: region)
+        let kinds = Self.secretKinds(in: image, region: region, budget: secretCheckBudget)
         return .image(out, note: kinds.isEmpty ? Self.resultNote(region.width, region.height)
                                                : Self.secretNote(region.width, region.height, kinds))
     }

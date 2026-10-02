@@ -50,6 +50,7 @@ public struct TransformerRegistry {
             (94, "HTML Encode", Encode(codec: .html)),
             (95, "HTML Decode", Decode(codec: .html)),
             (96, "Decode JWT", JWTDecode()),
+            (97, "Make QR Code", MakeQRCode()),
             (100, "Color → CSS Hex", ColorConvert(style: .hex)),
             (101, "Color → CSS rgb()", ColorConvert(style: .rgb)),
             (102, "Color → CSS hsl()", ColorConvert(style: .hsl)),
@@ -66,6 +67,7 @@ public struct TransformerRegistry {
             (119, "Flip Vertical", ReorientImage(.flipVertical)),
             (120, "Scale to 50%", ScaleImage(.half)),
             (121, "Fit Within 1920 px", ScaleImage(.fit1920)),
+            (122, "Read QR Code", ReadQRCode()),
         ]
 
         // Presets sit after every built-in (band 900) and before discovered scripts (1000+).

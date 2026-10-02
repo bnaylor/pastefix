@@ -107,8 +107,15 @@ public enum TransformCoordinator {
             switch output {
             case .nothingToDo(let sentence):
                 return (doc, .nothingToDo(sentence), nil)
-            case .image:
-                return (doc, .failed("\(transformer.name) produced an image, which can't replace selected text."), nil)
+            case .image(let png, let note):
+                // A text→image transform (Make QR Code) read the selection; its image replaces the
+                // buffer, as with no selection — ⌘Z brings the text and the selection back.
+                guard transformer is any ImageFromTextTransformer else {
+                    return (doc, .failed("\(transformer.name) produced an image, which can't replace selected text."), nil)
+                }
+                guard ImageBytes.isPNG(png) else { return (doc, .failed("\(transformer.name) didn't produce a usable image."), nil) }
+                doc.push(.image(png), note: note)
+                return (doc, note.map(TransformOutcome.appliedWithNote) ?? .applied, nil)
             case .text(let output):
                 // Tools end their output with a newline (jq, python's print, sed, Clean Claude Code
                 // Paste). Harmless on the whole buffer; spliced into a selected word it would split

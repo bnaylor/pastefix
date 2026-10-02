@@ -207,4 +207,28 @@ struct SavePayloadTests {
         #expect(payload.richRTFD == nil)
         #expect(payload.text == "hello")
     }
+
+    /// #21: a text session turned into an image (Make QR Code) saves that image. Save used to pick the
+    /// image by how the session *started*, so this wrote no image at all.
+    @Test func aTextSessionTurnedIntoAnImageSavesTheImage() {
+        var doc = PasteDocument(origin: ClipboardSnapshot(plainText: "https://example.com", richRTFD: nil))
+        let png = ImageTransformCoordinatorTests.png(40, 40)
+        doc.push(.image(png))
+        let payload = SavePayload(document: doc)
+        #expect(payload.imagePNG == png)
+        #expect(payload.text == nil, "the image entry has no text to write beside it")
+        doc.undo()
+        #expect(SavePayload(document: doc).imagePNG == nil && SavePayload(document: doc).text == "https://example.com", "⌘Z back to the text saves the text")
+    }
+
+    /// The one case the image-first rule changes: a mixed session (text plus an origin image) turned
+    /// into a QR saves only the QR; ⌘Z back to the text saves the text and the origin image, as before.
+    @Test func aMixedSessionTurnedIntoAnImageSavesOnlyThatImage() {
+        let origin = ImageTransformCoordinatorTests.png(10, 10), qr = ImageTransformCoordinatorTests.png(40, 40)
+        var doc = PasteDocument(origin: ClipboardSnapshot(plainText: "caption", richRTFD: nil, imagePNG: origin))
+        doc.push(.image(qr))
+        #expect(SavePayload(document: doc).imagePNG == qr && SavePayload(document: doc).text == nil)
+        doc.undo()
+        #expect(SavePayload(document: doc).imagePNG == origin && SavePayload(document: doc).text == "caption")
+    }
 }
