@@ -63,11 +63,11 @@ public struct BlurSelection: RegionImageTransformer {
     static func secretKinds(in image: CGImage, region: ImageRegion, budget: Duration = .seconds(3)) -> [SecretKind] {
         guard region.width * region.height <= secretCheckMaxPixels,
               let crop = image.cropping(to: CGRect(x: region.x, y: region.y, width: region.width, height: region.height)) else { return [] }
-        let request = TextRecognizer.makeRequest()
-        let handler = VNImageRequestHandler(cgImage: crop, options: [:])
+        let read = SecretRead(request: TextRecognizer.makeRequest(), handler: VNImageRequestHandler(cgImage: crop, options: [:]))
+        let request = read.request
         let done = DispatchSemaphore(value: 0)
         DispatchQueue.global(qos: .userInitiated).async {
-            try? handler.perform([request])
+            try? read.handler.perform([read.request])
             done.signal()
         }
         let seconds = Double(budget.components.seconds) + Double(budget.components.attoseconds) / 1e18
@@ -80,6 +80,15 @@ public struct BlurSelection: RegionImageTransformer {
         var kinds: [SecretKind] = []
         for match in SecretDetector.scan(text) where !kinds.contains(match.kind) { kinds.append(match.kind) }
         return kinds
+    }
+
+    /// The Vision request and handler, handed to the thread that performs the read. Unchecked, with
+    /// real ordering: only that thread performs; this one reads `results` only after the semaphore
+    /// signals (so after `perform` returns), and otherwise only calls `cancel()`, which Vision
+    /// provides for stopping a request from another thread.
+    private struct SecretRead: @unchecked Sendable {
+        let request: VNRecognizeTextRequest
+        let handler: VNImageRequestHandler
     }
 
     /// 5% of the region's shorter side, at least 6 px: text is unreadable at a glance.
