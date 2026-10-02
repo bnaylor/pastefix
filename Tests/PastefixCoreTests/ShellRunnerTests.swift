@@ -26,6 +26,20 @@ import Foundation
         }
     }
 
+    /// A script that exits without reading its input (an early error, a script that just prints)
+    /// closed the pipe under the stdin write, and the write raised SIGPIPE, which nothing ignored:
+    /// it killed the process — the test runner here, Pastefix itself in the app. Input bigger
+    /// than the pipe buffer (64 KB) makes the race certain: the write blocks until the script
+    /// has exited. Found as a load-only crash of the parallel suite (signal 13) during #21.
+    @Test func aScriptThatIgnoresItsInputDoesNotKillUs() async throws {
+        let url = try tempScript("echo done\n")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let input = String(repeating: "x", count: 1_048_576)
+        for _ in 0..<3 {
+            #expect(try await ShellRunner.run(scriptURL: url, input: input, timeout: 5) == "done\n")
+        }
+    }
+
     @Test func emptyOutputIsStillEmpty() async throws {
         let url = try tempScript("cat > /dev/null\n")
         defer { try? FileManager.default.removeItem(at: url) }

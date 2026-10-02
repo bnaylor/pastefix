@@ -68,6 +68,11 @@ public enum ShellRunner {
         // Feed stdin on a background thread so a child that never reads stdin
         // (or fills stderr before consuming stdin) cannot block the caller.
         if let stdinData = input {
+            // A script that exits without reading its input closes the pipe under this write. By
+            // default that raises SIGPIPE, which kills the whole process — Pastefix — before
+            // `try?` sees anything. NOSIGPIPE turns it into an EPIPE error on this descriptor
+            // alone; the script's result still comes from its exit status and output.
+            _ = fcntl(stdinPipe.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1)
             DispatchQueue.global(qos: .userInitiated).async {
                 try? stdinPipe.fileHandleForWriting.write(contentsOf: stdinData)
                 try? stdinPipe.fileHandleForWriting.close()

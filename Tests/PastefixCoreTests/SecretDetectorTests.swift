@@ -248,6 +248,18 @@ import Testing
             return Double(d.components.seconds) + Double(d.components.attoseconds) / 1e18
         }.min()!
     }
+    /// The cost of scanning `a` relative to `b`, each the best of five runs, *alternated*: measured
+    /// as three of `a` then three of `b`, a burst of load from parallel suites (Vision OCR, #21) fell
+    /// on `a` alone and a normal 4× read as 53×. Alternating puts a burst on both sides.
+    static func interleavedRatio(_ a: String, _ b: String) -> Double {
+        func seconds(_ s: String) -> Double {
+            let d = ContinuousClock().measure { _ = SecretDetector.scan(s) }
+            return Double(d.components.seconds) + Double(d.components.attoseconds) / 1e18
+        }
+        var bestA = Double.infinity, bestB = Double.infinity
+        for _ in 0..<5 { bestA = min(bestA, seconds(a)); bestB = min(bestB, seconds(b)) }
+        return bestA / bestB
+    }
     @Test func weakCandidatesNeverHideARealJWT() {
         // Two halves of the same fix. (a) The pre-filter now rejects dotted source-code
         // identifiers outright: "IConfiguration" cannot close a JSON object. (b) Even for tokens
@@ -272,7 +284,7 @@ import Testing
             // the validation budget does not move it either (0.054 → 0.060 s) — the count
             // assertion below is what pins the budget.
             let benign = String(repeating: "the quick brown fox jumps over the lazy dog ", count: buffer.utf8.count / 44)
-            let ratio = Self.bestOf3(buffer) / Self.bestOf3(benign)
+            let ratio = Self.interleavedRatio(buffer, benign)
             #expect(ratio < 50, "\(label) cost \(ratio)× a benign scan of the same size")
         }
         #expect(5_000 > SecretDetector.maxWeakJWTCandidates)     // the budget really is exhausted
