@@ -220,4 +220,15 @@ struct SavePayloadTests {
         doc.undo()
         #expect(SavePayload(document: doc).imagePNG == nil && SavePayload(document: doc).text == "https://example.com", "⌘Z back to the text saves the text")
     }
+
+    /// The one case the image-first rule changes: a mixed session (text plus an origin image) turned
+    /// into a QR saves only the QR; ⌘Z back to the text saves the text and the origin image, as before.
+    @Test func aMixedSessionTurnedIntoAnImageSavesOnlyThatImage() {
+        let origin = ImageTransformCoordinatorTests.png(10, 10), qr = ImageTransformCoordinatorTests.png(40, 40)
+        var doc = PasteDocument(origin: ClipboardSnapshot(plainText: "caption", richRTFD: nil, imagePNG: origin))
+        doc.push(.image(qr))
+        #expect(SavePayload(document: doc).imagePNG == qr && SavePayload(document: doc).text == nil)
+        doc.undo()
+        #expect(SavePayload(document: doc).imagePNG == origin && SavePayload(document: doc).text == "caption")
+    }
 }

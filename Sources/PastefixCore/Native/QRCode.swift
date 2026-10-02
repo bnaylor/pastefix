@@ -4,11 +4,16 @@ import CoreImage
 import CoreImage.CIFilterBuiltins
 import Vision
 
+/// A text transform whose result is an image that replaces the whole buffer (Make QR Code). With a
+/// selection it reads just the selected text, and the image still replaces the buffer — an image
+/// can't be spliced into text (#21 review: it used to fail).
+public protocol ImageFromTextTransformer: Transformer {}
+
 /// Make QR Code (#21): the text as a QR code image, which replaces it in the panel (⌘Z brings the
 /// text back). Core Image's generator at error-correction level M, scaled up by a whole number with
 /// nearest-neighbour sampling so every module is a crisp black or white square, on a white quiet
 /// zone of four modules (the standard's minimum). The panel's Save writes the image.
-public struct MakeQRCode: Transformer {
+public struct MakeQRCode: ImageFromTextTransformer {
     public let id = "builtin.qrmake"
     public let name = "Make QR Code"
     public let requiresRichInput = false
@@ -76,6 +81,7 @@ public struct ReadQRCode: ImageTransformer {
     public init() {}
 
     public static let noneMessage = "No QR code was found in this image."
+    public static let binaryMessage = "Found a QR code, but it holds data rather than text."
 
     public func transformImage(_ png: Data) throws -> TransformOutput {
         guard let source = OrientedSource(png), let image = source.image() else {
@@ -85,11 +91,10 @@ public struct ReadQRCode: ImageTransformer {
         request.symbologies = [.qr]
         try VNImageRequestHandler(cgImage: image, options: [:]).perform([request])
         var seen = Set<String>()
-        let payloads = (request.results ?? [])
-            .sorted { $0.boundingBox.maxY > $1.boundingBox.maxY }   // Vision's origin is bottom-left
-            .compactMap(\.payloadStringValue)
-            .filter { seen.insert($0).inserted }
-        guard !payloads.isEmpty else { return .nothingToDo(Self.noneMessage) }
+        let results = (request.results ?? []).sorted { $0.boundingBox.maxY > $1.boundingBox.maxY }   // Vision's origin is bottom-left
+        let payloads = results.compactMap(\.payloadStringValue).filter { seen.insert($0).inserted }
+        // A code whose payload isn't text (binary data) has no string: say so, not "no code" (review).
+        guard !payloads.isEmpty else { return .nothingToDo(results.isEmpty ? Self.noneMessage : Self.binaryMessage) }
         return .text(payloads.joined(separator: "\n"))
     }
 }

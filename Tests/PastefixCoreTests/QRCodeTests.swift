@@ -1,6 +1,8 @@
 import Testing
 import Foundation
 import CoreGraphics
+import CoreImage
+import CoreImage.CIFilterBuiltins
 @testable import PastefixCore
 
 /// #21: Make QR Code (text → image) and Read QR Code (image → text).
@@ -63,5 +65,17 @@ import CoreGraphics
         let make = MakeQRCode(), read = ReadQRCode()
         #expect(make.id == "builtin.qrmake" && make.name == "Make QR Code" && make.category == TransformCategory.data && make.acceptedForms == [.text])
         #expect(read.id == "builtin.qrread" && read.name == "Read QR Code" && read.category == TransformCategory.images && read.acceptedForms == [.image])
+    }
+
+    /// Review: a code holding binary data was reported as no code at all.
+    @Test func aBinaryCodeSaysSo() async throws {
+        let filter = CIFilter.qrCodeGenerator()
+        filter.message = Data([0x00, 0xFF, 0xFE, 0x80, 0x81, 0xC3])
+        let code = try #require(filter.outputImage)
+        let ctx = CIContext(options: [.workingColorSpace: NSNull()])
+        let small = try #require(ctx.createCGImage(code.transformed(by: CGAffineTransform(scaleX: 12, y: 12)).samplingNearest(), from: code.extent.applying(CGAffineTransform(scaleX: 12, y: 12))))
+        let png = try #require(PNGEncoder.encode(small))
+        #expect(try await read(png) == .nothingToDo(ReadQRCode.binaryMessage))
+        #expect(ReadQRCode.binaryMessage == "Found a QR code, but it holds data rather than text.")
     }
 }

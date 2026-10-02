@@ -157,4 +157,15 @@ private final class Seen: @unchecked Sendable {
         let twice = Fake { $0.text + "\n\n" }
         #expect(await TransformCoordinator.apply(twice, to: doc(text), scope: scope(text, 6, 4)).0.working == "alpha beta\n gamma")
     }
+    /// #21 review: Make QR Code with a selection encodes the selection (a URL picked out of a
+    /// paragraph), and the code replaces the buffer; it used to fail "produced an image".
+    @Test func makeQRCodeEncodesTheSelection() async throws {
+        let text = "see https://example.com/a?b=1 today"
+        let (d, outcome, span) = await TransformCoordinator.apply(MakeQRCode(), to: doc(text), scope: scope(text, 4, 25))
+        #expect(outcome == .appliedWithNote("Made a QR code."), "\(outcome)")
+        #expect(span == nil)
+        let png = try #require(d.currentImage)
+        #expect(try ReadQRCode().transformImage(png) == .text("https://example.com/a?b=1"))
+    }
+
 }
