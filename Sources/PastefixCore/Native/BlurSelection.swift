@@ -1,6 +1,7 @@
 import Foundation
 import CoreGraphics
 import CoreImage
+import Vision
 
 /// Blurs the selected region: cosmetic, not redaction (redact/blur spec). Blurred screenshot text
 /// can often be reconstructed, which the result note says. Only the region goes through Core
@@ -20,39 +21,61 @@ public struct BlurSelection: RegionImageTransformer {
     public static func resultNote(_ w: Int, _ h: Int) -> String {
         "Blurred \(w)×\(h). Blur can be reversed; use Redact Selection to hide something for good."
     }
-    /// The largest region whose text is read for the secret warning.
-    static let secretCheckMaxPixels = 4_000_000
-
-    /// The note when the region looked like it held a secret (#129): blur can be reversed, so it
-    /// points at Redact Selection.
+    /// The note when the selection looked like it held a secret (#129): blur can be reversed, so it
+    /// points at Redact Selection. "Holds", not "hides": the blur hid nothing for sure (review).
     static func secretNote(_ w: Int, _ h: Int, _ kinds: [SecretKind]) -> String {
-        "Blurred \(w)×\(h). It looks like this hides \(secretPhrase(kinds)). Blur can be reversed: ⌘Z, then use Redact Selection to hide it for good."
+        "Blurred \(w)×\(h). This selection looks like it holds \(secretPhrase(kinds)). Blur can be reversed: ⌘Z, then use Redact Selection to hide \(kinds.count > 1 ? "them" : "it") for good."
     }
 
-    /// "an AWS access key", "a GitHub token and an AWS access key", "a, b and c".
+    /// "an AWS access key", "a GitHub token and an AWS access key", "a, b and c" — in words for a
+    /// note, with the article spelled out per kind rather than guessed from a letter.
     static func secretPhrase(_ kinds: [SecretKind]) -> String {
         let named = kinds.map { kind -> String in
-            let name = kind.displayName
-            return (name.first.map { "AEIOU".contains($0.uppercased()) } ?? false ? "an " : "a ") + name
+            switch kind {
+            case .awsAccessKey: "an AWS access key"
+            case .awsSecretKey: "an AWS secret key"
+            case .githubToken: "a GitHub token"
+            case .anthropicKey: "an Anthropic key"
+            case .openAIKey: "an OpenAI key"
+            case .slackToken: "a Slack token"
+            case .stripeKey: "a Stripe key"
+            case .googleAPIKey: "a Google API key"
+            case .privateKey: "a private key"
+            case .jwt: "a JWT"
+            case .passwordInURL: "a password in a URL"
+            case .genericAssignment: "a password or token"
+            }
         }
         guard named.count > 1 else { return named.first ?? "" }
         return named.dropLast().joined(separator: ", ") + " and " + named.last!
     }
 
-    /// The kinds of secret in the region's text, read by OCR (the recognizer Extract Text uses),
-    /// in the order found and without repeats. Best effort: a failed or empty read is no kinds, so
-    /// the blur still happens with the ordinary note — and that note never claims the region is safe.
-    static func secretKinds(in image: CGImage, region: ImageRegion) -> [SecretKind] {
-        // Accurate OCR is slow on large, dense regions — a whole 5K screenshot of text measured
-        // 11.4 s, past the 10 s transform limit — so only regions up to 4 MP are read. That covers
-        // selecting a token, a line or a panel; a bigger blur keeps the ordinary note, which never
-        // claimed the region was safe.
-        guard region.width * region.height <= secretCheckMaxPixels else { return [] }
-        guard let crop = image.cropping(to: CGRect(x: region.x, y: region.y, width: region.width, height: region.height)),
-              let observations = try? OCRLayout.recognize(width: crop.width, height: crop.height,
-                                                          whole: { try TextRecognizer.recognize(crop) },
-                                                          tiled: { try TextRecognizer.recognizeTiled(crop) }) else { return [] }
-        let text = OCRLayout.lines(observations).joined(separator: "\n")
+    /// The largest region whose text is read for the secret warning.
+    static let secretCheckMaxPixels = 4_000_000
+
+    /// The kinds of secret in the region's text, read by OCR with Extract Text's request settings, in
+    /// the order found and without repeats. A hint, so it must never cost the blur, which shares the
+    /// transform's 10 s limit: regions over 4 MP aren't read (a dense 5K region took 11.4 s), the read
+    /// is ONE pass (Extract Text's dual and tiled passes are for completeness, not a hint), and it has
+    /// its own `budget` — past it the request is cancelled and there's no warning (review: a dense
+    /// 4 MP region measured 2.6–5 s, once 17.8 s cold). A failed, empty or abandoned read is no kinds,
+    /// and the ordinary note never claims the region is safe.
+    static func secretKinds(in image: CGImage, region: ImageRegion, budget: Duration = .seconds(3)) -> [SecretKind] {
+        guard region.width * region.height <= secretCheckMaxPixels,
+              let crop = image.cropping(to: CGRect(x: region.x, y: region.y, width: region.width, height: region.height)) else { return [] }
+        let request = TextRecognizer.makeRequest()
+        let handler = VNImageRequestHandler(cgImage: crop, options: [:])
+        let done = DispatchSemaphore(value: 0)
+        DispatchQueue.global(qos: .userInitiated).async {
+            try? handler.perform([request])
+            done.signal()
+        }
+        let seconds = Double(budget.components.seconds) + Double(budget.components.attoseconds) / 1e18
+        guard done.wait(timeout: .now() + seconds) == .success else {
+            request.cancel()
+            return []
+        }
+        let text = (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: "\n")
         guard SecretDetector.isScannable(text) else { return [] }
         var kinds: [SecretKind] = []
         for match in SecretDetector.scan(text) where !kinds.contains(match.kind) { kinds.append(match.kind) }
