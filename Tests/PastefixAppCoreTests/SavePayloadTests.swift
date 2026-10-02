@@ -207,4 +207,17 @@ struct SavePayloadTests {
         #expect(payload.richRTFD == nil)
         #expect(payload.text == "hello")
     }
+
+    /// #21: a text session turned into an image (Make QR Code) saves that image. Save used to pick the
+    /// image by how the session *started*, so this wrote no image at all.
+    @Test func aTextSessionTurnedIntoAnImageSavesTheImage() {
+        var doc = PasteDocument(origin: ClipboardSnapshot(plainText: "https://example.com", richRTFD: nil))
+        let png = ImageTransformCoordinatorTests.png(40, 40)
+        doc.push(.image(png))
+        let payload = SavePayload(document: doc)
+        #expect(payload.imagePNG == png)
+        #expect(payload.text == nil, "the image entry has no text to write beside it")
+        doc.undo()
+        #expect(SavePayload(document: doc).imagePNG == nil && SavePayload(document: doc).text == "https://example.com", "⌘Z back to the text saves the text")
+    }
 }

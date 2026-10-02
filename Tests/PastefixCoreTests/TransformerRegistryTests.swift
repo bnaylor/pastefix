@@ -17,7 +17,7 @@ import Foundation
             "builtin.case.camel", "builtin.case.snake", "builtin.case.kebab", "builtin.case.constant",
             "builtin.json.pretty", "builtin.json.minify", "builtin.json.escape",
             "builtin.base64.encode", "builtin.base64.decode", "builtin.url.encode", "builtin.url.decode",
-            "builtin.html.encode", "builtin.html.decode", "builtin.jwt.decode",
+            "builtin.html.encode", "builtin.html.decode", "builtin.jwt.decode", "builtin.qrmake",
             "builtin.color.hex", "builtin.color.rgb", "builtin.color.hsl", "builtin.color.swift",
             "builtin.redactsecrets",
             "builtin.stripimagemetadata",
@@ -25,7 +25,7 @@ import Foundation
             "builtin.crop",
             "builtin.redactselection", "builtin.blurselection",
             "builtin.rotateleft", "builtin.rotateright", "builtin.fliphorizontal", "builtin.flipvertical",
-            "builtin.scalehalf", "builtin.fitwithin1920",
+            "builtin.scalehalf", "builtin.fitwithin1920", "builtin.qrread",
         ])
     }
 
@@ -55,7 +55,7 @@ import Foundation
         let dir = FileManager.default.temporaryDirectory
             .appendingPathComponent("does-not-exist-\(UUID().uuidString)")
         let reg = TransformerRegistry(config: .init(scriptsDirectory: dir, wrapWidth: 80))
-        #expect(reg.load().count == 39)   // built-ins only, no crash
+        #expect(reg.load().count == 41)   // built-ins only, no crash
     }
 
     @Test func scriptKindsSurfaceAsApplicableKinds() throws {

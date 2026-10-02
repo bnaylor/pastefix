@@ -107,7 +107,10 @@ public struct PasteDocument: Sendable {
     /// *replace* the image (Plan 20). A session that opened as text or mixed carries the origin's
     /// image through every text transform, as it always has, so an image-aware action reaches it
     /// even from a text session.
-    public var imagePNG: Data? { openedAsImage ? currentImage : origin.imagePNG }
+    /// The image Save writes: the current entry's when it is one — however the session started, so a
+    /// text session turned into a QR code saves the code (#21) — else, for a session that opened as
+    /// an image and is now text (OCR), none; else the origin's (a mixed session carries its image).
+    public var imagePNG: Data? { currentImage ?? (openedAsImage ? nil : origin.imagePNG) }
 
     /// How Save writes this document right now. An armed mode is document-wide and survives undo,
     /// so on an image entry it is ignored: otherwise OCR → Markdown → Rich → ⌘Z would render
