@@ -20,6 +20,45 @@ public struct BlurSelection: RegionImageTransformer {
     public static func resultNote(_ w: Int, _ h: Int) -> String {
         "Blurred \(w)×\(h). Blur can be reversed; use Redact Selection to hide something for good."
     }
+    /// The largest region whose text is read for the secret warning.
+    static let secretCheckMaxPixels = 4_000_000
+
+    /// The note when the region looked like it held a secret (#129): blur can be reversed, so it
+    /// points at Redact Selection.
+    static func secretNote(_ w: Int, _ h: Int, _ kinds: [SecretKind]) -> String {
+        "Blurred \(w)×\(h). It looks like this hides \(secretPhrase(kinds)). Blur can be reversed: ⌘Z, then use Redact Selection to hide it for good."
+    }
+
+    /// "an AWS access key", "a GitHub token and an AWS access key", "a, b and c".
+    static func secretPhrase(_ kinds: [SecretKind]) -> String {
+        let named = kinds.map { kind -> String in
+            let name = kind.displayName
+            return (name.first.map { "AEIOU".contains($0.uppercased()) } ?? false ? "an " : "a ") + name
+        }
+        guard named.count > 1 else { return named.first ?? "" }
+        return named.dropLast().joined(separator: ", ") + " and " + named.last!
+    }
+
+    /// The kinds of secret in the region's text, read by OCR (the recognizer Extract Text uses),
+    /// in the order found and without repeats. Best effort: a failed or empty read is no kinds, so
+    /// the blur still happens with the ordinary note — and that note never claims the region is safe.
+    static func secretKinds(in image: CGImage, region: ImageRegion) -> [SecretKind] {
+        // Accurate OCR is slow on large, dense regions — a whole 5K screenshot of text measured
+        // 11.4 s, past the 10 s transform limit — so only regions up to 4 MP are read. That covers
+        // selecting a token, a line or a panel; a bigger blur keeps the ordinary note, which never
+        // claimed the region was safe.
+        guard region.width * region.height <= secretCheckMaxPixels else { return [] }
+        guard let crop = image.cropping(to: CGRect(x: region.x, y: region.y, width: region.width, height: region.height)),
+              let observations = try? OCRLayout.recognize(width: crop.width, height: crop.height,
+                                                          whole: { try TextRecognizer.recognize(crop) },
+                                                          tiled: { try TextRecognizer.recognizeTiled(crop) }) else { return [] }
+        let text = OCRLayout.lines(observations).joined(separator: "\n")
+        guard SecretDetector.isScannable(text) else { return [] }
+        var kinds: [SecretKind] = []
+        for match in SecretDetector.scan(text) where !kinds.contains(match.kind) { kinds.append(match.kind) }
+        return kinds
+    }
+
     /// 5% of the region's shorter side, at least 6 px: text is unreadable at a glance.
     public static func radius(for region: ImageRegion) -> Double {
         max(6, 0.05 * Double(min(region.width, region.height)))
@@ -48,6 +87,8 @@ public struct BlurSelection: RegionImageTransformer {
         guard let result = ctx.makeImage(), let out = PNGEncoder.encode(result) else {
             throw TransformError.invalidInput("\(name) couldn't blur this image.")
         }
-        return .image(out, note: Self.resultNote(region.width, region.height))
+        let kinds = Self.secretKinds(in: image, region: region)
+        return .image(out, note: kinds.isEmpty ? Self.resultNote(region.width, region.height)
+                                               : Self.secretNote(region.width, region.height, kinds))
     }
 }
