@@ -31,6 +31,9 @@ public struct CleanClaudePaste: Transformer {
     /// Below this, a paste is too narrow to have come from a terminal wrap at all.
     static let minimumWrapWidth = 40
 
+    /// Claude Code's reply margin: "⏺ " on the first line, two spaces after.
+    static let replyMargin = 2
+
     private static let structural = try! NSRegularExpression(
         pattern: #"^\s*(?:[-*+•]\s|\d+[.)]\s|#{1,6}\s|>|\||│|┌|├|└|```)"#)
     private static let listMarker = try! NSRegularExpression(pattern: #"^(\s*)((?:[-*+•]|\d+[.)])\s+)"#)
@@ -48,6 +51,21 @@ public struct CleanClaudePaste: Transformer {
             line = replacingPrefix(line, marker: "❯ ", with: "> ")
             while let last = line.last, last == " " || last == "\t" { line.removeLast() }
             kept.append(line)
+        }
+
+        // 1b. A drag-select usually starts partway into the margin, so the first line's indent is
+        //     where the selection began, not structure. Restore the part of the 2-column margin it cut
+        //     off (never more: a "⏺ Bash(…)" line sits above deeper ⎿ output), or the first line
+        //     never matches its continuation's indent and never joins.
+        if let first = kept.firstIndex(where: { !$0.trimmingCharacters(in: .whitespaces).isEmpty }),
+           !kept[first].hasPrefix("> "),
+           let rest = kept[(first + 1)...]
+               .filter({ !$0.trimmingCharacters(in: .whitespaces).isEmpty && !$0.hasPrefix("> ") })
+               .map(indentOf).min() {
+            let target = min(rest, replyMargin)
+            if indentOf(kept[first]) < target {
+                kept[first] = String(repeating: " ", count: target - indentOf(kept[first])) + kept[first]
+            }
         }
 
         // 2. The wrap width: the widest line, measured before anything moves.
