@@ -35,6 +35,29 @@ import Testing
         """)
     }
 
+    /// A real paste whose selection began one column into the 2-space margin: the first line has 1
+    /// space, the rest 2. The first line's indent is where the drag started, not structure.
+    @Test func selectionStartingInsideTheMargin() {
+        let input = """
+         What changed. CPython 3.13.16 (released in August) backported a 3.14 change. When you import a submodule whose parent package
+          is still initializing, Python now waits for the parent to finish before it consults any import hook. So thread B waits on A,
+          never reaches the hook, and the test reports "thread B never reached the hook" every time. It isn't flaky; it fails on every
+          3.13.16 runner. GitHub's runner pool is midway through an image rollout from 3.13.15 to 3.13.16, which is why it looked
+          random: all 14 failures today were on the new image. Once the rollout finishes, that job goes red on every PR.
+        """
+        #expect(clean(input) == "What changed. CPython 3.13.16 (released in August) backported a 3.14 change. When you import a submodule whose parent package"
+            + " is still initializing, Python now waits for the parent to finish before it consults any import hook. So thread B waits on A,"
+            + " never reaches the hook, and the test reports \"thread B never reached the hook\" every time. It isn't flaky; it fails on every"
+            + " 3.13.16 runner. GitHub's runner pool is midway through an image rollout from 3.13.15 to 3.13.16, which is why it looked"
+            + " random: all 14 failures today were on the new image. Once the rollout finishes, that job goes red on every PR.\n")
+    }
+
+    @Test func selectionStartingAtColumnZero() {
+        let input = "This paragraph is long enough that the terminal wrapped it\n"
+            + "  at sixty columns, and it should come back as one line.\n"
+        #expect(clean(input) == "This paragraph is long enough that the terminal wrapped it at sixty columns, and it should come back as one line.\n")
+    }
+
     @Test func paragraphAndNumberedItemWrappedAt60() {
         let input = "⏺ This paragraph is long enough that the terminal wrapped it\n"
             + "  at sixty columns, and it should come back as one line.\n\n"
