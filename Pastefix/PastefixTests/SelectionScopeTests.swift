@@ -61,7 +61,7 @@ struct SelectionScopeTests {
                 "after ⌘Z \(editor.selectedRange())")
         #expect(sendUndo(window, redo: true))
         #expect(await f.eventually { editor.string == "alpha [beta] gamma" && editor.selectedRange() == NSRange(location: 6, length: 6) },
-                "after ⌘⇧Z \(editor.selectedRange())")
+                "after ⌘⇧Z \(editor.selectedRange()); trace: \(f.model.selectionTrace)")
     }
 
     /// The measured failure: without the pending span, `carrySelection` keeps raw offsets after a
@@ -102,7 +102,7 @@ struct SelectionScopeTests {
         #expect(await f.eventually {
             NSMaxRange(editor.selectedRange()) <= (editor.string as NSString).length
                 && editor.selectedRange() == NSRange(location: 6, length: 6)
-        }, "selected \(editor.selectedRange()) in \(editor.string.debugDescription)")
+        }, "selected \(editor.selectedRange()) in \(editor.string.debugDescription); trace: \(f.model.selectionTrace)")
     }
 
     /// GUI pass: a whole-only transform run while text was selected left raw offsets selecting

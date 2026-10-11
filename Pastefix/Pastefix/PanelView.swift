@@ -1,4 +1,5 @@
 import SwiftUI
+import Combine
 import PastefixCore
 import PastefixAppCore
 
@@ -115,31 +116,46 @@ struct PanelView: View {
     /// text and the caret can legitimately sit past the old buffer's end — validating that
     /// against `current` leaves it exactly where the user put it.
     private func carrySelection(from previous: String, to current: String) {
-        // A scoped apply, or the undo/redo of one, names the span to select (#25). It wins over
-        // remapping — which keeps raw offsets and, after a length change, lands on the wrong
-        // characters (measured) — but only in the buffer it indexes.
-        if let pending = model.pendingSelection {
-            model.pendingSelection = nil
-            if pending.revision == model.document?.detectionRevision,
-               !isPaletteOpen, !isHistoryOpen, !isUploadOpen, !isPreviewing,
-               let range = Range(pending.range, in: current) {
-                let selection = TextSelection(range: range)
-                editorSelection = selection
-                // Focus, then select a turn later: an NSTextView becoming first responder restores
-                // the selection it resigned with (#111 pass 5), which would overwrite this one.
-                focusEditorUnlessRefusedImage()
-                Task { @MainActor in
-                    if model.document?.working == current { editorSelection = selection }
-                }
-                return
-            }
-        }
+        if selectPendingSpan(in: current, via: "onChange") { return }
         guard let range = firstRange(of: editorSelection) else { return }
         let carried = TextRangeClamp.remap(range, from: previous, to: current)
             ?? TextRangeClamp.remap(range, from: current, to: current)
         let updated = carried.map { TextSelection(range: $0) }
         // Writing an equal value would invalidate the view for nothing on every keystroke.
         if updated != editorSelection { editorSelection = updated }
+    }
+
+    /// A scoped apply, or the undo/redo of one, names the span to select (#25). It wins over
+    /// remapping — which keeps raw offsets and, after a length change, lands on the wrong
+    /// characters (measured) — but only in the buffer it indexes. Consumed either way; true when
+    /// it selected something.
+    ///
+    /// Two callers, because neither alone is enough. `carrySelection` must take the span before it
+    /// remaps. But SwiftUI skips an `onChange` action that would run twice in one frame ("tried to
+    /// update multiple times per frame"), and an undo and a redo landing in one frame — a slow
+    /// machine, or a fast ⌘Z ⌘⇧Z — left the redo's span unconsumed and the undo's selection on
+    /// screen (#145). So the `$pendingSelection` subscription, which sees every write, picks up
+    /// whatever `onChange` didn't. Whichever runs first consumes it; the other finds nil.
+    @discardableResult
+    private func selectPendingSpan(in current: String, via caller: String) -> Bool {
+        guard let pending = model.pendingSelection else { return false }
+        model.pendingSelection = nil
+        guard pending.revision == model.document?.detectionRevision,
+              !isPaletteOpen, !isHistoryOpen, !isUploadOpen, !isPreviewing,
+              let range = Range(pending.range, in: current) else {
+            model.traceSelection("\(caller): dropped \(pending.range) rev \(pending.revision)")
+            return false
+        }
+        model.traceSelection("\(caller): selected \(pending.range)")
+        let selection = TextSelection(range: range)
+        editorSelection = selection
+        // Focus, then select a turn later: an NSTextView becoming first responder restores
+        // the selection it resigned with (#111 pass 5), which would overwrite this one.
+        focusEditorUnlessRefusedImage()
+        Task { @MainActor in
+            if model.document?.working == current { editorSelection = selection }
+        }
+        return true
     }
 
     /// The selection's range in the buffer it was made against. A multi-selection (⌥-drag) is
@@ -363,6 +379,12 @@ struct PanelView: View {
             // The model swaps the whole buffer out from under the editor on a landed transform,
             // undo or redo; the selection it is holding indexes the buffer that just left.
             carrySelection(from: previous ?? "", to: current ?? "")
+        }
+        // The backstop for an `onChange` above that SwiftUI skipped (#145; see `selectPendingSpan`).
+        // `@Published` emits in willSet, so the hop to the main queue is what makes the stored value
+        // readable — and consumable: clearing it from inside willSet would be overwritten on return.
+        .onReceive(model.$pendingSelection.compactMap { $0 }.receive(on: DispatchQueue.main)) { _ in
+            if let current = model.document?.working { selectPendingSpan(in: current, via: "onReceive") }
         }
         // The secrets badge asks for a selection rather than setting one: the live selection is
         // this view's. One-shot, like `historyOverlayRequested` — cleared as it is consumed, so
