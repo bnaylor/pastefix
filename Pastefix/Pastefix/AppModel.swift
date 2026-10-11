@@ -97,7 +97,17 @@ final class AppModel: ObservableObject {
     /// ⌘K palette's search field the instant it appeared.
     @Published var requestedSelection: TextSelection?
     /// See `PendingSelection`. Consumed (and cleared) by `PanelView`; cleared at session boundaries.
-    @Published var pendingSelection: PendingSelection?
+    @Published var pendingSelection: PendingSelection? {
+        didSet { traceSelection("pending ← \(pendingSelection.map { "\($0.range) rev \($0.revision)" } ?? "nil")") }
+    }
+    /// A write-only record of how `pendingSelection` was set and consumed, for the hosted tests'
+    /// failure messages (#145: a CI-only flake that never reproduced locally). Not `@Published`,
+    /// so recording re-renders nothing; capped, so a long session can't grow it.
+    private(set) var selectionTrace: [String] = []
+    func traceSelection(_ event: String) {
+        selectionTrace.append("\(event) [doc rev \(document?.detectionRevision ?? -1)]")
+        if selectionTrace.count > 32 { selectionTrace.removeFirst() }
+    }
     /// The region ⌘Z restores on the image entry it names (crop spec); `PanelView` consumes it.
     @Published var pendingImageRegion: PendingImageRegion?
     /// Markup marks waiting to be burned in (annotate spec), in order. The head applies when no apply
