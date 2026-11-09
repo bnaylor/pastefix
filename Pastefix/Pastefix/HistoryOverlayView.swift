@@ -91,7 +91,11 @@ struct HistoryOverlayView: View {
                     .padding(.top, Self.cardTopPadding)
             }
         }
-        .onAppear { fieldFocused = true; refreshResults() }
+        .onAppear {
+            // A turn later, or the request is dropped (#147; see `CommandPaletteView`).
+            DispatchQueue.main.async { fieldFocused = true }
+            refreshResults()
+        }
         .onChange(of: query) { _, _ in
             selection = 0
             refreshResults()
