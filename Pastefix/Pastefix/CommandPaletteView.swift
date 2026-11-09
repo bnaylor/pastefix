@@ -53,7 +53,10 @@ struct CommandPaletteView: View {
                 .padding(.horizontal, 24)
                 .padding(.top, 40)
         }
-        .onAppear { fieldFocused = true }
+        // A turn later, as `MarkupStrip` does: set in onAppear itself, the field isn't in the
+        // window yet and the request is dropped. First responder stayed in the editor, so ↑↓,
+        // Return and typing all went to the buffer under the palette (#147, macOS 27).
+        .onAppear { DispatchQueue.main.async { fieldFocused = true } }
     }
 
     private var card: some View {

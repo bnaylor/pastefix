@@ -228,20 +228,19 @@ before anything is touched. `PFX_HISTORY_DIR` points it at a copy for testing.
   panel (#52). Capture, confirm, then type. Choose the smallest fixture that
   still crosses the threshold you are testing (100 KB, not 2 MB, to hit a
   64 KB cap).
-- **Overlay field focus is not reliable under System Events.** Under
-  automation Pastefix never becomes the active app (the previous app stays
-  frontmost), and in that state the ⌘K and ⌘Y search fields take focus only
-  until the editor has been focused once in the process: clicking the editor
-  or closing any overlay is enough. After that, typed text, Return included,
-  lands in the buffer under the overlay. A human pressing the hotkey does not
-  see this (#76, closed after a hand check), so it is an artefact of the pass,
-  not a bug to file. It has been mistaken for one twice. The known exception is
-  #73, which is real and reproduces on `main` without typing into any field:
-  closing the history overlay with ⌘Y leaves ⌘Y dead until another overlay
-  opens. It is a key-equivalent failure, not a focus one. Before trusting any
-  keystroke sent to an overlay, read the field's `AXTextField value` back from
-  the `ax` dump; to open a row or apply a transform, click the row instead of
-  pressing Return.
+- **An overlay field that doesn't take focus is a real bug, not a pass artefact.**
+  This was written off as an automation artefact (#76: "a human pressing the
+  hotkey does not see this"), then users hit it on macOS 27 (#147). The ⌘K
+  and ⌘Y fields set their `@FocusState` in `onAppear`, before the field was
+  in the window, so SwiftUI dropped the request and first responder stayed in
+  the editor. Typed text and Return landed in the buffer under the overlay.
+  Requesting focus a turn later fixed it under System Events as well. If a
+  field misses focus again, suspect the code before the harness. Pastefix
+  still never becomes the frontmost app under automation (the previous app
+  stays in front). Before trusting any keystroke sent to an overlay, read
+  the field's `AXTextField value` back from the `ax` dump. #73 was a
+  different failure, a key equivalent rather than focus: closing the history
+  overlay with ⌘Y left ⌘Y dead.
 - **The toolbar shifts while the palette is open.** With ⌘K open the toolbar
   buttons sit about 20 pt from where they were, so a click on a coordinate
   computed before the palette opened can land on a palette row and apply a
